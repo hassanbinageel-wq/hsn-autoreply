@@ -225,8 +225,13 @@ export function createApp() {
     }
     const r = await completeOAuth(c.env, code.replace(/#_$/, ""));
     if (!r.ok) {
-      console.error("oauth failed", sanitize(r.error ?? ""));
-      return c.html(oauthResultPage(false, "تعذر إكمال الربط مع Meta. تحقق من إعدادات التطبيق في Meta ثم أعد المحاولة.", st.client, c.env.APP_DEEP_LINK), 502);
+      const detail = sanitize(r.error ?? "unknown");
+      console.error("oauth failed", detail);
+      await audit(c.env.DB, "system", "oauth.failed", undefined, { detail });
+      const hint = detail.startsWith("code_exchange")
+        ? "غالبًا INSTAGRAM_APP_SECRET غير صحيح (يجب أن يكون «Instagram app secret» من صفحة إعداد API باستخدام تسجيل دخول Instagram، وليس المفتاح السري في «الإعدادات › أساسي»)، أو INSTAGRAM_APP_ID غير مطابق."
+        : "تحقق من إعدادات التطبيق في Meta ثم أعد المحاولة.";
+      return c.html(oauthResultPage(false, `تعذر إكمال الربط مع Meta. ${hint} — التفاصيل: ${detail}`, st.client, c.env.APP_DEEP_LINK), 502);
     }
     return c.html(oauthResultPage(true, "تم ربط حساب إنستقرام بنجاح. ارجع للتطبيق لمراجعة الأذونات وحالة Webhooks.", st.client, c.env.APP_DEEP_LINK));
   });

@@ -183,13 +183,15 @@ export class HttpMetaClient implements MetaClient {
     const u = new URL("https://graph.instagram.com/access_token");
     u.searchParams.set("grant_type", "ig_exchange_token");
     u.searchParams.set("client_secret", this.opts.appSecret);
-    return this.request<TokenExchange>(u.toString(), this.authGet(shortToken), false);
+    u.searchParams.set("access_token", shortToken); // documented form for this endpoint
+    return this.request<TokenExchange>(u.toString(), { method: "GET" }, false);
   }
 
   async refreshLongLived(token: string): Promise<MetaResult<TokenExchange>> {
     const u = new URL("https://graph.instagram.com/refresh_access_token");
     u.searchParams.set("grant_type", "ig_refresh_token");
-    return this.request<TokenExchange>(u.toString(), this.authGet(token), false);
+    u.searchParams.set("access_token", token);
+    return this.request<TokenExchange>(u.toString(), { method: "GET" }, false);
   }
 
   async getMe(token: string): Promise<MetaResult<MeProfile>> {
