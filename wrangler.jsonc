@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hsn-autoreply",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  // Static PWA assets built by Vite. The Worker handles only the listed paths first.
+  "assets": {
+    "directory": "./dist/web",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/webhooks/*", "/oauth/*", "/meta/*", "/privacy", "/terms", "/data-deletion", "/healthz"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hsn_autoreply",
+      // Replace with the id printed by `wrangler d1 create hsn_autoreply` (see docs/DEPLOY.md)
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    // every minute: durable job queue; daily 03:17 UTC: token refresh + retention cleanup
+    "crons": ["* * * * *", "17 3 * * *"]
+  },
+  "vars": {
+    "INSTAGRAM_APP_ID": "",
+    "META_API_VERSION": "v26.0",
+    "META_API_VERIFIED_AT": "2026-09-25",
+    "PUBLIC_BASE_URL": "https://hsn-autoreply.YOUR-SUBDOMAIN.workers.dev",
+    "ALLOWED_APP_ORIGINS": "https://localhost,capacitor://localhost",
+    "APP_VERSION": "1.0.0",
+    "APP_DEEP_LINK": "com.hsn.autoreply://oauth-done",
+    "RELEASES_URL": "https://github.com/hassanbinageel-wq/hsn-autoreply/releases",
+    "APK_DOWNLOAD_URL": ""
+  }
+}
