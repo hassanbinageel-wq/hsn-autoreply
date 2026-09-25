@@ -1,0 +1,9 @@
+# Local development only (wrangler dev). Copy to .dev.vars — never commit real values.
+INSTAGRAM_APP_ID=000000
+INSTAGRAM_APP_SECRET=dev_only_secret
+META_WEBHOOK_VERIFY_TOKEN=dev_only_verify_token
+# openssl rand -base64 32
+TOKEN_ENC_KEY=REPLACE_WITH_32_BYTES_BASE64
+PASSWORD_PEPPER=dev_only_pepper
+SETUP_TOKEN=dev_only_setup_token_123456
+PUBLIC_BASE_URL=http://localhost:8787

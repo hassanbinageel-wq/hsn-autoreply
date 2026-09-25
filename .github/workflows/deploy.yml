@@ -1,0 +1,69 @@
+# Deploys the Worker (API + webhooks + PWA) to Cloudflare and applies D1 migrations.
+# Manual or on version tags only — never on pull requests.
+# Required secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+# Required variables: D1_DATABASE_ID, PUBLIC_BASE_URL, INSTAGRAM_APP_ID
+# Worker secrets (INSTAGRAM_APP_SECRET, TOKEN_ENC_KEY, ...) are set once with `wrangler secret put`, not here.
+name: Deploy (Cloudflare)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck && npm test
+      - name: Inject non-secret configuration
+        env:
+          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+          INSTAGRAM_APP_ID: ${{ vars.INSTAGRAM_APP_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$D1_DATABASE_ID" =~ ^[0-9a-f-]{36}$ ]] || { echo "::error::vars.D1_DATABASE_ID missing"; exit 1; }
+          [[ "$PUBLIC_BASE_URL" =~ ^https:// ]] || { echo "::error::vars.PUBLIC_BASE_URL must be https"; exit 1; }
+          VERSION=$(node -p "require('./package.json').version")
+          [[ "$GITHUB_REF" == refs/tags/v* ]] && VERSION="${GITHUB_REF#refs/tags/v}"
+          node -e '
+            const fs=require("fs");let s=fs.readFileSync("wrangler.jsonc","utf8");
+            s=s.replace("00000000-0000-0000-0000-000000000000",process.env.D1_DATABASE_ID)
+               .replace(/"PUBLIC_BASE_URL": "[^"]*"/,`"PUBLIC_BASE_URL": "${process.env.PUBLIC_BASE_URL}"`)
+               .replace(/"INSTAGRAM_APP_ID": "[^"]*"/,`"INSTAGRAM_APP_ID": "${process.env.INSTAGRAM_APP_ID}"`)
+               .replace(/"APP_VERSION": "[^"]*"/,`"APP_VERSION": "${process.argv[1]}"`);
+            fs.writeFileSync("wrangler.jsonc",s);' "$VERSION"
+      - run: npm run build:web
+      - name: Apply D1 migrations (forward-only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler d1 migrations apply hsn_autoreply --remote
+      - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy
+      - name: Smoke test
+        env:
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+        run: |
+          curl -fsS "$PUBLIC_BASE_URL/healthz"
+          curl -fsS -o /dev/null "$PUBLIC_BASE_URL/privacy"

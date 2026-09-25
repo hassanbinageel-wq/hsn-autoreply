@@ -1,0 +1,160 @@
+# Builds a SIGNED release APK and publishes it as a GitHub Release.
+# Triggers: a version tag (v1.2.3) or a manual run. Never runs for pull requests.
+# Required secrets (Settings › Secrets and variables › Actions):
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Required variable: VITE_API_BASE  (e.g. https://hsn-autoreply.<you>.workers.dev)
+name: Android release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (x.y.z). A tag v<version> is created on the current commit."
+        required: true
+      build_type:
+        description: "release = signed APK + GitHub Release; debug = test APK artifact only (NOT a release)"
+        type: choice
+        options: [release, debug]
+        default: release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: release
+    permissions:
+      contents: write # create the GitHub Release
+    env:
+      BUILD_TYPE: ${{ github.event.inputs.build_type || 'release' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve version
+        id: v
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${INPUT_VERSION:-${REF_NAME#v}}"
+          if ! [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then echo "Invalid version: $VERSION"; exit 1; fi
+          # versionCode strictly increases with the semantic version: MAJOR*1e6 + MINOR*1e3 + PATCH
+          CODE=$(( ${BASH_REMATCH[1]} * 1000000 + ${BASH_REMATCH[2]} * 1000 + ${BASH_REMATCH[3]} ))
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+
+      - run: npm ci
+      - run: npm test
+
+      - name: Build web bundle for the APK
+        env:
+          VITE_API_BASE: ${{ vars.VITE_API_BASE }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VITE_API_BASE" =~ ^https:// ]]; then echo "::error::Repository variable VITE_API_BASE must be an https URL"; exit 1; fi
+          npm version --no-git-tag-version --allow-same-version "${{ steps.v.outputs.version }}"
+          npx vite build --mode capacitor
+          npx cap sync android
+
+      - name: Decode signing key
+        if: env.BUILD_TYPE == 'release'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_B64" ]; then echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing (see docs/RELEASE.md)"; exit 1; fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "HSN_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Gradle build
+        working-directory: android
+        env:
+          HSN_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          HSN_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          HSN_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          TASK=assembleRelease; [ "$BUILD_TYPE" = debug ] && TASK=assembleDebug
+          ./gradlew --no-daemon "$TASK" -PversionCode=${{ steps.v.outputs.code }} -PversionName=${{ steps.v.outputs.version }}
+
+      - name: Verify signature and checksum
+        id: apk
+        run: |
+          set -euo pipefail
+          V=${{ steps.v.outputs.version }}
+          if [ "$BUILD_TYPE" = release ]; then
+            SRC=android/app/build/outputs/apk/release/app-release.apk
+            OUT=hsn-autoreply-v$V.apk
+          else
+            SRC=android/app/build/outputs/apk/debug/app-debug.apk
+            OUT=hsn-autoreply-v$V-DEBUG-not-for-release.apk
+          fi
+          cp "$SRC" "$OUT"
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$OUT" | tee apksigner.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apksigner.txt
+          sha256sum "$OUT" | tee "$OUT.sha256"
+          echo "file=$OUT" >> "$GITHUB_OUTPUT"
+          echo "sha=$(cut -d' ' -f1 "$OUT.sha256")" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/release.jks"
+
+      - name: Upload build artifact (short retention)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.apk.outputs.file }}
+          path: |
+            ${{ steps.apk.outputs.file }}
+            ${{ steps.apk.outputs.file }}.sha256
+          retention-days: 7
+
+      - name: Publish GitHub Release
+        if: env.BUILD_TYPE == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.v.outputs.version }}
+          FILE: ${{ steps.apk.outputs.file }}
+          SHA: ${{ steps.apk.outputs.sha }}
+        run: |
+          set -euo pipefail
+          CERT=$(grep -m1 "certificate SHA-256 digest" apksigner.txt | awk -F': ' '{print $2}')
+          NOTES_FILE=$(mktemp)
+          {
+            echo "## HSN AutoReply v$V"
+            echo
+            if [ -f "docs/changelog/v$V.md" ]; then cat "docs/changelog/v$V.md"; else git log -n 20 --pretty='- %s' 2>/dev/null || true; fi
+            echo
+            echo "### التحقق"
+            echo "- ملف: \`$FILE\`"
+            echo "- SHA-256: \`$SHA\`"
+            echo "- بصمة شهادة التوقيع (SHA-256): \`$CERT\`"
+            echo "- versionCode: ${{ steps.v.outputs.code }}"
+          } > "$NOTES_FILE"
+          if gh release view "v$V" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "v$V" "$FILE" "$FILE.sha256" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "v$V" "$FILE" "$FILE.sha256" --repo "$GITHUB_REPOSITORY" --title "HSN AutoReply v$V" --notes-file "$NOTES_FILE" --target "$GITHUB_SHA"
+          fi

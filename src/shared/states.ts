@@ -96,4 +96,12 @@ export const AR_LABELS: Record<string, string> = {
   comment: "تعليق",
   story_reply: "رد على ستوري",
   story_mention: "منشن في ستوري",
+  message: "رسالة خاصة",
+  quick_reply: "زر رد سريع",
+  postback: "زر",
+  echo: "صدى رسالة",
+  reaction: "تفاعل",
+  other: "حدث آخر",
+  processed: "تمت المعالجة",
+  ignored: "تم التجاهل",
 };

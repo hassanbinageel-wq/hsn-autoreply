@@ -222,6 +222,10 @@ CREATE INDEX flows_campaign ON conversation_flows(campaign_id, state);
 CREATE UNIQUE INDEX flows_one_open ON conversation_flows(campaign_id, participant_id)
   WHERE state NOT IN ('content_sent','verification_unavailable','expired','failed','cancelled');
 
+-- Used by the per-minute expiry sweep (keeps D1 rows-read low on the free plan).
+CREATE INDEX flows_open_expires ON conversation_flows(expires_at)
+  WHERE state NOT IN ('content_sent','verification_unavailable','expired','failed','cancelled');
+
 CREATE TABLE follow_checks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   flow_id INTEGER REFERENCES conversation_flows(id) ON DELETE CASCADE,

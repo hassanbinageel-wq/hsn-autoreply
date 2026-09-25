@@ -24,24 +24,25 @@
     "@capacitor/network": "^8.0.1",
     "@capacitor/splash-screen": "^8.0.2",
     "@capacitor/status-bar": "^8.0.3",
+    "@fontsource/ibm-plex-sans-arabic": "^5.3.0",
     "hono": "^4.13.9",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "wrangler": "4.141.0",
-    "vite": "8.3.1",
-    "@vitejs/plugin-react": "6.1.1",
-    "tailwindcss": "4.3.3",
-    "@tailwindcss/vite": "4.3.3",
-    "vite-plugin-pwa": "1.3.0",
     "@capacitor/cli": "8.5.2",
-    "vitest": "~4.1.0",
     "@cloudflare/vitest-pool-workers": "0.22.0",
     "@cloudflare/workers-types": "5.20260925.2",
-    "typescript": "~5.9.3",
+    "@tailwindcss/vite": "4.3.3",
     "@types/react": "^19",
-    "@types/react-dom": "^19"
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "6.1.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "~5.9.3",
+    "vite": "8.3.1",
+    "vite-plugin-pwa": "1.3.0",
+    "vitest": "~4.1.0",
+    "wrangler": "4.141.0"
   }
 }
