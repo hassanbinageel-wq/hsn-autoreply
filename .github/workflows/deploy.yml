@@ -2,7 +2,8 @@
 # Manual or on version tags only — never on pull requests.
 # Required secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
 # Required variables: D1_DATABASE_ID, PUBLIC_BASE_URL, INSTAGRAM_APP_ID
-# Worker secrets (INSTAGRAM_APP_SECRET, TOKEN_ENC_KEY, ...) are set once with `wrangler secret put`, not here.
+# Optional secrets synced to the Worker: INSTAGRAM_APP_SECRET, META_WEBHOOK_VERIFY_TOKEN, SETUP_TOKEN
+# TOKEN_ENC_KEY and PASSWORD_PEPPER are generated once on the Worker if missing (never leave Cloudflare).
 name: Deploy (Cloudflare)
 
 on:
@@ -61,6 +62,30 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy
+      - name: Sync Worker secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          S_INSTAGRAM_APP_SECRET: ${{ secrets.INSTAGRAM_APP_SECRET }}
+          S_META_WEBHOOK_VERIFY_TOKEN: ${{ secrets.META_WEBHOOK_VERIFY_TOKEN }}
+          S_SETUP_TOKEN: ${{ secrets.SETUP_TOKEN }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(npx wrangler secret list --format json 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).map(s=>s.name).join(" "))}catch{console.log("")}})')
+          node -e '
+            const crypto=require("crypto"), fs=require("fs");
+            const existing=new Set(process.argv[1].split(" ").filter(Boolean));
+            const out={};
+            for (const k of ["INSTAGRAM_APP_SECRET","META_WEBHOOK_VERIFY_TOKEN","SETUP_TOKEN"]) { const v=process.env["S_"+k]; if (v) out[k]=v; }
+            // Generated once, only if the Worker does not have them yet. Changing them later would break stored data.
+            if (!existing.has("TOKEN_ENC_KEY")) out.TOKEN_ENC_KEY=crypto.randomBytes(32).toString("base64");
+            if (!existing.has("PASSWORD_PEPPER")) out.PASSWORD_PEPPER=crypto.randomBytes(32).toString("hex");
+            // Removing the GitHub secret SETUP_TOKEN (after the first admin setup) also removes it from the Worker.
+            if (!process.env.S_SETUP_TOKEN && existing.has("SETUP_TOKEN")) out.SETUP_TOKEN=null;
+            fs.writeFileSync(process.env.RUNNER_TEMP+"/secrets.json", JSON.stringify(out), {mode:0o600});
+            console.log("Secrets to set:", Object.keys(out).join(", ") || "(none)");' "$EXISTING"
+          if [ "$(cat "$RUNNER_TEMP/secrets.json")" != "{}" ]; then npx wrangler secret bulk "$RUNNER_TEMP/secrets.json"; fi
+          rm -f "$RUNNER_TEMP/secrets.json"
       - name: Smoke test
         env:
           PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}

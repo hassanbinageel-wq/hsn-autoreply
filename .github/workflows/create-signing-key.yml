@@ -1,0 +1,65 @@
+# ONE-TIME: creates the permanent Android release signing key without needing a computer.
+# Needs two secrets first:
+#   GH_SECRETS_TOKEN  – fine-grained token for THIS repo only, permission "Secrets: Read and write"
+#   BACKUP_PASSPHRASE – a passphrase you choose; the backup archive is encrypted with it (AES-256 7z)
+# Result: 4 ANDROID_* secrets are stored, and an encrypted backup artifact is kept for 1 day — download it!
+name: Create signing key (one-time)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type CREATE to generate the permanent key'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    if: github.event.inputs.confirm == 'CREATE'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - name: Refuse if a key already exists
+        env:
+          GH_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$GH_TOKEN" ] || { echo "::error::Add the GH_SECRETS_TOKEN secret first (see docs/RELEASE.md)"; exit 1; }
+          if gh secret list --repo "$GITHUB_REPOSITORY" | grep -q '^ANDROID_KEYSTORE_BASE64'; then
+            echo "::error::A signing key already exists. Replacing it would break app updates."; exit 1
+          fi
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Generate key and store secrets
+        env:
+          GH_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          [ ${#BACKUP_PASSPHRASE} -ge 12 ] || { echo "::error::BACKUP_PASSPHRASE secret must be at least 12 characters"; exit 1; }
+          umask 077
+          D="$RUNNER_TEMP/signing"; mkdir -p "$D"
+          PASS="$(openssl rand -base64 33 | tr -d '/+=' | cut -c1-32)"
+          echo "::add-mask::$PASS"
+          keytool -genkeypair -keystore "$D/hsn-autoreply-release.jks" -storetype PKCS12 -alias hsn-autoreply \
+            -keyalg RSA -keysize 4096 -validity 10000 -storepass "$PASS" -keypass "$PASS" \
+            -dname "CN=HSN AutoReply, O=HSN, C=YE" >/dev/null 2>&1
+          printf '%s' "$PASS" > "$D/keystore-password.txt"
+          keytool -list -v -keystore "$D/hsn-autoreply-release.jks" -storepass "$PASS" | grep -m1 "SHA256:" | tee "$D/certificate-sha256.txt"
+          base64 -w0 "$D/hsn-autoreply-release.jks" | gh secret set ANDROID_KEYSTORE_BASE64 --repo "$GITHUB_REPOSITORY"
+          printf '%s' "$PASS" | gh secret set ANDROID_KEYSTORE_PASSWORD --repo "$GITHUB_REPOSITORY"
+          printf '%s' "$PASS" | gh secret set ANDROID_KEY_PASSWORD --repo "$GITHUB_REPOSITORY"
+          printf '%s' "hsn-autoreply" | gh secret set ANDROID_KEY_ALIAS --repo "$GITHUB_REPOSITORY"
+          7z a -t7z -mhe=on -p"$BACKUP_PASSPHRASE" "$RUNNER_TEMP/hsn-signing-backup.7z" "$D"/* >/dev/null
+          rm -rf "$D"
+      - name: Upload encrypted backup (1 day — download it now)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hsn-signing-backup-ENCRYPTED
+          path: ${{ runner.temp }}/hsn-signing-backup.7z
+          retention-days: 1

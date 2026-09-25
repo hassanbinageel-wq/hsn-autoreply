@@ -2,6 +2,10 @@
 
 ## مرة واحدة: مفتاح التوقيع
 
+**من المتصفح (بدون كمبيوتر):** workflow «Create signing key (one-time)» — الخطوات في [EXTERNAL_STEPS.md](EXTERNAL_STEPS.md#المرحلة-2--مفتاح-توقيع-android--apk).
+
+**أو من جهازك:**
+
 على جهازك (يحتاج JDK 17+ و openssl، و `gh` اختياريًا):
 
 ```bash

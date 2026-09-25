@@ -2,6 +2,8 @@
 
 الخادم والـ PWA في Worker واحد على `https://hsn-autoreply.<subdomain>.workers.dev`. لا تستخدم GitHub Pages للخادم.
 
+> **الطريقة الأسهل (من المتصفح):** [EXTERNAL_STEPS.md](EXTERNAL_STEPS.md) — workflow النشر يضع أسرار الـ Worker بنفسه ويولّد `TOKEN_ENC_KEY` و`PASSWORD_PEPPER` تلقائيًا داخل Cloudflare إن لم تكن موجودة. ما يلي هو الطريقة اليدوية من جهاز.
+
 ## المتطلبات
 - حساب Cloudflare مجاني (لا تضف وسيلة دفع ولا تفعّل Workers Paid).
 - Node 22.
