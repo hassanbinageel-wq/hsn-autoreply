@@ -74,7 +74,15 @@ jobs:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
         run: |
           set -euo pipefail
-          if [[ ! "$VITE_API_BASE" =~ ^https:// ]]; then echo "::error::Repository variable VITE_API_BASE must be an https URL"; exit 1; fi
+          if [[ ! "$VITE_API_BASE" =~ ^https:// ]]; then
+            if [ "$BUILD_TYPE" = debug ]; then
+              echo "::warning::VITE_API_BASE not set — debug build uses a placeholder server and cannot log in"
+              VITE_API_BASE=https://hsn-autoreply.invalid
+            else
+              echo "::error::Repository variable VITE_API_BASE must be an https URL"; exit 1
+            fi
+          fi
+          export VITE_API_BASE
           npm version --no-git-tag-version --allow-same-version "${{ steps.v.outputs.version }}"
           npx vite build --mode capacitor
           npx cap sync android
