@@ -1,7 +1,17 @@
 import { z } from "zod";
+import { MAX_PUBLIC_VARIANTS, MAX_PUBLIC_VARIANT_LENGTH } from "./template";
 
 const text = (max: number) => z.string().trim().max(max);
 const optText = (max: number) => z.string().trim().max(max).nullable().optional();
+/** Public reply phrasings: one per line (rotated automatically). */
+const publicVariants = z
+  .string()
+  .trim()
+  .max(MAX_PUBLIC_VARIANTS * (MAX_PUBLIC_VARIANT_LENGTH + 1))
+  .refine((v) => v.split(/\r?\n/).filter((l) => l.trim()).length <= MAX_PUBLIC_VARIANTS, `حتى ${MAX_PUBLIC_VARIANTS} صيغة (سطر لكل صيغة)`)
+  .refine((v) => v.split(/\r?\n/).every((l) => l.trim().length <= MAX_PUBLIC_VARIANT_LENGTH), `كل صيغة حتى ${MAX_PUBLIC_VARIANT_LENGTH} حرف`)
+  .nullable()
+  .optional();
 
 export const keywordSchema = z.object({
   keyword: text(100).min(1),
@@ -34,9 +44,9 @@ export const campaignInputSchema = z
       .nullable()
       .optional(),
     public_reply_enabled: z.boolean().default(false),
-    public_reply_text: optText(300),
+    public_reply_text: publicVariants,
     public_reply_on_dm_fail: z.enum(["none", "fallback"]).default("none"),
-    public_reply_fallback_text: optText(300),
+    public_reply_fallback_text: publicVariants,
     schedule_start: z.number().int().nullable().optional(),
     schedule_end: z.number().int().nullable().optional(),
     timezone: text(64).default("Asia/Aden"),

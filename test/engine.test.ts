@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { AUTO_RECHECK_DELAY_MS } from "../src/worker/engine/jobs";
+import { SAFE_PUBLIC_REPLIES } from "../src/shared/template";
 import {
   apiError,
   commentPayload,
@@ -156,7 +157,7 @@ describe("follow-gated comment flow", () => {
     expect(meta.sends().map((s) => s.kind)).toEqual(["private_reply", "public_reply"]);
     expect(meta.sends()[0].text).toContain("ابدأ");
     expect(meta.sends()[0].text).not.toContain(SECRET);
-    expect(meta.sends()[1].text).toBe("شيّك الخاص لإكمال الخطوات 🙌");
+    expect(SAFE_PUBLIC_REPLIES).toContain(meta.sends()[1].text); // the "sent" phrasing is never used before delivery
     expect(meta.calls.some((c) => c.kind === "follow_check")).toBe(false); // no consent yet
     expect((await flowsOf())[0].state).toBe("awaiting_user_interaction");
 
@@ -583,5 +584,26 @@ describe("regression: free-text replies while waiting on the follow gate", () =>
     clock.t += 60_000;
     await drain(meta, clock);
     expect(meta.calls.filter((c) => c.kind === "follow_check")).toHaveLength(3); // exactly one deferred check
+  });
+});
+
+describe("public reply phrasings", () => {
+  it("rotates between the phrasings (one per line) so consecutive comments get different replies", async () => {
+    await seedCampaign({ public_reply_enabled: true, public_reply_text: "شكرًا لك 🌟\nتفقد الخاص 📩\n\n  تم الرد عليك بالخاص 🙌  " });
+    const meta = new MockMeta();
+    for (let i = 0; i < 6; i++) await deliver(commentPayload({ text: "كورس", from: `rot_${i}`, commentId: `rot_c_${i}` }), meta);
+    const replies = meta.calls.filter((c) => c.kind === "public_reply").map((c) => c.text);
+    expect(replies).toHaveLength(6);
+    expect(new Set(replies)).toEqual(new Set(["شكرًا لك 🌟", "تفقد الخاص 📩", "تم الرد عليك بالخاص 🙌"]));
+    for (let i = 1; i < replies.length; i++) expect(replies[i]).not.toBe(replies[i - 1]);
+  });
+
+  it("follow-gated: phrasings that claim delivery are skipped until the content is sent", async () => {
+    await seedCampaign({ require_follow: true, public_reply_enabled: true, public_reply_text: "أرسلت لك المحتوى ✅\nكمّل معنا في الخاص 💬" });
+    const meta = new MockMeta();
+    for (let i = 0; i < 4; i++) await deliver(commentPayload({ text: "كورس", from: `g_${i}`, commentId: `g_c_${i}` }), meta);
+    const replies = meta.calls.filter((c) => c.kind === "public_reply").map((c) => c.text);
+    expect(replies.length).toBe(4);
+    expect(replies.every((t) => t === "كمّل معنا في الخاص 💬")).toBe(true);
   });
 });

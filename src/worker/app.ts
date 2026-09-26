@@ -44,7 +44,7 @@ import {
   simulateSchema,
   templateInputSchema,
 } from "../shared/schemas";
-import { claimsDelivery } from "../shared/template";
+import { claimsDelivery, publicReplyVariants } from "../shared/template";
 import { toCsv } from "../shared/csv";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, termsPage } from "./pages";
 
@@ -614,8 +614,8 @@ export function createApp() {
     const d = p.data;
     const now = Date.now();
     const warnings: string[] = [];
-    if (d.require_follow && d.public_reply_enabled && claimsDelivery(d.public_reply_text ?? "")) {
-      warnings.push("الرد العام يدّعي الإرسال قبل التسليم الفعلي؛ سيُستبدل تلقائيًا بـ «شيّك الخاص لإكمال الخطوات 🙌» حتى يُسلَّم المحتوى.");
+    if (d.require_follow && d.public_reply_enabled && publicReplyVariants(d.public_reply_text).some((v) => claimsDelivery(v))) {
+      warnings.push("بعض صيغ الرد العام تدّعي الإرسال قبل التسليم الفعلي؛ لن تُستخدم قبل التسليم (تُستخدم الصيغ الأخرى أو صيغ محايدة تلقائيًا).");
     }
     const cols = {
       name: d.name, type: d.type, priority: d.priority, scope: d.scope, match_all: d.match_all ? 1 : 0, unify_alef: d.unify_alef ? 1 : 0,

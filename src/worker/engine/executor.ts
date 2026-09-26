@@ -1,4 +1,4 @@
-import { renderTemplate, claimsDelivery, contentLinkButton } from "../../shared/template";
+import { renderTemplate, claimsDelivery, contentLinkButton, pickVariant, publicReplyVariants, SAFE_PUBLIC_REPLIES } from "../../shared/template";
 import { TERMINAL_FLOW_STATES } from "../../shared/states";
 import { first, getSetting, run } from "../lib/db";
 import type { MetaError, OutgoingMessage, QuickReply } from "../meta/types";
@@ -41,7 +41,6 @@ const DEFAULTS = {
   verify_unavailable: "نعتذر 🙏 التحقق من المتابعة غير متاح حاليًا، ولن نتمكن من إرسال المحتوى تلقائيًا.",
   verify_limit: "وصلت للحد الأعلى من محاولات التحقق حاليًا 🙏 جرّب مرة ثانية لاحقًا بكتابة «تحقق».",
   start_prompt: "للمتابعة اضغط «ابدأ» أو اكتب: ابدأ",
-  public_safe: "شيّك الخاص لإكمال الخطوات 🙌",
 };
 
 interface Loaded {
@@ -472,12 +471,18 @@ async function execPublicReply(ctx: EngineContext, job: JobRow, owner: string): 
   }
   const vars = { username: l.participant.username, account_username: l.account.username, account_link: accountLink(l.account) };
   let text: string;
+  // Several phrasings (one per line) rotate between comments so the replies don't look like spam.
   if (job.purpose === "fallback") {
-    text = renderTemplate(l.campaign.public_reply_fallback_text ?? "", vars);
+    const pool = publicReplyVariants(l.campaign.public_reply_fallback_text);
+    text = pool.length ? renderTemplate(pickVariant(pool, l.flow.id), vars) : "";
   } else {
-    text = renderTemplate(l.campaign.public_reply_text || DEFAULTS.public_safe, vars);
     // A follow-gated campaign must not publicly claim delivery before the content was actually sent.
-    if (l.campaign.require_follow && l.flow.state !== "content_sent" && claimsDelivery(text)) text = DEFAULTS.public_safe;
+    const mustNotClaim = !!l.campaign.require_follow && l.flow.state !== "content_sent";
+    let pool = publicReplyVariants(l.campaign.public_reply_text);
+    if (mustNotClaim) pool = pool.filter((v) => !claimsDelivery(v));
+    if (!pool.length) pool = SAFE_PUBLIC_REPLIES;
+    text = renderTemplate(pickVariant(pool, l.flow.id), vars);
+    if (mustNotClaim && claimsDelivery(text)) text = pickVariant(SAFE_PUBLIC_REPLIES, l.flow.id);
   }
   text = stripContent(text, l.campaign.final_url);
   let now = ctx.now();

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import { navigate } from "../App";
-import { renderTemplate, claimsDelivery, contentLinkButton, TEMPLATE_VARIABLES } from "../../shared/template";
+import { renderTemplate, claimsDelivery, contentLinkButton, publicReplyVariants, pickVariant, SAFE_PUBLIC_REPLIES, MAX_PUBLIC_VARIANTS, TEMPLATE_VARIABLES } from "../../shared/template";
 import { evaluateMatch } from "../../shared/match";
 import { AR_LABELS } from "../../shared/states";
 import { Alert, Card, Field, PageHeader, Spinner, Toggle, currentTz, toast } from "../components/ui";
@@ -57,7 +57,7 @@ const EMPTY: Form = {
   final_text: "تفضل 🎁 {{content_url}}",
   final_url: "",
   public_reply_enabled: false,
-  public_reply_text: "شيّك الخاص لإكمال الخطوات 🙌",
+  public_reply_text: SAFE_PUBLIC_REPLIES.join("\n"),
   public_reply_on_dm_fail: "none",
   public_reply_fallback_text: "",
   schedule_start: null,
@@ -290,12 +290,38 @@ export function CampaignWizard({ id }: { id: number | null }) {
 
   if (loading) return <Spinner />;
 
+  const publicVariants = publicReplyVariants(form.public_reply_text);
+  const previewPublic = (() => {
+    let pool = form.require_follow ? publicVariants.filter((v) => !claimsDelivery(v)) : publicVariants;
+    if (!pool.length) pool = SAFE_PUBLIC_REPLIES;
+    return renderTemplate(pickVariant(pool, 0), vars);
+  })();
   const templatePicker = (kind: string, field: keyof Form) => {
     const list = templates.filter((t) => t.kind === kind);
     if (!list.length) return null;
     return (
       <select className="input mt-1 text-sm" defaultValue="" onChange={(e) => e.target.value && set(field, list.find((t) => String(t.id) === e.target.value)!.body as any)} aria-label="إدراج قالب">
         <option value="">— استخدم قالبًا —</option>
+        {list.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+      </select>
+    );
+  };
+
+  // Appends a saved template as one more phrasing instead of replacing the list.
+  const templatePickerAppend = (kind: string, field: keyof Form) => {
+    const list = templates.filter((t) => t.kind === kind);
+    if (!list.length) return null;
+    return (
+      <select
+        className="input w-auto text-sm"
+        value=""
+        onChange={(e) => {
+          const t = list.find((x) => String(x.id) === e.target.value);
+          if (t) set(field, [...publicReplyVariants(String(form[field] ?? "")), t.body].join("\n") as any);
+        }}
+        aria-label="إضافة قالب كصيغة"
+      >
+        <option value="">+ من القوالب</option>
         {list.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
       </select>
     );
@@ -450,12 +476,26 @@ export function CampaignWizard({ id }: { id: number | null }) {
             <Toggle checked={form.public_reply_enabled} onChange={(v) => set("public_reply_enabled", v)} label="رد عام على التعليق" description="يُنشر فقط بعد قبول Meta للرد الخاص." />
             {form.public_reply_enabled && (
               <>
-                <Field label="نص الرد العام">
-                  <input className="input" value={form.public_reply_text} onChange={(e) => set("public_reply_text", e.target.value)} />
-                  {templatePicker("public", "public_reply_text")}
+                <Field
+                  label={`صيغ الرد العام (${publicVariants.length} من ${MAX_PUBLIC_VARIANTS})`}
+                  hint="اكتب كل صيغة في سطر مستقل. يختار النظام صيغة مختلفة لكل تعليق بالتناوب حتى لا تتكرر نفس الجملة فيعتبرها إنستقرام سبام. ننصح بـ 4 صيغ أو أكثر، ويمكن استخدام {{username}} لتمييز كل رد."
+                >
+                  <textarea
+                    className="input min-h-[140px]"
+                    value={form.public_reply_text}
+                    onChange={(e) => set("public_reply_text", e.target.value)}
+                    placeholder={SAFE_PUBLIC_REPLIES.join("\n")}
+                  />
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <button type="button" className="btn btn-ghost text-sm" onClick={() => set("public_reply_text", [...new Set([...publicVariants, ...SAFE_PUBLIC_REPLIES])].slice(0, MAX_PUBLIC_VARIANTS).join("\n"))}>
+                      + أضف صيغًا جاهزة
+                    </button>
+                    {templatePickerAppend("public", "public_reply_text")}
+                  </div>
                 </Field>
-                {form.require_follow && claimsDelivery(form.public_reply_text) && (
-                  <Alert tone="warn">هذا النص يدّعي الإرسال قبل التسليم الفعلي. سيُستبدل تلقائيًا بـ «شيّك الخاص لإكمال الخطوات 🙌».</Alert>
+                {publicVariants.length === 1 && <Alert tone="warn">صيغة واحدة فقط ستتكرر تحت كل التعليقات. أضف صيغًا أخرى (سطر لكل صيغة).</Alert>}
+                {form.require_follow && publicVariants.some((v) => claimsDelivery(v)) && (
+                  <Alert tone="warn">بعض الصيغ تدّعي الإرسال (مثل «أرسلت لك»). لن تُستخدم قبل التسليم الفعلي، وتُستخدم بدلها الصيغ الأخرى أو صيغ محايدة.</Alert>
                 )}
                 <Field label="إذا فشل الرد الخاص">
                   <select className="input" value={form.public_reply_on_dm_fail} onChange={(e) => set("public_reply_on_dm_fail", e.target.value as any)}>
@@ -465,7 +505,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
                 </Field>
                 {form.public_reply_on_dm_fail === "fallback" && (
                   <Field label="النص البديل">
-                    <input className="input" value={form.public_reply_fallback_text} onChange={(e) => set("public_reply_fallback_text", e.target.value)} placeholder="راسلنا على الخاص 🙏" />
+                    <textarea className="input min-h-[90px]" value={form.public_reply_fallback_text} onChange={(e) => set("public_reply_fallback_text", e.target.value)} placeholder={"راسلنا على الخاص 🙏\nأرسل لنا رسالة خاصة 💬"} />
                   </Field>
                 )}
               </>
@@ -507,7 +547,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
           previews.push(["تذكير", strip(renderTemplate(form.follow_reminder_text, vars))]);
         }
         previews.push(["المحتوى النهائي", renderTemplate(form.final_text, { ...vars, content_url: link }) + (link && !form.final_text.includes("{{content_url}}") ? `\n${link}` : "")]);
-        if (isComment && form.public_reply_enabled) previews.push(["الرد العام", form.require_follow && claimsDelivery(form.public_reply_text) ? "شيّك الخاص لإكمال الخطوات 🙌" : renderTemplate(form.public_reply_text, vars)]);
+        if (isComment && form.public_reply_enabled) previews.push([`الرد العام${publicVariants.length > 1 ? ` (1 من ${publicVariants.length} صيغ بالتناوب)` : ""}`, previewPublic]);
         return (
           <div className="space-y-4">
             <div className="space-y-2">
@@ -585,7 +625,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
     ? [
         { username: "sara_test", text: sampleText },
         ...(form.public_reply_enabled
-          ? [{ username: account?.username ?? "your_account", isOwner: true, text: form.require_follow && claimsDelivery(form.public_reply_text) ? "شيّك الخاص لإكمال الخطوات 🙌" : renderTemplate(form.public_reply_text, vars) }]
+          ? [{ username: account?.username ?? "your_account", isOwner: true, text: previewPublic }]
           : []),
       ]
     : [];

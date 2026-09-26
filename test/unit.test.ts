@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeText } from "../src/shared/normalize";
 import { evaluateMatch, isControlWord, START_WORDS, VERIFY_WORDS } from "../src/shared/match";
 import { csvCell, toCsv } from "../src/shared/csv";
-import { claimsDelivery, renderTemplate } from "../src/shared/template";
+import { claimsDelivery, pickVariant, publicReplyVariants, renderTemplate } from "../src/shared/template";
 import { canTransition } from "../src/shared/states";
 import { decryptSecret, encryptSecret, hashPassword, signMetaBody, verifyMetaSignature, verifyPassword } from "../src/worker/lib/crypto";
 import { classifyError, interpretFollowResponse, sanitize } from "../src/worker/meta/client";
@@ -204,5 +204,21 @@ describe("content link button", () => {
   it("no link → no button; text of only the link gets a default caption", () => {
     expect(contentLinkButton("شكرًا لك", null)).toBeUndefined();
     expect(contentLinkButton("https://a.example", "https://a.example")?.text).toBe("تفضل 🎁");
+  });
+});
+
+describe("public reply phrasings", () => {
+  it("one phrasing per line, trimmed, blank lines and duplicates dropped", () => {
+    expect(publicReplyVariants(" أ \n\nب\nأ\r\nج ")).toEqual(["أ", "ب", "ج"]);
+    expect(publicReplyVariants(null)).toEqual([]);
+  });
+  it("deterministic rotation", () => {
+    expect([0, 1, 2, 3].map((i) => pickVariant(["a", "b", "c"], i))).toEqual(["a", "b", "c", "a"]);
+  });
+  it("schema limits: up to 20 phrasings of up to 300 characters", () => {
+    const base = { name: "x", type: "comment", match_all: true, final_text: "hi" };
+    expect(campaignInputSchema.safeParse({ ...base, public_reply_text: Array.from({ length: 20 }, (_, i) => `رد ${i}`).join("\n") }).success).toBe(true);
+    expect(campaignInputSchema.safeParse({ ...base, public_reply_text: Array.from({ length: 21 }, (_, i) => `رد ${i}`).join("\n") }).success).toBe(false);
+    expect(campaignInputSchema.safeParse({ ...base, public_reply_text: "x".repeat(301) }).success).toBe(false);
   });
 });

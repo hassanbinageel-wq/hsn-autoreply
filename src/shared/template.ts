@@ -50,3 +50,37 @@ export function contentLinkButton(text: string, finalUrl: string | null | undefi
   if (body.length > 640) return undefined;
   return { title: LINK_BUTTON_TITLE, url, text: body };
 }
+
+/**
+ * Public replies rotate between several phrasings: the same sentence under hundreds of comments can look like
+ * spam to Instagram. One phrasing per line.
+ */
+export const MAX_PUBLIC_VARIANTS = 20;
+export const MAX_PUBLIC_VARIANT_LENGTH = 300;
+
+/** Neutral phrasings (never claim delivery) used when a follow-gated reply must not say "sent". */
+export const SAFE_PUBLIC_REPLIES = [
+  "شيّك الخاص لإكمال الخطوات 🙌",
+  "تفقّد رسائلك الخاصة 📩",
+  "كمّل معنا في الخاص 💬",
+  "الخطوات عندك في الخاص 👌",
+  "شوف الخاص 🙌",
+];
+
+export function publicReplyVariants(text: string | null | undefined): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of (text ?? "").split(/\r?\n/)) {
+    const v = line.trim();
+    if (v && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out.slice(0, MAX_PUBLIC_VARIANTS);
+}
+
+/** Deterministic pick (same flow → same phrasing, so a retry never changes the text); consecutive flows rotate. */
+export function pickVariant<T>(list: readonly T[], seed: number): T {
+  return list[Math.abs(Math.trunc(seed)) % list.length];
+}
