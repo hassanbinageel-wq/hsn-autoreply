@@ -1,0 +1,40 @@
+# Read-only diagnostics: prints the latest events, flows, jobs and follow checks from D1.
+# No tokens, no message text, no secrets are printed.
+name: Diagnose (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Query D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+        run: |
+          set -euo pipefail
+          sed -i "s/00000000-0000-0000-0000-000000000000/$D1_DATABASE_ID/" wrangler.jsonc
+          q() { echo "=== $1"; npx wrangler d1 execute hsn_autoreply --remote --json --command "$2" 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{for(const r of JSON.parse(d)[0].results)console.log(JSON.stringify(r))}catch(e){console.log(d)}})'; }
+          q "events" "SELECT id, event_type, status, reason, campaign_id, flow_id, datetime(received_at/1000,'unixepoch') AS at FROM webhook_events WHERE is_demo=0 ORDER BY id DESC LIMIT 25"
+          q "flows" "SELECT id, campaign_id, state, state_reason, private_reply_status, public_reply_status, content_status, verify_attempts, last_follow_result, datetime(last_verify_at/1000,'unixepoch') AS last_verify, datetime(updated_at/1000,'unixepoch') AS updated FROM conversation_flows WHERE is_demo=0 ORDER BY id DESC LIMIT 10"
+          q "jobs" "SELECT id, kind, purpose, flow_id, status, attempts, substr(last_error,1,160) AS err, datetime(updated_at/1000,'unixepoch') AS at FROM action_jobs WHERE is_demo=0 ORDER BY id DESC LIMIT 30"
+          q "follow_checks" "SELECT id, flow_id, result, field_present, http_status, error_code, datetime(checked_at/1000,'unixepoch') AS at FROM follow_checks WHERE is_demo=0 ORDER BY id DESC LIMIT 15"
+          q "attempts" "SELECT a.job_id, a.outcome, a.http_status, a.error_code, substr(a.error_message,1,160) AS msg FROM action_attempts a ORDER BY a.id DESC LIMIT 20"
+          q "campaigns" "SELECT id, name, type, status, require_follow, verify_cooldown_seconds, max_verify_attempts FROM campaigns WHERE deleted_at IS NULL"
+          q "participants" "SELECT id, datetime(last_user_message_at/1000,'unixepoch') AS last_msg, consent_at IS NOT NULL AS consent, last_follow_status FROM participants WHERE is_demo=0 ORDER BY id DESC LIMIT 5"
