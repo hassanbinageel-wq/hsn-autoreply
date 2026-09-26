@@ -25,9 +25,22 @@ export interface QuickReply {
   payload: string;
 }
 
+export interface LinkButton {
+  title: string;
+  url: string;
+  /** Message text shown above the button (the link itself is usually dropped from it). */
+  text: string;
+}
+
 export interface OutgoingMessage {
+  /** Full plain-text version (used as-is when no template is sent, or as the fallback). */
   text: string;
   quickReplies?: QuickReply[];
+  /**
+   * Instagram does not make links tappable in a business message the person has not replied to yet,
+   * so the content link is sent as a web_url button, which always opens.
+   */
+  linkButton?: LinkButton;
 }
 
 export interface MeProfile {

@@ -214,6 +214,7 @@ describe("follow-gated comment flow", () => {
     expect(s).toHaveLength(1);
     expect(s[0]).toMatchObject({ kind: "private_reply", target: "c_fast" });
     expect(s[0].text).toContain(SECRET);
+    expect(s[0].msg!.linkButton?.url).toBe(SECRET); // the link goes out as a tappable button
   });
 
   it("needs_interaction from the API sends the opening (no content) and waits", async () => {

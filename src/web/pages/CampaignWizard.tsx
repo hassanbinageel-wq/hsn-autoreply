@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import { navigate } from "../App";
-import { renderTemplate, claimsDelivery, TEMPLATE_VARIABLES } from "../../shared/template";
+import { renderTemplate, claimsDelivery, contentLinkButton, TEMPLATE_VARIABLES } from "../../shared/template";
 import { evaluateMatch } from "../../shared/match";
 import { AR_LABELS } from "../../shared/states";
 import { Alert, Card, Field, PageHeader, Spinner, Toggle, currentTz, toast } from "../components/ui";
@@ -563,6 +563,9 @@ export function CampaignWizard({ id }: { id: number | null }) {
   const strip = (t: string) => (link ? t.split(link).join("") : t);
   const contentText = renderTemplate(form.final_text || "تفضل 🎁 {{content_url}}", { ...vars, content_url: link }) + (link && !form.final_text.includes("{{content_url}}") ? `\n${link}` : "");
   const sampleText = testText || "أبغى الكورس";
+  // The content link is delivered as a tappable button (Instagram does not open bare links in a first message).
+  const contentBtn = contentLinkButton(contentText, form.final_url || null);
+  const contentMsg = (note?: string): ChatMsg => ({ from: "bot", text: contentBtn?.text ?? contentText, buttons: contentBtn ? [contentBtn.title] : undefined, note });
   const dm: ChatMsg[] = [];
   if (form.type === "story_reply") dm.push({ from: "user", text: `↩️ ردّ على قصتك\n${sampleText}` });
   if (form.type === "story_mention") dm.push({ from: "user", text: "📣 أشار إليك في قصته" });
@@ -574,9 +577,9 @@ export function CampaignWizard({ id }: { id: number | null }) {
     }
     dm.push({ from: "bot", text: strip(renderTemplate(form.follow_request_text, vars)), buttons: ["تحقّق من المتابعة"] });
     dm.push({ from: "user", text: "تحقّق من المتابعة" });
-    dm.push({ from: "bot", text: contentText, note: "بعد تأكيد المتابعة من Meta" });
+    dm.push(contentMsg("بعد تأكيد المتابعة من Meta"));
   } else {
-    dm.push({ from: "bot", text: contentText, note: isComment ? "رد خاص على التعليق" : undefined });
+    dm.push(contentMsg(isComment ? "رد خاص على التعليق" : undefined));
   }
   const comments: CommentMsg[] = isComment
     ? [

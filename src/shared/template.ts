@@ -32,3 +32,21 @@ const DELIVERY_CLAIMS = [/أرسلت/, /ارسلت/, /أرسلنا/, /ارسلن
 export function claimsDelivery(text: string): boolean {
   return DELIVERY_CLAIMS.some((re) => re.test(text ?? ""));
 }
+
+export const LINK_BUTTON_TITLE = "فتح الرابط 🔗";
+
+/** The content link as a tappable button: the campaign URL, or else the first web link written in the text. */
+export function contentLinkButton(text: string, finalUrl: string | null | undefined): { title: string; url: string; text: string } | undefined {
+  const url = finalUrl?.trim() || text.match(/https?:\/\/[^\s<>"']+/i)?.[0];
+  if (!url || !/^https?:\/\//i.test(url)) return undefined;
+  const without = text
+    .split(url)
+    .join("")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const body = without || "تفضل 🎁";
+  // Template text is limited to 640 characters; longer messages keep the plain-text form.
+  if (body.length > 640) return undefined;
+  return { title: LINK_BUTTON_TITLE, url, text: body };
+}

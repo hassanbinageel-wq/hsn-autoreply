@@ -58,7 +58,13 @@ export function SimulatorPage() {
         if (j.id <= (reset ? 0 : seen)) continue;
         maxId = Math.max(maxId, j.id);
         if (j.kind === "send_message" && j.status === "accepted" && j.result?.text) {
-          nextDm.push({ from: "bot", text: j.result.text, buttons: j.result.quick_replies?.map((q: any) => q.title), note: j.result.channel === "private_reply" ? "رد خاص على التعليق" : undefined });
+          const lb = j.result.link_button;
+          nextDm.push({
+            from: "bot",
+            text: lb?.text ?? j.result.text,
+            buttons: lb ? [lb.title] : j.result.quick_replies?.map((q: any) => q.title),
+            note: j.result.channel === "private_reply" ? "رد خاص على التعليق" : undefined,
+          });
         } else if (j.kind === "send_message" && j.status !== "accepted" && j.status !== "pending") {
           nextDm.push({ from: "bot", text: `⚠️ لم تُرسل (${j.status})${j.last_error ? `: ${j.last_error}` : ""}` });
         } else if (j.kind === "public_reply" && j.status === "accepted" && j.result?.text) {

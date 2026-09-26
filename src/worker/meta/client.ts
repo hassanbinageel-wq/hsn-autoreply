@@ -1,5 +1,6 @@
 import type {
   FollowCheckOutcome,
+  LinkButton,
   MeProfile,
   MediaItem,
   MetaClient,
@@ -247,6 +248,7 @@ export class HttpMetaClient implements MetaClient {
     const url = `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`;
     const textOnly = () =>
       this.request<{ message_id?: string }>(url, this.authJson(token, { recipient: { comment_id: commentId }, message: { text: msg.text } }), true);
+    if (msg.linkButton) return this.sendLinkButton(token, url, { comment_id: commentId }, msg.linkButton, textOnly);
     if (!msg.quickReplies?.length) return textOnly();
     const r = await this.request<{ message_id?: string }>(
       url,
@@ -270,11 +272,38 @@ export class HttpMetaClient implements MetaClient {
   }
 
   sendMessage(token: string, igUserId: string, recipientId: string, msg: OutgoingMessage) {
-    return this.request<{ message_id?: string }>(
-      `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`,
-      this.authJson(token, { recipient: { id: recipientId }, message: this.messageBody(msg) }),
+    const url = `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`;
+    const plain = () => this.request<{ message_id?: string }>(url, this.authJson(token, { recipient: { id: recipientId }, message: this.messageBody(msg) }), true);
+    if (msg.linkButton) return this.sendLinkButton(token, url, { id: recipientId }, msg.linkButton, plain);
+    return plain();
+  }
+
+  /**
+   * Button template with one web_url button (always tappable, unlike a bare link in a first message).
+   * Falls back once to the plain-text message only on a definitive rejection — never after an uncertain outcome.
+   */
+  private async sendLinkButton(
+    token: string,
+    url: string,
+    recipient: Record<string, string>,
+    b: LinkButton,
+    fallback: () => Promise<MetaResult<{ message_id?: string }>>,
+  ) {
+    const r = await this.request<{ message_id?: string }>(
+      url,
+      this.authJson(token, {
+        recipient,
+        message: {
+          attachment: {
+            type: "template",
+            payload: { template_type: "button", text: b.text.slice(0, 640), buttons: [{ type: "web_url", url: b.url, title: b.title.slice(0, 20) }] },
+          },
+        },
+      }),
       true,
     );
+    if (!r.ok && (r.error.kind === "permanent" || r.error.kind === "permission")) return fallback();
+    return r;
   }
 
   replyToComment(token: string, commentId: string, text: string) {

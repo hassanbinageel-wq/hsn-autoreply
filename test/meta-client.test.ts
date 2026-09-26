@@ -60,3 +60,36 @@ describe("private reply with a button", () => {
     expect(calls[0].body.message.quick_replies[0]).toMatchObject({ content_type: "text", title: "ابدأ" });
   });
 });
+
+describe("content link as a tappable button", () => {
+  const link = { text: "رابط الكتيب جاهز\nhttps://example.com/x", linkButton: { title: "فتح الرابط 🔗", url: "https://example.com/x", text: "رابط الكتيب جاهز" } };
+
+  it("DM: sends a button template with a web_url button", async () => {
+    const { f, calls } = fakeFetch([{ status: 200, body: { message_id: "m1" } }]);
+    const r = await client(f).sendMessage("t", "ig1", "u1", link);
+    expect(r.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body.recipient).toEqual({ id: "u1" });
+    const p = calls[0].body.message.attachment.payload;
+    expect(p).toEqual({ template_type: "button", text: "رابط الكتيب جاهز", buttons: [{ type: "web_url", url: "https://example.com/x", title: "فتح الرابط 🔗" }] });
+  });
+
+  it("private reply: web_url button to the comment; plain text (with the link) if Meta rejects the template", async () => {
+    const { f, calls } = fakeFetch([
+      { status: 400, body: { error: { code: 100, message: "Invalid parameter" } } },
+      { status: 200, body: { message_id: "m2" } },
+    ]);
+    const r = await client(f).sendPrivateReply("t", "ig1", "c1", link);
+    expect(r.ok).toBe(true);
+    expect(calls[0].body.recipient).toEqual({ comment_id: "c1" });
+    expect(calls[0].body.message.attachment.payload.buttons[0].type).toBe("web_url");
+    expect(calls[1].body.message).toEqual({ text: "رابط الكتيب جاهز\nhttps://example.com/x" });
+  });
+
+  it("never resends after an uncertain outcome", async () => {
+    const { f, calls } = fakeFetch(["network"]);
+    const r = await client(f).sendMessage("t", "ig1", "u1", link);
+    expect(r.ok).toBe(false);
+    expect(calls).toHaveLength(1);
+  });
+});

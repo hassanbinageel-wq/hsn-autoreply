@@ -8,6 +8,7 @@ import { decryptSecret, encryptSecret, hashPassword, signMetaBody, verifyMetaSig
 import { classifyError, interpretFollowResponse, sanitize } from "../src/worker/meta/client";
 import { parseWebhook } from "../src/worker/meta/webhook-parse";
 import { backoffMs } from "../src/worker/engine/jobs";
+import { contentLinkButton } from "../src/worker/engine/executor";
 import { campaignInputSchema } from "../src/shared/schemas";
 import { commentPayload, messagePayload, IG_ID } from "./helpers";
 
@@ -189,5 +190,19 @@ describe("campaign validation", () => {
   it("requires keywords unless match-all", () => {
     expect(campaignInputSchema.safeParse({ ...base, keywords: [] }).success).toBe(false);
     expect(campaignInputSchema.safeParse({ ...base, keywords: [], match_all: true }).success).toBe(true);
+  });
+});
+
+describe("content link button", () => {
+  it("uses the campaign URL and drops it from the text above the button", () => {
+    const b = contentLinkButton("رابط الكتيب جاهز\nاستفد من الخصم\nhttps://done.example/checkout/11", "https://done.example/checkout/11");
+    expect(b).toEqual({ title: "فتح الرابط 🔗", url: "https://done.example/checkout/11", text: "رابط الكتيب جاهز\nاستفد من الخصم" });
+  });
+  it("falls back to the first link written in the text", () => {
+    expect(contentLinkButton("تفضل https://a.example/p?x=1 وبالتوفيق", null)?.url).toBe("https://a.example/p?x=1");
+  });
+  it("no link → no button; text of only the link gets a default caption", () => {
+    expect(contentLinkButton("شكرًا لك", null)).toBeUndefined();
+    expect(contentLinkButton("https://a.example", "https://a.example")?.text).toBe("تفضل 🎁");
   });
 });

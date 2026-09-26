@@ -1,4 +1,4 @@
-import { renderTemplate, claimsDelivery } from "../../shared/template";
+import { renderTemplate, claimsDelivery, contentLinkButton } from "../../shared/template";
 import { TERMINAL_FLOW_STATES } from "../../shared/states";
 import { first, getSetting, run } from "../lib/db";
 import type { MetaError, OutgoingMessage, QuickReply } from "../meta/types";
@@ -84,6 +84,8 @@ function stripContent(text: string, url: string | null): string {
   return text.split(url).join("").trim();
 }
 
+export { contentLinkButton, LINK_BUTTON_TITLE } from "../../shared/template";
+
 export function buildMessage(
   purpose: string,
   l: Loaded,
@@ -109,7 +111,7 @@ export function buildMessage(
       const body = c.final_text?.trim() ? c.final_text : "تفضل 🎁 {{content_url}}";
       text = renderTemplate(body, { ...vars, content_url: c.final_url ?? "" });
       if (c.final_url && !text.includes(c.final_url)) text = `${text}\n${c.final_url}`.trim();
-      return { text };
+      return { text, linkButton: contentLinkButton(text, c.final_url) };
     }
     case "opening":
       text = renderTemplate(c.opening_text || DEFAULTS.opening, vars);
@@ -404,7 +406,7 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
 
   if (r.ok) {
     await recordAttempt(ctx.db, job, started, now, "accepted", { httpStatus: r.httpStatus });
-    await finishJob(ctx.db, job, owner, "accepted", now, { result: { message_id: r.data.message_id, channel, text: l.flow.is_demo ? msg.text : undefined, quick_replies: l.flow.is_demo ? msg.quickReplies : undefined } });
+    await finishJob(ctx.db, job, owner, "accepted", now, { result: { message_id: r.data.message_id, channel, text: l.flow.is_demo ? msg.text : undefined, quick_replies: l.flow.is_demo ? msg.quickReplies : undefined, link_button: l.flow.is_demo ? msg.linkButton : undefined } });
     if (channel === "private_reply") {
       await run(ctx.db, "UPDATE conversation_flows SET private_reply_status = 'accepted', updated_at = ? WHERE id = ?", now, l.flow.id);
       l.flow.private_reply_status = "accepted";
