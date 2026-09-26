@@ -1,7 +1,7 @@
 import { exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { signMetaBody, b64url } from "../src/worker/lib/crypto";
-import { commentPayload, DB, resetDb, seedAccount, seedCampaign, TEST_ENV } from "./helpers";
+import { commentPayload, DB, deliver, following, messagePayload, MockMeta, notFollowing, resetDb, seedAccount, seedCampaign, TEST_ENV } from "./helpers";
 
 const BASE = "https://hsn.example.workers.dev";
 const SELF = (exports as any).default as { fetch: (r: Request | string, init?: RequestInit) => Promise<Response> };
@@ -230,6 +230,44 @@ describe("demo simulation (no real sends)", () => {
 
     const prod = await DB.prepare("SELECT COUNT(*) AS n FROM action_jobs WHERE is_demo = 0").first<any>();
     expect(prod.n).toBe(0);
+  });
+});
+
+describe("campaign stats", () => {
+  it("breaks results down per post: comments, people reached, new followers, deliveries", async () => {
+    const { body } = await setupAndLogin("app");
+    const auth = { headers: { Authorization: `Bearer ${body.token}` } };
+    await seedAccount();
+    const cid = await seedCampaign({ require_follow: true, scope: "selected", media_ids: ["media_A", "media_B"], verify_cooldown_seconds: 5 });
+    const meta = new MockMeta();
+    const clock = { t: Date.now() };
+    // media_A: user 1 was already following → content right after "ابدأ"
+    await deliver(commentPayload({ text: "كورس", mediaId: "media_A", from: "u1", time: clock.t }), meta, clock);
+    meta.follow = [following()];
+    clock.t += 1000;
+    await deliver(messagePayload({ from: "u1", text: "ابدأ", time: clock.t }), meta, clock);
+    // media_A: user 2 was not following, followed, verified → new follower + delivered
+    await deliver(commentPayload({ text: "كورس", mediaId: "media_A", from: "u2", time: clock.t }), meta, clock);
+    meta.follow = [notFollowing()];
+    clock.t += 1000;
+    await deliver(messagePayload({ from: "u2", text: "ابدأ", time: clock.t }), meta, clock);
+    meta.follow = [following()];
+    clock.t += 10_000;
+    await deliver(messagePayload({ from: "u2", text: "تحقق", time: clock.t }), meta, clock);
+    // media_A: a non-matching comment; media_B: one person who never replied
+    await deliver(commentPayload({ text: "مرحبا", mediaId: "media_A", from: "u3", time: clock.t }), meta, clock);
+    await deliver(commentPayload({ text: "كورس", mediaId: "media_B", from: "u4", time: clock.t }), meta, clock);
+
+    const r = await call(`/api/campaigns/${cid}/stats`, auth);
+    expect(r.status).toBe(200);
+    const s = (await r.json()) as any;
+    const a = s.media.find((m: any) => m.media_id === "media_A");
+    const b = s.media.find((m: any) => m.media_id === "media_B");
+    expect(a).toMatchObject({ comments_total: 3, comments_matched: 2, people: 2, reached: 2, already_following: 1, new_followers: 1, delivered: 2 });
+    expect(b).toMatchObject({ comments_total: 1, comments_matched: 1, people: 1, reached: 1, delivered: 0, waiting: 1 });
+    expect(s.totals).toMatchObject({ people: 3, delivered: 2, new_followers: 1, comments_total: 4 });
+    const other = await call("/api/campaigns/999999/stats", auth);
+    expect(other.status).toBe(404);
   });
 });
 

@@ -8,6 +8,7 @@ import { ConnectionPage } from "./pages/Connection";
 import { MediaPage } from "./pages/Media";
 import { CampaignsPage } from "./pages/Campaigns";
 import { CampaignWizard } from "./pages/CampaignWizard";
+import { CampaignStatsPage } from "./pages/CampaignStats";
 import { TemplatesPage } from "./pages/Templates";
 import { LogsPage } from "./pages/Logs";
 import { SimulatorPage } from "./pages/Simulator";
@@ -143,7 +144,9 @@ export function App() {
 
   let page: ReactNode;
   const m = route.match(/^\/campaigns\/(new|\d+)$/);
+  const ms = route.match(/^\/campaigns\/(\d+)\/stats$/);
   if (m) page = <CampaignWizard id={m[1] === "new" ? null : Number(m[1])} />;
+  else if (ms) page = <CampaignStatsPage id={Number(ms[1])} />;
   else
     switch (route) {
       case "/": page = <DashboardPage />; break;

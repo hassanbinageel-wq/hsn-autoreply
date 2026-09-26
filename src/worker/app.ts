@@ -519,7 +519,8 @@ export function createApp() {
     const rows = await all(
       c.env.DB,
       `SELECT c.*, (SELECT COUNT(*) FROM conversation_flows f WHERE f.campaign_id = c.id AND f.is_demo = 0) AS flows_count,
-              (SELECT COUNT(*) FROM conversation_flows f WHERE f.campaign_id = c.id AND f.is_demo = 0 AND f.state = 'content_sent') AS delivered_count,
+              (SELECT COUNT(DISTINCT f.participant_id) FROM conversation_flows f WHERE f.campaign_id = c.id AND f.is_demo = 0) AS people_count,
+              (SELECT COUNT(DISTINCT f.participant_id) FROM conversation_flows f WHERE f.campaign_id = c.id AND f.is_demo = 0 AND f.state = 'content_sent') AS delivered_count,
               (SELECT m.thumbnail_url FROM campaign_media cm JOIN media_cache m ON m.media_id = cm.media_id WHERE cm.campaign_id = c.id AND m.thumbnail_url IS NOT NULL LIMIT 1) AS cover_url,
               (SELECT COUNT(*) FROM campaign_media cm WHERE cm.campaign_id = c.id) AS media_count
          FROM campaigns c WHERE ${where.join(" AND ")} ORDER BY priority DESC, id DESC`,
@@ -537,6 +538,74 @@ export function createApp() {
       all<{ media_id: string }>(c.env.DB, "SELECT media_id FROM campaign_media WHERE campaign_id = ?", id),
     ]);
     return c.json({ ...row, keywords, media_ids: media.map((m) => m.media_id) });
+  });
+
+  // Per-post performance of one campaign: comments, people reached, follow conversions, deliveries.
+  api.get("/campaigns/:id/stats", async (c) => {
+    const id = idParam(c);
+    const campaign = id && (await first<{ id: number; type: string; require_follow: number }>(c.env.DB, "SELECT id, type, require_follow FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
+    if (!campaign) return apiError(c, 404, "not_found", "الحملة غير موجودة");
+    const days = Number(c.req.query("days") ?? 0);
+    const since = days > 0 ? Date.now() - Math.min(days, 3650) * 86_400_000 : 0;
+    const db = c.env.DB;
+    // One row per flow with the facts we aggregate on (first follow result, did we reach them, did they convert).
+    const perFlow = `
+      SELECT f.id, f.participant_id, COALESCE(f.source_media_id, '') AS media_id, f.state, f.public_reply_status, f.created_at,
+             (SELECT fc.result FROM follow_checks fc WHERE fc.flow_id = f.id ORDER BY fc.id LIMIT 1) AS first_follow,
+             EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'not_following') AS saw_not_following,
+             EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'following') AS saw_following,
+             (f.private_reply_status = 'accepted' OR EXISTS (
+                SELECT 1 FROM action_jobs j WHERE j.flow_id = f.id AND j.kind = 'send_message' AND j.status = 'accepted')) AS reached
+        FROM conversation_flows f
+       WHERE f.campaign_id = ? AND f.is_demo = 0 AND f.created_at >= ?`;
+    const agg = `
+      COUNT(*) AS triggers,
+      COUNT(DISTINCT participant_id) AS people,
+      COUNT(DISTINCT CASE WHEN reached THEN participant_id END) AS reached,
+      COUNT(DISTINCT CASE WHEN first_follow IS NOT NULL THEN participant_id END) AS interacted,
+      COUNT(DISTINCT CASE WHEN first_follow = 'following' THEN participant_id END) AS already_following,
+      COUNT(DISTINCT CASE WHEN saw_not_following AND saw_following THEN participant_id END) AS new_followers,
+      COUNT(DISTINCT CASE WHEN saw_not_following AND NOT saw_following THEN participant_id END) AS not_followed,
+      COUNT(DISTINCT CASE WHEN state = 'content_sent' THEN participant_id END) AS delivered,
+      SUM(state IN ('awaiting_user_interaction','awaiting_follow','checking_follow','ready_to_deliver','delivering','trigger_received')) AS waiting,
+      SUM(state IN ('expired','failed','cancelled','verification_unavailable')) AS dropped,
+      SUM(public_reply_status = 'accepted') AS public_replies,
+      MAX(created_at) AS last_at`;
+    const [rows, totals, comments] = await Promise.all([
+      all<any>(db, `SELECT media_id, ${agg} FROM (${perFlow}) GROUP BY media_id`, id, since),
+      first<any>(db, `SELECT ${agg} FROM (${perFlow})`, id, since),
+      all<{ media_id: string; total: number; matched: number }>(
+        db,
+        `SELECT media_id, COUNT(*) AS total, SUM(campaign_id = ?) AS matched FROM webhook_events
+          WHERE event_type = 'comment' AND is_demo = 0 AND received_at >= ? AND media_id IS NOT NULL
+            AND (media_id IN (SELECT media_id FROM campaign_media WHERE campaign_id = ?) OR campaign_id = ?)
+          GROUP BY media_id`,
+        id, since, id, id,
+      ),
+    ]);
+    const mediaIds = new Set<string>([...rows.map((r) => r.media_id), ...comments.map((r) => r.media_id)].filter(Boolean));
+    for (const m of await all<{ media_id: string }>(db, "SELECT media_id FROM campaign_media WHERE campaign_id = ?", id)) mediaIds.add(m.media_id);
+    const meta = mediaIds.size
+      ? await all<any>(db, `SELECT media_id, caption, permalink, thumbnail_url, media_product_type, posted_at FROM media_cache WHERE media_id IN (${[...mediaIds].map(() => "?").join(",")})`, ...mediaIds)
+      : [];
+    const byId = new Map(meta.map((m) => [m.media_id, m]));
+    const empty = { triggers: 0, people: 0, reached: 0, interacted: 0, already_following: 0, new_followers: 0, not_followed: 0, delivered: 0, waiting: 0, dropped: 0, public_replies: 0, last_at: null };
+    const commentsBy = new Map(comments.map((r) => [r.media_id, r]));
+    const media = [...new Set<string>([...mediaIds, ...rows.map((r) => r.media_id)])].map((mid) => ({
+      ...empty,
+      ...(rows.find((r) => r.media_id === mid) ?? {}),
+      media_id: mid || null,
+      comments_total: commentsBy.get(mid)?.total ?? 0,
+      comments_matched: commentsBy.get(mid)?.matched ?? 0,
+      media: byId.get(mid) ?? null,
+    }));
+    media.sort((a, b) => b.people - a.people || b.comments_total - a.comments_total);
+    return c.json({
+      campaign,
+      since,
+      totals: { ...empty, ...(totals ?? {}), comments_total: comments.reduce((n, r) => n + r.total, 0), comments_matched: comments.reduce((n, r) => n + (r.matched ?? 0), 0) },
+      media,
+    });
   });
 
   async function saveCampaign(c: C, id: number | null) {

@@ -21,6 +21,7 @@ function CardMenu({ c, act }: { c: any; act: (fn: () => Promise<unknown>, msg: s
       <button className="muted rounded-lg px-2 py-1 text-lg" aria-label="خيارات" aria-haspopup="menu" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>⋮</button>
       {open && (
         <div role="menu" className="card absolute bottom-9 left-0 z-20 w-44 overflow-hidden p-0 shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <button role="menuitem" className={item} onClick={() => navigate(`/campaigns/${c.id}/stats`)}>📊 الإحصائيات</button>
           <button role="menuitem" className={item} onClick={() => navigate(`/campaigns/${c.id}`)}>✏️ تعديل</button>
           {c.status === "active" ? (
             <button role="menuitem" className={item} onClick={() => act(() => api(`/api/campaigns/${c.id}/status`, { body: { status: "paused" } }), "تم الإيقاف")}>⏸️ إيقاف</button>
@@ -109,9 +110,15 @@ export function CampaignsPage() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-bold">{c.name}</div>
                   <div className="muted truncate text-xs">
-                    {TYPE_ICON[c.type]} {AR_LABELS[c.type]} · سُلّم {c.delivered_count}
+                    {TYPE_ICON[c.type]} {AR_LABELS[c.type]} · 👥 {c.people_count} · ✅ سُلّم {c.delivered_count}
                   </div>
                 </div>
+                <button
+                  className="rounded-lg px-2 py-1 text-lg hover:bg-[var(--surface-2)]"
+                  title="الإحصائيات"
+                  aria-label="الإحصائيات"
+                  onClick={(e) => { e.stopPropagation(); navigate(`/campaigns/${c.id}/stats`); }}
+                >📊</button>
                 <CardMenu c={c} act={act} />
               </div>
             </div>
