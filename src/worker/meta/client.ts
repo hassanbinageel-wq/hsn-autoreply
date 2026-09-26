@@ -238,13 +238,35 @@ export class HttpMetaClient implements MetaClient {
     return m;
   }
 
-  sendPrivateReply(token: string, igUserId: string, commentId: string, msg: OutgoingMessage) {
-    // Private replies are sent as plain text only (no quick replies) — see docs/META_SETUP.md.
-    return this.request<{ message_id?: string }>(
-      `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`,
-      this.authJson(token, { recipient: { comment_id: commentId }, message: { text: msg.text } }),
+  /**
+   * Private reply (one per comment). If buttons are given, it is sent as a button template with postback
+   * buttons (tapping one is a user interaction that opens the conversation). If Meta rejects the template
+   * with a definitive error, it is re-sent once as plain text — never after an uncertain outcome.
+   */
+  async sendPrivateReply(token: string, igUserId: string, commentId: string, msg: OutgoingMessage) {
+    const url = `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`;
+    const textOnly = () =>
+      this.request<{ message_id?: string }>(url, this.authJson(token, { recipient: { comment_id: commentId }, message: { text: msg.text } }), true);
+    if (!msg.quickReplies?.length) return textOnly();
+    const r = await this.request<{ message_id?: string }>(
+      url,
+      this.authJson(token, {
+        recipient: { comment_id: commentId },
+        message: {
+          attachment: {
+            type: "template",
+            payload: {
+              template_type: "button",
+              text: msg.text.slice(0, 640),
+              buttons: msg.quickReplies.slice(0, 3).map((b) => ({ type: "postback", title: b.title.slice(0, 20), payload: b.payload })),
+            },
+          },
+        },
+      }),
       true,
     );
+    if (!r.ok && (r.error.kind === "permanent" || r.error.kind === "permission")) return textOnly();
+    return r;
   }
 
   sendMessage(token: string, igUserId: string, recipientId: string, msg: OutgoingMessage) {

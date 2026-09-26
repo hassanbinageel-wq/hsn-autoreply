@@ -94,8 +94,9 @@ export function buildMessage(
     content_url: "",
     first_name: null,
   };
-  const verifyQR: QuickReply[] = channel === "dm" ? [{ title: "تحقّق من المتابعة", payload: buttonPayload("verify", l.flow.verify_token) }] : [];
-  const startQR: QuickReply[] = channel === "dm" ? [{ title: "ابدأ", payload: buttonPayload("start", l.flow.start_token) }] : [];
+  // DMs get quick replies; the private reply gets a postback button (with automatic text-only fallback).
+  const verifyQR: QuickReply[] = [{ title: "تحقّق من المتابعة", payload: buttonPayload("verify", l.flow.verify_token) }];
+  const startQR: QuickReply[] = [{ title: "ابدأ", payload: buttonPayload("start", l.flow.start_token) }];
   const verifyFallback = (t: string) => (/تحقق|تحقّق/.test(t) ? t : `${t}\n(أو اكتب: تحقق)`);
   let text: string;
   let quickReplies: QuickReply[] = [];
