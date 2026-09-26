@@ -9,6 +9,7 @@ import { all, audit, first, getSetting, run, setSetting } from "./lib/db";
 import { hashPassword, randomToken, sha256Hex, timingSafeEqual, verifyMetaSignature, verifyPassword } from "./lib/crypto";
 import { parseWebhook } from "./meta/webhook-parse";
 import { INSTAGRAM_SCOPES, WEBHOOK_FIELDS, sanitize } from "./meta/client";
+import type { MediaItem } from "./meta/types";
 import {
   allowedAppOrigins,
   clientIp,
@@ -439,25 +440,37 @@ export function createApp() {
     const a = await currentAccount(c.env.DB);
     if (!a) return c.json({ items: [] });
     const kind = c.req.query("kind") === "story" ? "story" : "media";
-    const items = await all(c.env.DB, "SELECT * FROM media_cache WHERE account_id = ? AND kind = ? ORDER BY posted_at DESC LIMIT 200", a.id, kind);
+    const items = await all(c.env.DB, "SELECT * FROM media_cache WHERE account_id = ? AND kind = ? ORDER BY posted_at DESC LIMIT 1000", a.id, kind);
     return c.json({ items, now: Date.now() });
   });
 
   api.post("/media/refresh", async (c) => {
-    const p = await parseBody(c, z.object({ kind: z.enum(["media", "story"]), after: z.string().max(500).optional() }));
+    const p = await parseBody(c, z.object({ kind: z.enum(["media", "story"]), after: z.string().max(500).optional(), all: z.boolean().default(true) }));
     if (!p.ok) return p.res;
     const a = await currentAccount(c.env.DB);
     if (!a || a.status !== "active") return apiError(c, 409, "no_account", "اربط الحساب أولًا");
     const token = await getAccessToken(c.env, c.env.DB, a);
     if (!token) return apiError(c, 409, "no_token", "التفويض غير متاح — أعد الربط");
     const meta = metaClient(c.env);
-    const r = p.data.kind === "story" ? await meta.listStories(token) : await meta.listMedia(token, p.data.after);
-    if (!r.ok) {
-      if (r.error.kind === "auth") await engineContext(c.env).onAuthError?.(a, r.error.message);
-      return apiError(c, 502 as any, "meta_error", r.error.message);
+    // Follow pagination to fetch every post/reel (bounded: max 12 pages × 50 = 600 items per refresh,
+    // well inside the Workers Free limit of 50 external requests per invocation).
+    const items: MediaItem[] = [];
+    let after = p.data.after;
+    let next: string | null = null;
+    for (let page = 0; page < (p.data.kind === "story" ? 1 : 12); page++) {
+      const r = p.data.kind === "story" ? await meta.listStories(token) : await meta.listMedia(token, after);
+      if (!r.ok) {
+        if (r.error.kind === "auth") await engineContext(c.env).onAuthError?.(a, r.error.message);
+        if (!items.length) return apiError(c, 502 as any, "meta_error", r.error.message);
+        break;
+      }
+      items.push(...r.data.data);
+      next = r.data.paging?.next ? r.data.paging?.cursors?.after ?? null : null;
+      if (!next || !p.data.all) break;
+      after = next;
     }
     const now = Date.now();
-    const stmts = r.data.data.map((m) => {
+    const stmts = items.map((m) => {
       const posted = m.timestamp ? Date.parse(m.timestamp) : null;
       // Only a preview URL is kept (thumbnail for videos, image url for images). Videos are never stored.
       const preview = m.media_type === "VIDEO" ? m.thumbnail_url ?? null : m.thumbnail_url ?? m.media_url ?? null;
@@ -481,7 +494,7 @@ export function createApp() {
       );
     });
     if (stmts.length) await c.env.DB.batch(stmts);
-    return c.json({ count: stmts.length, next: r.data.paging?.next ? r.data.paging?.cursors?.after ?? null : null });
+    return c.json({ count: stmts.length, next });
   });
 
   // ---- Campaigns

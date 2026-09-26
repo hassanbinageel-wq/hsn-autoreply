@@ -218,7 +218,7 @@ export class HttpMetaClient implements MetaClient {
   async listMedia(token: string, after?: string): Promise<MetaResult<Paged<MediaItem>>> {
     const u = new URL(`${this.graphBase}/me/media`);
     u.searchParams.set("fields", "id,caption,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp");
-    u.searchParams.set("limit", "24");
+    u.searchParams.set("limit", "50");
     if (after) u.searchParams.set("after", after);
     return this.request(u.toString(), this.authGet(token), false);
   }

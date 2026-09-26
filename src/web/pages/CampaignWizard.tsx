@@ -108,6 +108,59 @@ function utcToLocalInput(ms: number | null, tz: string): string {
   return d.toISOString().slice(0, 16);
 }
 
+type MediaFilter = "all" | "reels" | "posts";
+
+function MediaPicker({ media, selected, onChange, onRefreshed }: { media: any[]; selected: string[]; onChange: (ids: string[]) => void; onRefreshed: (items: any[]) => void }) {
+  const [filter, setFilter] = useState<MediaFilter>("all");
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ count: number }>("/api/media/refresh", { body: { kind: "media", all: true } });
+      const m = await api("/api/media?kind=media");
+      onRefreshed(m.items);
+      toast(`تم جلب ${r.count} منشور`);
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const isReel = (m: any) => m.media_product_type === "REELS";
+  const list = media.filter(
+    (m) => (filter === "all" || (filter === "reels" ? isReel(m) : !isReel(m))) && (!q.trim() || (m.caption ?? "").toLowerCase().includes(q.trim().toLowerCase())),
+  );
+  const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className="btn btn-primary" onClick={refresh} disabled={busy}>{busy ? "جارٍ الجلب…" : media.length ? "🔄 تحديث منشوراتي" : "جلب منشوراتي من إنستقرام"}</button>
+        <div className="surface-2 flex rounded-xl p-1 text-sm" role="tablist">
+          {([["all", "الكل"], ["reels", "ريلز"], ["posts", "منشورات"]] as const).map(([k, v]) => (
+            <button key={k} type="button" role="tab" aria-selected={filter === k} onClick={() => setFilter(k)} className={`rounded-lg px-3 py-1.5 font-semibold ${filter === k ? "bg-[var(--surface)] shadow" : "muted"}`}>{v}</button>
+          ))}
+        </div>
+        <span className="muted text-sm">{list.length} عنصر · المحدد: {selected.length}</span>
+      </div>
+      {media.length > 0 && <input className="input" placeholder="بحث في وصف المنشور…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="بحث في المنشورات" />}
+      {!media.length && !busy && <Alert tone="info">لم تُجلب منشوراتك بعد — اضغط «جلب منشوراتي».</Alert>}
+      <div className="grid max-h-[28rem] grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
+        {list.map((m) => {
+          const on = selected.includes(m.media_id);
+          return (
+            <button type="button" key={m.media_id} onClick={() => toggle(m.media_id)} title={m.caption ?? ""} className={`relative overflow-hidden rounded-lg border-2 ${on ? "border-brand-600 ring-2 ring-brand-500" : "border-transparent"}`}>
+              {m.thumbnail_url ? <img src={m.thumbnail_url} alt={m.caption ?? ""} loading="lazy" className="aspect-[4/5] w-full object-cover" referrerPolicy="no-referrer" /> : <div className="surface-2 flex aspect-[4/5] items-center justify-center text-2xl">🎞️</div>}
+              {isReel(m) && <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">▶ ريلز</span>}
+              {on && <span className="absolute left-1 top-1 rounded-full bg-brand-700 px-1.5 text-xs text-white">✓</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function KeywordEditor({ kind, keywords, onChange }: { kind: "include" | "exclude"; keywords: Keyword[]; onChange: (k: Keyword[]) => void }) {
   const [kw, setKw] = useState("");
   const [mt, setMt] = useState<Keyword["match_type"]>("contains");
@@ -291,38 +344,12 @@ export function CampaignWizard({ id }: { id: number | null }) {
             )}
             {form.scope === "selected" && (
               <>
-                {!media.length && (
-                  <div className="space-y-2">
-                    <Alert tone="info">لم تُجلب منشوراتك بعد.</Alert>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={async () => {
-                        try {
-                          const r = await api<{ count: number }>("/api/media/refresh", { body: { kind: "media" } });
-                          const m = await api("/api/media?kind=media");
-                          setMedia(m.items);
-                          toast(`تم جلب ${r.count} منشور`);
-                        } catch (e: any) {
-                          toast(e.message, "bad");
-                        }
-                      }}
-                    >
-                      جلب منشوراتي من إنستقرام
-                    </button>
-                  </div>
-                )}
-                <div className="grid max-h-80 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
-                  {media.map((m) => {
-                    const on = form.media_ids.includes(m.media_id);
-                    return (
-                      <button type="button" key={m.media_id} onClick={() => set("media_ids", on ? form.media_ids.filter((x) => x !== m.media_id) : [...form.media_ids, m.media_id])} className={`relative overflow-hidden rounded-lg border-2 ${on ? "border-brand-600" : "border-transparent"}`}>
-                        {m.thumbnail_url ? <img src={m.thumbnail_url} alt={m.caption ?? ""} className="aspect-square w-full object-cover" referrerPolicy="no-referrer" /> : <div className="surface-2 aspect-square" />}
-                        {on && <span className="absolute left-1 top-1 rounded-full bg-brand-700 px-1.5 text-xs text-white">✓</span>}
-                      </button>
-                    );
-                  })}
-                </div>
+                <MediaPicker
+                  media={media}
+                  selected={form.media_ids}
+                  onChange={(ids) => set("media_ids", ids)}
+                  onRefreshed={(items) => setMedia(items)}
+                />
                 <Field label="معرفات يدوية (اختياري — للمتقدمين)" hint="أرقام معرّفات Meta فقط، مفصولة بفاصلة. روابط المنشورات لا تُقبل هنا — اختر المنشور من الصور أعلاه.">
                   <input className="input" dir="ltr" value={form.media_ids.join(",")} onChange={(e) => set("media_ids", e.target.value.split(",").map((s) => s.trim()).filter((s) => /^[0-9A-Za-z_]{1,64}$/.test(s)))} />
                 </Field>
