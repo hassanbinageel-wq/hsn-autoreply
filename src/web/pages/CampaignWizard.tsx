@@ -5,6 +5,7 @@ import { renderTemplate, claimsDelivery, TEMPLATE_VARIABLES } from "../../shared
 import { evaluateMatch } from "../../shared/match";
 import { AR_LABELS } from "../../shared/states";
 import { Alert, Card, Field, PageHeader, Spinner, Toggle, currentTz, toast } from "../components/ui";
+import { PhonePreview, type ChatMsg, type CommentMsg } from "../components/PhonePreview";
 
 type Keyword = { keyword: string; kind: "include" | "exclude"; match_type: "exact" | "word" | "contains" };
 type Form = {
@@ -530,8 +531,53 @@ export function CampaignWizard({ id }: { id: number | null }) {
     }
   };
 
+  // ---- live phone preview (nothing is sent) ----
+  const link = form.final_url || "";
+  const strip = (t: string) => (link ? t.split(link).join("") : t);
+  const contentText = renderTemplate(form.final_text || "تفضل 🎁 {{content_url}}", { ...vars, content_url: link }) + (link && !form.final_text.includes("{{content_url}}") ? `\n${link}` : "");
+  const sampleText = testText || "أبغى الكورس";
+  const dm: ChatMsg[] = [];
+  if (form.type === "story_reply") dm.push({ from: "user", text: `↩️ ردّ على قصتك\n${sampleText}` });
+  if (form.type === "story_mention") dm.push({ from: "user", text: "📣 أشار إليك في قصته" });
+  if (form.require_follow) {
+    if (isComment) {
+      const opening = strip(renderTemplate(form.opening_text || "حياك الله 🙌 رد بكلمة ابدأ", vars));
+      dm.push({ from: "bot", text: opening, buttons: ["ابدأ"], note: "رد خاص على التعليق" });
+      dm.push({ from: "user", text: "ابدأ" });
+    }
+    dm.push({ from: "bot", text: strip(renderTemplate(form.follow_request_text, vars)), buttons: ["تحقّق من المتابعة"] });
+    dm.push({ from: "user", text: "تحقّق من المتابعة" });
+    dm.push({ from: "bot", text: contentText, note: "بعد تأكيد المتابعة من Meta" });
+  } else {
+    dm.push({ from: "bot", text: contentText, note: isComment ? "رد خاص على التعليق" : undefined });
+  }
+  const comments: CommentMsg[] = isComment
+    ? [
+        { username: "sara_test", text: sampleText },
+        ...(form.public_reply_enabled
+          ? [{ username: account?.username ?? "your_account", isOwner: true, text: form.require_follow && claimsDelivery(form.public_reply_text) ? "شيّك الخاص لإكمال الخطوات 🙌" : renderTemplate(form.public_reply_text, vars) }]
+          : []),
+      ]
+    : [];
+  const selected = media.find((m) => form.media_ids.includes(m.media_id));
+  const preview = (
+    <PhonePreview
+      key={form.type}
+      accountUsername={account?.username ?? "your_account"}
+      avatarUrl={account?.profile_picture_url}
+      postImage={isComment ? selected?.thumbnail_url : null}
+      postCaption={isComment ? selected?.caption : form.type === "story_reply" ? "📱 قصتك" : "📣 قصة أشار فيها إليك أحدهم"}
+      comments={comments}
+      dm={dm}
+      defaultTab="dm"
+      footnote="معاينة مباشرة تتحدث أثناء التعديل — لا يُرسل شيء."
+    />
+  );
+
   return (
-    <div className="space-y-4">
+    <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
+      <aside className="order-last lg:order-first lg:sticky lg:top-4 lg:self-start">{preview}</aside>
+      <div className="min-w-0 space-y-4">
       <PageHeader title={id ? "تعديل حملة" : "حملة جديدة"} subtitle={`الخطوة ${step + 1} من ${STEPS.length}: ${STEPS[step]}`} actions={<button className="btn btn-ghost" onClick={save} disabled={saving}>حفظ</button>} />
       <div className="flex gap-1" aria-hidden>
         {STEPS.map((_, i) => (
@@ -547,6 +593,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
       <div className="flex justify-between gap-2">
         <button className="btn btn-ghost" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>→ السابق</button>
         {step < STEPS.length - 1 && <button className="btn btn-primary" onClick={() => setStep((s) => s + 1)}>التالي ←</button>}
+      </div>
       </div>
     </div>
   );

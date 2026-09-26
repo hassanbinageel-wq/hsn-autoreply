@@ -506,7 +506,9 @@ export function createApp() {
     const rows = await all(
       c.env.DB,
       `SELECT c.*, (SELECT COUNT(*) FROM conversation_flows f WHERE f.campaign_id = c.id AND f.is_demo = 0) AS flows_count,
-              (SELECT COUNT(*) FROM conversation_flows f WHERE f.campaign_id = c.id AND f.is_demo = 0 AND f.state = 'content_sent') AS delivered_count
+              (SELECT COUNT(*) FROM conversation_flows f WHERE f.campaign_id = c.id AND f.is_demo = 0 AND f.state = 'content_sent') AS delivered_count,
+              (SELECT m.thumbnail_url FROM campaign_media cm JOIN media_cache m ON m.media_id = cm.media_id WHERE cm.campaign_id = c.id AND m.thumbnail_url IS NOT NULL LIMIT 1) AS cover_url,
+              (SELECT COUNT(*) FROM campaign_media cm WHERE cm.campaign_id = c.id) AS media_count
          FROM campaigns c WHERE ${where.join(" AND ")} ORDER BY priority DESC, id DESC`,
       ...params,
     );

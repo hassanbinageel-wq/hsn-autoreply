@@ -2,6 +2,8 @@ import { useState } from "react";
 import { api } from "../api";
 import { Alert, Card, Field, PageHeader, toast, useAsync } from "../components/ui";
 import { SimResult } from "./CampaignWizard";
+import { PhonePreview, type ChatMsg, type CommentMsg } from "../components/PhonePreview";
+import { REASONS } from "./Logs";
 
 const SCENARIOS: Record<string, { label: string; script: any }> = {
   follower: { label: "متابع", script: { follow: ["following"] } },
@@ -26,15 +28,46 @@ export function SimulatorPage() {
   const [isReply, setIsReply] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [dm, setDm] = useState<ChatMsg[]>([]);
+  const [comments, setComments] = useState<CommentMsg[]>([]);
+  const [seen, setSeen] = useState<number>(0);
+  const { data: account } = useAsync(() => api("/api/account").then((r) => r.account).catch(() => null), []);
 
   const run = async (ev: string, reset: boolean, txt = text) => {
     setBusy(true);
     try {
-      setResult(
-        await api("/api/simulate", {
-          body: { campaign_id: campaignId || undefined, event: ev, text: txt, participant: "sim_user", reset, is_reply: isReply, script: reset ? SCENARIOS[scenario].script : undefined },
-        }),
-      );
+      const r = await api("/api/simulate", {
+        body: { campaign_id: campaignId || undefined, event: ev, text: txt, participant: "sim_user", reset, is_reply: isReply, script: reset ? SCENARIOS[scenario].script : undefined },
+      });
+      setResult(r);
+      // Build the phone transcript: the user's action, then every new bot action from the demo pipeline.
+      const nextDm = reset ? [] : [...dm];
+      const nextComments = reset ? [] : [...comments];
+      if (ev === "comment") nextComments.push({ username: "sim_user", text: txt });
+      else if (ev === "story_reply") nextDm.push({ from: "user", text: `↩️ ردّ على قصتك\n${txt}` });
+      else if (ev === "story_mention") nextDm.push({ from: "user", text: "📣 أشار إليك في قصته" });
+      else if (ev === "verify_button") nextDm.push({ from: "user", text: "تحقّق من المتابعة" });
+      else if (ev === "start_button") nextDm.push({ from: "user", text: "ابدأ" });
+      else nextDm.push({ from: "user", text: txt });
+      if (r.event?.status === "ignored") {
+        const why = REASONS[String(r.event.reason ?? "").split(" ")[0]] ?? r.event.reason;
+        nextDm.push({ from: "bot", text: `ℹ️ تجاهل النظام هذا الحدث: ${why}`, note: "ملاحظة المحاكاة (لا تظهر للشخص)" });
+      }
+      let maxId = reset ? 0 : seen;
+      for (const j of (r.jobs ?? []) as any[]) {
+        if (j.id <= (reset ? 0 : seen)) continue;
+        maxId = Math.max(maxId, j.id);
+        if (j.kind === "send_message" && j.status === "accepted" && j.result?.text) {
+          nextDm.push({ from: "bot", text: j.result.text, buttons: j.result.quick_replies?.map((q: any) => q.title), note: j.result.channel === "private_reply" ? "رد خاص على التعليق" : undefined });
+        } else if (j.kind === "send_message" && j.status !== "accepted" && j.status !== "pending") {
+          nextDm.push({ from: "bot", text: `⚠️ لم تُرسل (${j.status})${j.last_error ? `: ${j.last_error}` : ""}` });
+        } else if (j.kind === "public_reply" && j.status === "accepted" && j.result?.text) {
+          nextComments.push({ username: account?.username ?? "hsn_demo", isOwner: true, text: j.result.text });
+        }
+      }
+      setDm(nextDm);
+      setComments(nextComments);
+      setSeen(maxId);
     } catch (e: any) {
       toast(e.message, "bad");
     } finally {
@@ -49,7 +82,21 @@ export function SimulatorPage() {
       <Card title="1) بدء سيناريو جديد">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="الحملة" hint="اختيار حملة يسمح بتجربة المسودات. بدون اختيار تُستخدم الحملات النشطة.">
-            <select className="input" value={campaignId} onChange={(e) => setCampaignId(e.target.value ? Number(e.target.value) : "")}>
+            <select
+              className="input"
+              value={campaignId}
+              onChange={async (e) => {
+                const id = e.target.value ? Number(e.target.value) : "";
+                setCampaignId(id);
+                if (!id) return;
+                // Pre-fill the text with the campaign's first trigger keyword and pick the matching event type.
+                const c = await api(`/api/campaigns/${id}`).catch(() => null);
+                if (!c) return;
+                setEvent(c.type);
+                const kw = (c.keywords as any[]).find((k) => k.kind === "include")?.keyword;
+                if (kw) setText(c.type === "comment" ? `أبغى ${kw}` : kw);
+              }}
+            >
               <option value="">— الحملات النشطة —</option>
               {campaigns?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
@@ -82,7 +129,20 @@ export function SimulatorPage() {
         </div>
         <p className="muted mt-2 text-xs">الفاصل الزمني بين محاولات التحقق مطبّق هنا كما في الإنتاج — انتظر المدة المحددة في الحملة.</p>
       </Card>
-      {result && <Card title="النتيجة (رسائل لم تُرسل فعليًا)"><SimResult sim={result} /></Card>}
+      {result && (
+        <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+          <PhonePreview
+            key={seen === 0 ? "reset" : "live"}
+            accountUsername={account?.username ?? "hsn_demo"}
+            avatarUrl={account?.profile_picture_url}
+            comments={comments}
+            dm={dm}
+            defaultTab="dm"
+            footnote="محاكاة — لا يُرسل أي شيء إلى إنستقرام."
+          />
+          <Card title="التفاصيل التقنية"><SimResult sim={result} /></Card>
+        </div>
+      )}
     </div>
   );
 }

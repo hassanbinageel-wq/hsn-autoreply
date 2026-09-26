@@ -5,7 +5,7 @@ import { Alert, Badge, Card, Empty, Modal, PageHeader, Spinner, fmtTime, toast, 
 
 type Tab = "events" | "flows" | "jobs";
 
-const REASONS: Record<string, string> = {
+export const REASONS: Record<string, string> = {
   campaign_matched: "طابق حملة",
   no_keyword_match: "لا توجد كلمة مطابقة",
   excluded_keyword: "كلمة استثناء",
