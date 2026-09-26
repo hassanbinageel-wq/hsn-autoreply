@@ -110,15 +110,14 @@ export function CampaignsPage() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-bold">{c.name}</div>
                   <div className="muted truncate text-xs">
-                    {TYPE_ICON[c.type]} {AR_LABELS[c.type]} · 👥 {c.people_count} · ✅ سُلّم {c.delivered_count}
+                    👥 {c.people_count} شخص · ✅ {c.delivered_count} سُلّم
                   </div>
                 </div>
                 <button
-                  className="rounded-lg px-2 py-1 text-lg hover:bg-[var(--surface-2)]"
+                  className="surface-2 shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold hover:ring-1 hover:ring-[var(--color-brand-500)]"
                   title="الإحصائيات"
-                  aria-label="الإحصائيات"
                   onClick={(e) => { e.stopPropagation(); navigate(`/campaigns/${c.id}/stats`); }}
-                >📊</button>
+                >📊 إحصائيات</button>
                 <CardMenu c={c} act={act} />
               </div>
             </div>
