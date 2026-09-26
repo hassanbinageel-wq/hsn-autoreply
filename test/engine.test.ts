@@ -431,6 +431,27 @@ describe("messaging window & uncertain results", () => {
     expect(job.status).toBe("retry_scheduled");
     expect(job.run_at).toBeGreaterThan(Date.now());
   });
+
+  it("a rate-limited send keeps waiting past the normal attempt limit and is delivered once Instagram allows it", async () => {
+    await seedCampaign({});
+    const meta = new MockMeta();
+    meta.privateReply = "rate_limited";
+    const clock = { t: Date.now() };
+    await deliver(commentPayload({ text: "كورس", time: clock.t }), meta, clock);
+    for (let i = 0; i < 12; i++) {
+      clock.t += 2 * 3_600_000;
+      await drain(meta, clock);
+    }
+    let job = await DB.prepare("SELECT status, attempts FROM action_jobs WHERE kind = 'send_message'").first<any>();
+    expect(job.attempts).toBeGreaterThan(5);
+    expect(job.status).toBe("retry_scheduled");
+    meta.privateReply = "ok";
+    clock.t += 2 * 3_600_000;
+    await drain(meta, clock);
+    job = await DB.prepare("SELECT status FROM action_jobs WHERE kind = 'send_message'").first<any>();
+    expect(job.status).toBe("accepted");
+    expect((await flowsOf())[0].state).toBe("content_sent");
+  });
 });
 
 describe("concurrency", () => {

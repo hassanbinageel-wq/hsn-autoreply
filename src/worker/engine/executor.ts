@@ -433,7 +433,7 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
     return { outcome: "uncertain", error: e };
   }
   if (e.kind === "rate_limited" || e.kind === "retryable") {
-    const st = await scheduleRetry(ctx.db, job, owner, now, e.message, e.retryAfterMs);
+    const st = await scheduleRetry(ctx.db, job, owner, now, e.message, e.retryAfterMs, { rateLimited: e.kind === "rate_limited" });
     if (st === "failed") await failFlow(ctx, l, channel, isContent, e.message);
     else if (isContent && l.flow.state === "delivering") await transitionFlow(ctx, l.flow, "ready_to_deliver", {}, "retry_scheduled");
     return { outcome: st, error: e };
@@ -507,7 +507,7 @@ async function execPublicReply(ctx: EngineContext, job: JobRow, owner: string): 
     await finishJob(ctx.db, job, owner, "uncertain", now, { error: e.message });
     status = "uncertain";
   } else if (e.kind === "rate_limited" || e.kind === "retryable") {
-    status = await scheduleRetry(ctx.db, job, owner, now, e.message, e.retryAfterMs);
+    status = await scheduleRetry(ctx.db, job, owner, now, e.message, e.retryAfterMs, { rateLimited: e.kind === "rate_limited" });
   } else {
     if (e.kind === "auth") await ctx.onAuthError?.(l.account, e.message);
     await finishJob(ctx.db, job, owner, "failed", now, { error: `${e.kind}: ${e.message}` });

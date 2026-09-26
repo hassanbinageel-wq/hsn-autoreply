@@ -176,6 +176,8 @@ export function backoffMs(attempt: number, retryAfterMs?: number, rand = Math.ra
   return Math.round(Math.max(jitter, ra));
 }
 
+export const RATE_LIMIT_MAX_ATTEMPTS = 50;
+
 export async function scheduleRetry(
   db: D1Database,
   job: JobRow,
@@ -183,8 +185,12 @@ export async function scheduleRetry(
   now: number,
   error: string,
   retryAfterMs?: number,
+  opts: { rateLimited?: boolean } = {},
 ): Promise<"retry_scheduled" | "failed"> {
-  if (job.attempts >= job.max_attempts) {
+  // Instagram's messaging limits are hourly: a rate-limited send keeps waiting (backoff capped at 1h)
+  // for up to ~2 days instead of failing after a few minutes. The flow TTL / reply windows still apply.
+  const limit = opts.rateLimited ? Math.max(job.max_attempts, RATE_LIMIT_MAX_ATTEMPTS) : job.max_attempts;
+  if (job.attempts >= limit) {
     await finishJob(db, job, owner, "failed", now, { error: `max attempts reached: ${error}` });
     return "failed";
   }
