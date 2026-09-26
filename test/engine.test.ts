@@ -466,3 +466,46 @@ describe("routing of control words across campaigns", () => {
     expect(meta.sends().some((s) => s.text?.includes(SECRET))).toBe(false);
   });
 });
+
+describe("regression: free-text replies while waiting on the follow gate", () => {
+  it("a phrase like «تحقق من المتابعة» or any message triggers a fresh check and delivers once following", async () => {
+    await seedCampaign({ require_follow: true, verify_cooldown_seconds: 5 });
+    const meta = new MockMeta();
+    const clock = { t: Date.now() };
+    // the user already talked to us → immediate check → not following → follow request as the private reply
+    await deliver(messagePayload({ text: "hi", time: clock.t }), meta, clock);
+    meta.follow = [notFollowing()];
+    clock.t += 1000;
+    await deliver(commentPayload({ text: "كورس", time: clock.t }), meta, clock);
+    expect((await flowsOf())[0].state).toBe("awaiting_follow");
+    expect(meta.sends()[0].kind).toBe("private_reply");
+
+    // full phrase (not the single word) — previously ignored as "plain_message_no_trigger"
+    meta.follow = [notFollowing()];
+    clock.t += 10_000;
+    await deliver(messagePayload({ text: "تحقّق من المتابعة", time: clock.t }), meta, clock);
+    expect((await lastEvent()).reason).toBe("verify_requested");
+    expect(meta.sends().some((s) => s.text?.includes(SECRET))).toBe(false);
+
+    // arbitrary text after following → fresh check → content exactly once
+    meta.follow = [following()];
+    clock.t += 10_000;
+    await deliver(messagePayload({ text: "خلاص تابعتك الحين", time: clock.t }), meta, clock);
+    expect(meta.sends().filter((s) => s.text?.includes(SECRET))).toHaveLength(1);
+    expect((await flowsOf())[0].state).toBe("content_sent");
+  });
+
+  it("free text within the cooldown does not trigger an extra check", async () => {
+    await seedCampaign({ require_follow: true, type: "story_reply", match_all: true, keywords: [], verify_cooldown_seconds: 60 });
+    const meta = new MockMeta();
+    const clock = { t: Date.now() };
+    meta.follow = [notFollowing()];
+    await deliver(messagePayload({ text: "واو", storyReply: { id: "s" }, time: clock.t }), meta, clock);
+    clock.t += 1000;
+    await deliver(messagePayload({ text: "تابعت", time: clock.t }), meta, clock);
+    clock.t += 2000;
+    await deliver(messagePayload({ text: "طيب", time: clock.t }), meta, clock);
+    expect((await lastEvent()).reason).toBe("verify_cooldown");
+    expect(meta.calls.filter((c) => c.kind === "follow_check")).toHaveLength(2);
+  });
+});

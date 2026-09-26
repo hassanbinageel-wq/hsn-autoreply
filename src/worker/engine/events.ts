@@ -1,4 +1,4 @@
-import { evaluateMatch, isControlWord, START_WORDS, VERIFY_WORDS, type KeywordRule } from "../../shared/match";
+import { containsControlWord, evaluateMatch, START_WORDS, VERIFY_WORDS, type KeywordRule } from "../../shared/match";
 import { TERMINAL_FLOW_STATES } from "../../shared/states";
 import { all, first, getSetting, isUniqueViolation, run } from "../lib/db";
 import { randomToken } from "../lib/crypto";
@@ -296,14 +296,16 @@ async function routeControl(ctx: EngineContext, row: EventRow, ev: NormalizedEve
   const awaitingStart = flows.find((f) => f.state === "awaiting_user_interaction");
   const awaitingFollow = flows.find((f) => f.state === "awaiting_follow");
 
-  if (isControlWord(text, START_WORDS) || isControlWord(text, VERIFY_WORDS)) {
+  if (containsControlWord(text, START_WORDS) || containsControlWord(text, VERIFY_WORDS)) {
     if (awaitingStart) return handleStart(ctx, row, awaitingStart);
     if (awaitingFollow) return handleVerify(ctx, row, awaitingFollow);
     return { status: "ignored", reason: "flow_busy", flowId: flows[0].id };
   }
-  if (awaitingStart && (await getSetting(ctx.db, "any_reply_counts_as_start", true))) {
-    return handleStart(ctx, row, awaitingStart);
-  }
+  const anyReply = await getSetting(ctx.db, "any_reply_counts_as_start", true);
+  if (awaitingStart && anyReply) return handleStart(ctx, row, awaitingStart);
+  // A person waiting on the follow gate who writes anything (e.g. "تابعتك الحين") gets a FRESH check.
+  // Cooldown + attempt limits still apply, and content is only sent if Meta returns following=true.
+  if (awaitingFollow && anyReply) return handleVerify(ctx, row, awaitingFollow);
   return { status: "ignored", reason: "plain_message_no_trigger" };
 }
 

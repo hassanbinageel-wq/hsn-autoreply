@@ -66,6 +66,12 @@ export function evaluateMatch(text: string, cfg: MatchConfig): MatchResult {
 export const START_WORDS = ["ابدا", "ابدأ", "start", "بدء"];
 export const VERIFY_WORDS = ["تحقق", "تحقّق", "verify", "check", "تم", "تابعت"];
 
+/** True if the message contains one of the control words as a whole word (e.g. "تحقق من المتابعة", "تابعت الحساب"). */
+export function containsControlWord(text: string, words: string[]): boolean {
+  const toks = tokens(normalizeText(text, { unifyAlef: true }));
+  return words.some((w) => toks.includes(normalizeText(w, { unifyAlef: true })));
+}
+
 export function isControlWord(text: string, words: string[]): boolean {
   const norm = normalizeText(text, { unifyAlef: true });
   return words.some((w) => normalizeText(w, { unifyAlef: true }) === norm);
