@@ -18,6 +18,8 @@ import {
 } from "./context";
 import { buttonPayload, processEvent, type EventRow } from "./events";
 import {
+  AUTO_RECHECK,
+  AUTO_RECHECK_DELAY_MS,
   claimNextJob,
   enqueue,
   finishJob,
@@ -25,6 +27,7 @@ import {
   recordAttempt,
   recoverStaleLeases,
   scheduleRetry,
+  VERIFY_CHECK,
   type JobRow,
 } from "./jobs";
 
@@ -203,12 +206,22 @@ async function cancelFlowAndJob(ctx: EngineContext, job: JobRow, owner: string, 
 async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): Promise<ExecResult> {
   const l = await loadAll(ctx, job);
   if (!l) return cancelFlowAndJob(ctx, job, owner, null, "flow_missing");
-  if (l.flow.state !== "checking_follow") {
+  // A silent automatic re-check only runs while the flow is still waiting for the follow (no other check in flight).
+  const silent = job.purpose === AUTO_RECHECK;
+  if (silent && l.flow.state !== "awaiting_follow") {
+    await finishJob(ctx.db, job, owner, "cancelled", ctx.now(), { error: `flow state is ${l.flow.state}` });
+    return { outcome: "cancelled" };
+  }
+  if (!silent && l.flow.state !== "checking_follow") {
     await finishJob(ctx.db, job, owner, "cancelled", ctx.now(), { error: `flow state is ${l.flow.state}` });
     return { outcome: "cancelled" };
   }
   const g = await guard(ctx, l);
   if (g) return cancelFlowAndJob(ctx, job, owner, l, g);
+  if (silent && !(await transitionFlow(ctx, l.flow, "checking_follow", {}, "auto_recheck"))) {
+    await finishJob(ctx.db, job, owner, "cancelled", ctx.now(), { error: "flow changed" });
+    return { outcome: "cancelled" };
+  }
 
   const token = await ctx.getAccessToken(l.account);
   const started = ctx.now();
@@ -224,7 +237,7 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
 
   if (outcome.error?.kind === "auth") await ctx.onAuthError?.(l.account, outcome.error.message);
   // Short transient errors are retried silently a couple of times before telling the user.
-  if (outcome.result === "temporary_error" && outcome.error && ["rate_limited", "retryable"].includes(outcome.error.kind) && job.attempts < 3) {
+  if (!silent && outcome.result === "temporary_error" && outcome.error && ["rate_limited", "retryable"].includes(outcome.error.kind) && job.attempts < 3) {
     await scheduleRetry(ctx.db, job, owner, now, outcome.error.message, outcome.error.retryAfterMs);
     return { outcome: "retry_scheduled", error: outcome.error };
   }
@@ -270,6 +283,13 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
 
   const common = { accountId: l.account.id, flowId: l.flow.id, campaignId: l.campaign.id, isDemo: l.flow.is_demo === 1 };
   const prev = l.flow.last_follow_result;
+  if (silent && outcome.result !== "following") {
+    // Nothing changed yet: go back to waiting without messaging the person (they already got a reply to their tap).
+    const extra = outcome.result === "not_following" ? { last_follow_result: "not_following" } : {};
+    await transitionFlow(ctx, l.flow, "awaiting_follow", extra, `auto_recheck_${outcome.result}`);
+    await finishJob(ctx.db, job, owner, "accepted", now, { result: { follow: outcome.result, field_present: outcome.fieldPresent, silent: true } });
+    return { outcome: outcome.result };
+  }
   switch (outcome.result) {
     case "following":
       await transitionFlow(ctx, l.flow, "ready_to_deliver", { last_follow_result: "following" }, "follow_verified");
@@ -279,6 +299,11 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
       await transitionFlow(ctx, l.flow, "awaiting_follow", { last_follow_result: "not_following" }, "not_following");
       const purpose = prev === "not_following" ? "reminder" : "follow_request";
       await enqueue(ctx.db, { ...common, kind: "send_message", purpose, dedupKey: `msg:${l.flow.id}:${purpose}:${job.id}` }, now);
+      // The person just said they followed, but Instagram can take a few seconds to reflect it:
+      // re-check once, quietly, so the content arrives on its own if the follow lands shortly after.
+      if (job.purpose === VERIFY_CHECK) {
+        await enqueue(ctx.db, { ...common, kind: "follow_check", purpose: AUTO_RECHECK, runAt: now + AUTO_RECHECK_DELAY_MS, dedupKey: `recheck:${l.flow.id}:${job.id}` }, now);
+      }
       break;
     }
     case "needs_interaction":
@@ -499,7 +524,14 @@ export interface RunQueueOptions {
   includeDemo?: boolean;
   /** Stop when the external subrequest budget is nearly used (Workers Free: 50 per invocation). */
   budget?: { used: () => number; limit: number };
+  /**
+   * When the queue is empty, wait for a job that becomes due within this many ms (e.g. a follow re-check a few
+   * seconds out) instead of leaving it to the next cron tick. Bounded by `deadlineMs`; sleeping uses no CPU time.
+   */
+  waitForSoonMs?: number;
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function runQueue(ctx: EngineContext, o: RunQueueOptions = {}): Promise<{ processed: number; recovered: number }> {
   const owner = o.owner ?? crypto.randomUUID();
@@ -511,7 +543,19 @@ export async function runQueue(ctx: EngineContext, o: RunQueueOptions = {}): Pro
     if (o.deadlineMs && Date.now() - started > o.deadlineMs) break;
     if (o.budget && o.budget.used() >= o.budget.limit - 4) break;
     const job = await claimNextJob(ctx.db, owner, ctx.now(), o.leaseMs ?? 60_000, { demoOnly: o.demoOnly, includeDemo: o.includeDemo });
-    if (!job) break;
+    if (!job) {
+      if (!o.waitForSoonMs) break;
+      const next = await first<{ run_at: number }>(
+        ctx.db,
+        `SELECT MIN(run_at) AS run_at FROM action_jobs WHERE status IN ('pending','retry_scheduled') AND kind = 'follow_check'
+           AND is_demo = ${o.demoOnly ? 1 : 0}`,
+      );
+      const wait = next?.run_at != null ? next.run_at - ctx.now() : Infinity;
+      const left = o.deadlineMs ? o.deadlineMs - (Date.now() - started) : o.waitForSoonMs;
+      if (wait > o.waitForSoonMs || wait + 500 > left) break;
+      await sleep(Math.max(0, wait) + 200);
+      continue;
+    }
     processed++;
     try {
       await executeJob(ctx, job, owner);

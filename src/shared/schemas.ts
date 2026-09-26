@@ -43,7 +43,7 @@ export const campaignInputSchema = z
     per_user_cooldown_hours: z.number().int().min(0).max(24 * 365).default(24),
     max_deliveries_per_user: z.number().int().min(0).max(100).default(1),
     max_verify_attempts: z.number().int().min(1).max(50).default(5),
-    verify_cooldown_seconds: z.number().int().min(5).max(86_400).default(30),
+    verify_cooldown_seconds: z.number().int().min(5).max(86_400).default(10),
     process_old_events: z.boolean().default(false),
   })
   .superRefine((c, ctx) => {

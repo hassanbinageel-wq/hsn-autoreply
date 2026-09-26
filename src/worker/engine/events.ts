@@ -14,7 +14,7 @@ import {
   type FlowRow,
   type ParticipantRow,
 } from "./context";
-import { enqueue } from "./jobs";
+import { enqueue, VERIFY_CHECK } from "./jobs";
 
 export interface EventRow {
   id: number;
@@ -326,9 +326,8 @@ async function handleVerify(ctx: EngineContext, row: EventRow, flow: FlowRow): P
   if (!campaign) return { status: "ignored", reason: "campaign_missing", flowId: flow.id };
   if (flow.state !== "awaiting_follow") return { status: "ignored", reason: "flow_busy", flowId: flow.id };
 
-  if (flow.last_verify_at && now - flow.last_verify_at < campaign.verify_cooldown_seconds * 1000) {
-    return { status: "ignored", reason: "verify_cooldown", flowId: flow.id, campaignId: campaign.id };
-  }
+  // A tap inside the cooldown is not dropped: the check is simply scheduled for the end of the cooldown.
+  const runAt = flow.last_verify_at ? Math.max(now, flow.last_verify_at + campaign.verify_cooldown_seconds * 1000) : now;
   let attempts = flow.verify_attempts;
   let windowStart = flow.verify_window_start;
   if (!windowStart || now - windowStart > 24 * 3_600_000) {
@@ -347,14 +346,23 @@ async function handleVerify(ctx: EngineContext, row: EventRow, flow: FlowRow): P
     ctx,
     flow,
     "checking_follow",
-    { verify_attempts: attempts + 1, verify_window_start: windowStart, last_verify_at: now },
-    "verify_requested",
+    { verify_attempts: attempts + 1, verify_window_start: windowStart, last_verify_at: runAt },
+    runAt > now ? "verify_deferred" : "verify_requested",
   );
   if (!ok) return { status: "ignored", reason: "flow_busy", flowId: flow.id };
   await enqueue(
     ctx.db,
-    { kind: "follow_check", accountId: flow.account_id, flowId: flow.id, campaignId: flow.campaign_id, isDemo: flow.is_demo === 1, dedupKey: `follow:${flow.id}:ev${row.id}` },
+    {
+      kind: "follow_check",
+      purpose: VERIFY_CHECK,
+      accountId: flow.account_id,
+      flowId: flow.id,
+      campaignId: flow.campaign_id,
+      isDemo: flow.is_demo === 1,
+      runAt,
+      dedupKey: `follow:${flow.id}:ev${row.id}`,
+    },
     now,
   );
-  return { status: "processed", reason: "verify_requested", campaignId: campaign.id, flowId: flow.id };
+  return { status: "processed", reason: runAt > now ? "verify_deferred" : "verify_requested", campaignId: campaign.id, flowId: flow.id };
 }

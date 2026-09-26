@@ -127,7 +127,7 @@ export function SimulatorPage() {
           <button className="btn btn-ghost" disabled={busy} onClick={() => run("message", false, "تابعت")}>يكتب «تابعت»</button>
           <button className="btn btn-ghost" disabled={busy} onClick={() => run("message", false, "شكرًا")}>رسالة عادية</button>
         </div>
-        <p className="muted mt-2 text-xs">الفاصل الزمني بين محاولات التحقق مطبّق هنا كما في الإنتاج — انتظر المدة المحددة في الحملة.</p>
+        <p className="muted mt-2 text-xs">الفاصل بين محاولات التحقق مطبّق كما في الإنتاج: الضغط داخل الفاصل يُجدول التحقق لنهايته (في المحاكاة يُنفّذ عند تفاعلك التالي بعد انتهاء الفاصل).</p>
       </Card>
       {result && (
         <div className="grid gap-4 lg:grid-cols-[320px_1fr]">

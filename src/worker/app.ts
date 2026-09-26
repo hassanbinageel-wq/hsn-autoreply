@@ -166,7 +166,7 @@ export function createApp() {
     let used = 0;
     const ctx = engineContext(c.env, () => used++);
     c.executionCtx.waitUntil(
-      runQueue(ctx, { maxJobs: 6, includeDemo: false, deadlineMs: 20_000, budget: { used: () => used, limit: 40 } }).catch((e) =>
+      runQueue(ctx, { maxJobs: 8, includeDemo: false, deadlineMs: 25_000, waitForSoonMs: 20_000, budget: { used: () => used, limit: 40 } }).catch((e) =>
         console.error("inline queue", sanitize(String(e))),
       ),
     );

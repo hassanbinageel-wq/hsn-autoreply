@@ -2,6 +2,11 @@ import { all, first, run } from "../lib/db";
 
 export type JobKind = "process_event" | "send_message" | "public_reply" | "follow_check";
 
+/** follow_check purposes: a check the person asked for, and the one quiet automatic re-check that may follow it. */
+export const VERIFY_CHECK = "verify";
+export const AUTO_RECHECK = "auto_recheck";
+export const AUTO_RECHECK_DELAY_MS = 15_000;
+
 /** Jobs whose Meta call has side effects: an interrupted call means an uncertain outcome. */
 export const SIDE_EFFECT_KINDS: readonly JobKind[] = ["send_message", "public_reply"];
 

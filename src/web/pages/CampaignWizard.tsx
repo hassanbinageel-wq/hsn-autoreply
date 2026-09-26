@@ -66,7 +66,7 @@ const EMPTY: Form = {
   per_user_cooldown_hours: 24,
   max_deliveries_per_user: 1,
   max_verify_attempts: 5,
-  verify_cooldown_seconds: 30,
+  verify_cooldown_seconds: 10,
   process_old_events: false,
 };
 
@@ -424,7 +424,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
               <Field label="حد محاولات التحقق (لكل 24 ساعة)">
                 <input className="input" type="number" min={1} max={50} value={form.max_verify_attempts} onChange={(e) => set("max_verify_attempts", Number(e.target.value))} />
               </Field>
-              <Field label="الفاصل بين المحاولات (ثانية)">
+              <Field label="الفاصل بين المحاولات (ثانية)" hint="الضغط داخل الفاصل لا يُهمل: يُجدول التحقق لنهايته تلقائيًا. المقترح 10.">
                 <input className="input" type="number" min={5} value={form.verify_cooldown_seconds} onChange={(e) => set("verify_cooldown_seconds", Number(e.target.value))} />
               </Field>
             </div>

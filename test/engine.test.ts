@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { AUTO_RECHECK_DELAY_MS } from "../src/worker/engine/jobs";
 import {
   apiError,
   commentPayload,
@@ -257,24 +258,72 @@ describe("follow-gated comment flow", () => {
     expect(acc.follow_check_note).toContain("no permission");
   });
 
-  it("enforces verify cooldown and max attempts", async () => {
+  it("a tap inside the verify cooldown is deferred to the end of the cooldown (never dropped); max attempts still enforced", async () => {
     await seedCampaign({ require_follow: true, type: "story_reply", match_all: true, keywords: [], max_verify_attempts: 2, verify_cooldown_seconds: 60 });
     const meta = new MockMeta();
     const clock = { t: Date.now() };
     meta.follow = [notFollowing()];
     await deliver(messagePayload({ text: "واو", storyReply: { id: "st" }, time: clock.t }), meta, clock);
     clock.t += 1000;
-    await deliver(messagePayload({ text: "تحقق", time: clock.t }), meta, clock); // attempt 1
+    await deliver(messagePayload({ text: "تحقق", time: clock.t }), meta, clock); // attempt 1 → check now
+    const checksAfter1 = meta.calls.filter((c) => c.kind === "follow_check").length;
     clock.t += 5_000;
-    await deliver(messagePayload({ text: "تحقق", time: clock.t }), meta, clock); // cooldown
-    expect((await lastEvent()).reason).toBe("verify_cooldown");
-    clock.t += 61_000;
-    await deliver(messagePayload({ text: "تحقق", time: clock.t }), meta, clock); // attempt 2
+    await deliver(messagePayload({ text: "تحقق", time: clock.t }), meta, clock); // attempt 2 → scheduled for the end of the cooldown
+    expect((await lastEvent()).reason).toBe("verify_deferred");
+    expect(meta.calls.filter((c) => c.kind === "follow_check")).toHaveLength(checksAfter1);
+    expect((await flowsOf())[0].state).toBe("checking_follow");
+    clock.t += 56_000; // cooldown over → the deferred check runs on its own
+    await drain(meta, clock);
+    expect(meta.calls.filter((c) => c.kind === "follow_check").length).toBeGreaterThan(checksAfter1);
     clock.t += 61_000;
     await deliver(messagePayload({ text: "تحقق", time: clock.t }), meta, clock); // exceeded
     expect((await lastEvent()).reason).toBe("verify_attempts_exceeded");
-    expect(meta.calls.filter((c) => c.kind === "follow_check")).toHaveLength(3);
     expect(meta.sends().at(-1)!.text).toContain("الأعلى من محاولات التحقق");
+  });
+
+  it("after a 'not following' result on a verify tap, re-checks once quietly and delivers if the follow lands", async () => {
+    await seedCampaign({ require_follow: true, type: "story_reply", match_all: true, keywords: [], verify_cooldown_seconds: 10 });
+    const meta = new MockMeta();
+    const clock = { t: Date.now() };
+    meta.follow = [notFollowing()];
+    await deliver(messagePayload({ text: "واو", storyReply: { id: "st" }, time: clock.t }), meta, clock); // follow request
+    clock.t += 3000;
+    await deliver(messagePayload({ text: "تحقق", time: clock.t }), meta, clock); // still not following (Instagram lag)
+    const sendsBefore = meta.sends().length;
+    expect(meta.sends().some((s) => s.text?.includes(SECRET))).toBe(false);
+    // the follow now shows up; nobody taps anything
+    meta.follow = [following()];
+    clock.t += AUTO_RECHECK_DELAY_MS;
+    await drain(meta, clock);
+    const content = meta.sends().filter((s) => s.text?.includes(SECRET));
+    expect(content).toHaveLength(1);
+    expect(meta.sends()).toHaveLength(sendsBefore + 1);
+    expect((await flowsOf())[0].state).toBe("content_sent");
+  });
+
+  it("the quiet re-check sends nothing when the person still does not follow, and happens only once", async () => {
+    await seedCampaign({ require_follow: true, type: "story_reply", match_all: true, keywords: [], verify_cooldown_seconds: 10 });
+    const meta = new MockMeta();
+    const clock = { t: Date.now() };
+    meta.follow = [notFollowing()];
+    await deliver(messagePayload({ text: "واو", storyReply: { id: "st" }, time: clock.t }), meta, clock);
+    clock.t += 3000;
+    await deliver(messagePayload({ text: "تحقق", time: clock.t }), meta, clock);
+    const sends = meta.sends().length;
+    const checks = meta.calls.filter((c) => c.kind === "follow_check").length;
+    for (let i = 0; i < 3; i++) {
+      clock.t += AUTO_RECHECK_DELAY_MS;
+      await drain(meta, clock);
+    }
+    expect(meta.sends()).toHaveLength(sends);
+    expect(meta.calls.filter((c) => c.kind === "follow_check")).toHaveLength(checks + 1);
+    const [f] = await flowsOf();
+    expect(f.state).toBe("awaiting_follow");
+    // the person can still verify by hand afterwards
+    meta.follow = [following()];
+    clock.t += 1000;
+    await deliver(messagePayload({ text: "تحقق", time: clock.t }), meta, clock);
+    expect(meta.sends().filter((s) => s.text?.includes(SECRET))).toHaveLength(1);
   });
 });
 
@@ -495,7 +544,7 @@ describe("regression: free-text replies while waiting on the follow gate", () =>
     expect((await flowsOf())[0].state).toBe("content_sent");
   });
 
-  it("free text within the cooldown does not trigger an extra check", async () => {
+  it("free text within the cooldown schedules one check for the end of the cooldown instead of an immediate extra one", async () => {
     await seedCampaign({ require_follow: true, type: "story_reply", match_all: true, keywords: [], verify_cooldown_seconds: 60 });
     const meta = new MockMeta();
     const clock = { t: Date.now() };
@@ -505,7 +554,12 @@ describe("regression: free-text replies while waiting on the follow gate", () =>
     await deliver(messagePayload({ text: "تابعت", time: clock.t }), meta, clock);
     clock.t += 2000;
     await deliver(messagePayload({ text: "طيب", time: clock.t }), meta, clock);
-    expect((await lastEvent()).reason).toBe("verify_cooldown");
+    expect((await lastEvent()).reason).toBe("verify_deferred");
+    expect(meta.calls.filter((c) => c.kind === "follow_check")).toHaveLength(2); // scheduled, not run yet
+    await deliver(messagePayload({ text: "طيب طيب", time: clock.t }), meta, clock); // more text while one is pending
     expect(meta.calls.filter((c) => c.kind === "follow_check")).toHaveLength(2);
+    clock.t += 60_000;
+    await drain(meta, clock);
+    expect(meta.calls.filter((c) => c.kind === "follow_check")).toHaveLength(3); // exactly one deferred check
   });
 });

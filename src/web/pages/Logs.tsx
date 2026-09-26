@@ -29,6 +29,7 @@ export const REASONS: Record<string, string> = {
   reaction_not_a_trigger: "تفاعل إيموجي — ليس مشغلًا",
   flow_start: "بدأ التحقق بعد تفاعل المستخدم",
   verify_requested: "طلب تحقق جديد",
+  verify_deferred: "طلب تحقق مجدول لنهاية الفاصل",
   story_not_identifiable: "لا يمكن تحديد الستوري",
   unknown_account: "حساب غير معروف",
 };
