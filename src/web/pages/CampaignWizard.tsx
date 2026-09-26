@@ -120,7 +120,7 @@ function KeywordEditor({ kind, keywords, onChange }: { kind: "include" | "exclud
   return (
     <div className="space-y-2">
       <div className="flex flex-col gap-2 sm:flex-row">
-        <input className="input" value={kw} onChange={(e) => setKw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add())} placeholder={kind === "include" ? "مثال: كورس، دورة، course" : "مثال: سعر، كم"} aria-label={kind === "include" ? "كلمة تشغيل" : "كلمة استثناء"} />
+        <input className="input" value={kw} onChange={(e) => setKw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add())} onBlur={add} placeholder={kind === "include" ? "مثال: كورس، دورة، course" : "مثال: سعر، كم"} aria-label={kind === "include" ? "كلمة تشغيل" : "كلمة استثناء"} />
         <select className="input sm:w-48" value={mt} onChange={(e) => setMt(e.target.value as Keyword["match_type"])} aria-label="نوع المطابقة">
           <option value="contains">يحتوي على (عبارة جزئية)</option>
           <option value="word">كلمة/عبارة كاملة</option>
@@ -204,7 +204,9 @@ export function CampaignWizard({ id }: { id: number | null }) {
       return r.id;
     } catch (e) {
       const err = e as ApiError;
-      setErrors(err.details ?? [{ path: "", message: err.message }]);
+      const friendly = (d: { path: string; message: string }) =>
+        d.path.startsWith("media_ids") ? { path: "", message: "معرّف منشور غير صالح في «المعرفات اليدوية» — امسح الخانة واختر المنشور من الصور، أو اختر «جميع المنشورات»." } : d;
+      setErrors((err.details ?? [{ path: "", message: err.message }]).map(friendly));
       toast(err.message, "bad");
       return null;
     } finally {
@@ -288,7 +290,27 @@ export function CampaignWizard({ id }: { id: number | null }) {
             )}
             {form.scope === "selected" && (
               <>
-                {!media.length && <Alert tone="info">لا توجد عناصر محفوظة — حدّثها من صفحة «المنشورات والستوري»، أو أدخل المعرف يدويًا.</Alert>}
+                {!media.length && (
+                  <div className="space-y-2">
+                    <Alert tone="info">لم تُجلب منشوراتك بعد.</Alert>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={async () => {
+                        try {
+                          const r = await api<{ count: number }>("/api/media/refresh", { body: { kind: "media" } });
+                          const m = await api("/api/media?kind=media");
+                          setMedia(m.items);
+                          toast(`تم جلب ${r.count} منشور`);
+                        } catch (e: any) {
+                          toast(e.message, "bad");
+                        }
+                      }}
+                    >
+                      جلب منشوراتي من إنستقرام
+                    </button>
+                  </div>
+                )}
                 <div className="grid max-h-80 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
                   {media.map((m) => {
                     const on = form.media_ids.includes(m.media_id);
@@ -300,8 +322,8 @@ export function CampaignWizard({ id }: { id: number | null }) {
                     );
                   })}
                 </div>
-                <Field label="معرفات يدوية (اختياري)" hint="افصل بفاصلة">
-                  <input className="input" dir="ltr" value={form.media_ids.join(",")} onChange={(e) => set("media_ids", e.target.value.split(",").map((s) => s.trim()).filter(Boolean))} />
+                <Field label="معرفات يدوية (اختياري — للمتقدمين)" hint="أرقام معرّفات Meta فقط، مفصولة بفاصلة. روابط المنشورات لا تُقبل هنا — اختر المنشور من الصور أعلاه.">
+                  <input className="input" dir="ltr" value={form.media_ids.join(",")} onChange={(e) => set("media_ids", e.target.value.split(",").map((s) => s.trim()).filter((s) => /^[0-9A-Za-z_]{1,64}$/.test(s)))} />
                 </Field>
               </>
             )}
