@@ -112,7 +112,7 @@ export async function recoverMissedComments(ctx: EngineContext, opts: { maxMedia
     for (const r of rows) known.add(r.dedup_key);
   }
   const fresh = found.filter((e) => !known.has(e.dedupKey));
-  if (fresh.length) await storeEvents(ctx.db, fresh, { now, touchAccount: false });
+  if (fresh.length) await storeEvents(ctx.db, fresh, { now, touchAccount: false, recovered: true });
   return { media: media.length, fetched, recovered: fresh.length };
 }
 

@@ -40,6 +40,17 @@ describe("recovery of comments whose webhook never arrived", () => {
     expect((await recoverMissedComments(makeCtx(meta))).recovered).toBe(0);
     await deliver(commentPayload({ text: "أبغى الكورس", commentId: "missed_1", mediaId: "media_A", from: "u_missed" }), meta);
     expect(meta.sends().filter((s) => s.kind === "private_reply")).toHaveLength(2);
+    // the app can list what was recovered: who, on which post, and what was sent
+    await DB.prepare("INSERT INTO media_cache (account_id, media_id, kind, caption, fetched_at) SELECT id, 'media_A', 'media', 'ريل الكورس', 0 FROM instagram_accounts").run();
+    await call("/api/auth/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ setup_token: "test_setup_token_123456", username: "admin", password: "a-very-strong-password" }) });
+    const lr = await call("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", password: "a-very-strong-password", client: "app" }) });
+    const auth = { Authorization: `Bearer ${((await lr.json()) as any).token}` };
+    const items = ((await (await call("/api/recover/items", { headers: auth })).json()) as any).items;
+    expect(items.map((i: any) => i.sender_username).sort()).toEqual(["missed_user", "x"]);
+    const got = items.find((i: any) => i.sender_username === "missed_user");
+    expect(got).toMatchObject({ text: "أبغى الكورس", caption: "ريل الكورس", status: "processed", campaign_name: "حملة" });
+    expect(got.sent.length).toBeGreaterThan(0);
+    expect(items.find((i: any) => i.sender_username === "x").status).toBe("ignored");
     // recovered events do not pretend a webhook arrived
     const acc = await DB.prepare("SELECT last_webhook_at FROM instagram_accounts").first<any>();
     expect(acc.last_webhook_at).toBeTruthy();

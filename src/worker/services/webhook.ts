@@ -7,7 +7,7 @@ import type { NormalizedEvent } from "../meta/webhook-parse";
 export async function storeEvents(
   db: D1Database,
   events: NormalizedEvent[],
-  opts: { isDemo?: boolean; now?: number; forcedCampaignId?: number; touchAccount?: boolean } = {},
+  opts: { isDemo?: boolean; now?: number; forcedCampaignId?: number; touchAccount?: boolean; recovered?: boolean } = {},
 ): Promise<number> {
   if (!events.length) return 0;
   const now = opts.now ?? Date.now();
@@ -18,8 +18,8 @@ export async function storeEvents(
       db
         .prepare(
           `INSERT OR IGNORE INTO webhook_events
-            (dedup_key, account_ig_id, event_type, sender_id, sender_username, media_id, text, payload, event_time, received_at, is_demo)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (dedup_key, account_ig_id, event_type, sender_id, sender_username, media_id, text, payload, event_time, received_at, is_demo, recovered)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           dedupKey,
@@ -33,6 +33,7 @@ export async function storeEvents(
           ev.time,
           now,
           opts.isDemo ? 1 : 0,
+          opts.recovered ? 1 : 0,
         ),
     );
     // Unknown events are logged but need no processing job. (Echoes are processed: they feed the inbox.)

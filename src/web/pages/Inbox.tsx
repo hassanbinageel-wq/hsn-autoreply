@@ -14,7 +14,7 @@ function Thread({ id, onSent }: { id: number; onSent: () => void }) {
   const [data, setData] = useState<any>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   const load = () => api(`/api/inbox/${id}`).then(setData).catch((e) => toast(e.message, "bad"));
   useEffect(() => {
     setData(null);
@@ -23,7 +23,11 @@ function Thread({ id, onSent }: { id: number; onSent: () => void }) {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [data?.messages?.length]);
+  // Scroll only the conversation box (never the page) to the newest message.
+  useEffect(() => {
+    const el = boxRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [data?.messages?.length]);
 
   const send = async () => {
     if (!text.trim()) return;
@@ -44,7 +48,7 @@ function Thread({ id, onSent }: { id: number; onSent: () => void }) {
   const p = data.participant;
   const remaining = data.window_expires_at ? data.window_expires_at - Date.now() : 0;
   return (
-    <div className="flex h-full min-h-[60vh] flex-col">
+    <div className="flex flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] pb-3">
         {p.username ? (
           <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="text-lg font-bold hover:underline" dir="ltr">@{p.username}</a>
@@ -58,7 +62,7 @@ function Thread({ id, onSent }: { id: number; onSent: () => void }) {
           </span>
         ))}
       </div>
-      <div className="flex-1 space-y-2 overflow-y-auto py-3">
+      <div ref={boxRef} className="h-[55vh] min-h-[280px] space-y-2 overflow-y-auto overscroll-contain py-3">
         {data.messages.map((m: any) => (
           <div key={m.id} className={`flex ${m.direction === "in" ? "justify-start" : "justify-end"}`}>
             <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${m.direction === "in" ? "surface-2 rounded-br-md" : "rounded-bl-md bg-gradient-to-l from-violet-600 to-indigo-500 text-white"}`}>
@@ -70,14 +74,13 @@ function Thread({ id, onSent }: { id: number; onSent: () => void }) {
             </div>
           </div>
         ))}
-        <div ref={endRef} />
       </div>
       {data.window_open ? (
         <div className="border-t border-[var(--border)] pt-3">
           <div className="muted mb-1 text-xs">يمكنك الرد خلال {left(remaining)} (نافذة 24 ساعة من آخر رسالة من الشخص).</div>
-          <div className="flex gap-2">
+          <div className="flex items-end gap-2">
             <textarea
-              className="input min-h-[44px] flex-1"
+              className="input min-h-[44px] min-w-0 flex-1"
               rows={2}
               maxLength={1000}
               value={text}
@@ -87,7 +90,7 @@ function Thread({ id, onSent }: { id: number; onSent: () => void }) {
               }}
               placeholder="اكتب ردك…"
             />
-            <button className="btn btn-primary self-end" disabled={busy || !text.trim()} onClick={send}>إرسال</button>
+            <button className="btn btn-primary shrink-0" disabled={busy || !text.trim()} onClick={send}>{busy ? "…" : "إرسال"}</button>
           </div>
         </div>
       ) : (
@@ -141,12 +144,14 @@ export function InboxPage() {
             </div>
           )}
         </div>
-        <div className={`card p-4 ${open === null ? "hidden lg:block" : ""}`}>
+        <div className={`card min-w-0 p-4 ${open === null ? "hidden lg:block" : ""}`}>
           {open === null ? (
             <p className="muted py-10 text-center text-sm">اختر محادثة من القائمة.</p>
           ) : (
             <>
-              <button className="btn btn-ghost mb-2 lg:hidden" onClick={() => setOpen(null)}>→ رجوع</button>
+              <div className="mb-2 lg:hidden">
+                <button className="btn btn-ghost" onClick={() => setOpen(null)}>→ رجوع</button>
+              </div>
               <Thread id={open} onSent={load} />
             </>
           )}

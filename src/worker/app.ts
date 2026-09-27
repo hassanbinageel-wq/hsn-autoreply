@@ -970,6 +970,41 @@ export function createApp() {
     return c.json(r);
   });
 
+  // Comments picked up by the recovery: who commented, on which post, what happened and what was sent.
+  api.get("/recover/items", async (c) => {
+    const days = Math.min(Math.max(Number(c.req.query("days") ?? 7), 1), 30);
+    const since = Date.now() - days * 86_400_000;
+    const items = await all<any>(
+      c.env.DB,
+      `SELECT e.id, e.sender_username, e.text, e.media_id, e.status, e.reason, e.received_at, e.event_time, e.flow_id,
+              c.name AS campaign_name, f.state, f.participant_id, f.public_reply_status, f.link_clicks,
+              m.thumbnail_url, m.caption, m.permalink
+         FROM webhook_events e
+         LEFT JOIN campaigns c ON c.id = e.campaign_id
+         LEFT JOIN conversation_flows f ON f.id = e.flow_id
+         LEFT JOIN media_cache m ON m.media_id = e.media_id
+        WHERE e.recovered = 1 AND e.is_demo = 0 AND e.received_at > ?
+        ORDER BY e.id DESC LIMIT 200`,
+      since,
+    );
+    const pids = [...new Set(items.map((i) => i.participant_id).filter(Boolean))] as number[];
+    const msgs = pids.length
+      ? await all<any>(
+          c.env.DB,
+          `SELECT participant_id, text, kind, created_at FROM messages
+            WHERE direction = 'out' AND source = 'bot' AND created_at > ? AND participant_id IN (${pids.map(() => "?").join(",")})
+            ORDER BY id`,
+          since,
+          ...pids,
+        )
+      : [];
+    for (const i of items) {
+      i.sent = msgs.filter((m) => m.participant_id === i.participant_id && m.created_at >= i.received_at).slice(0, 6).map(({ text, kind, created_at }) => ({ text, kind, created_at }));
+      delete i.participant_id;
+    }
+    return c.json({ items });
+  });
+
   // ---- Notifications (Telegram)
   api.get("/notifications", async (c) => {
     const [settings, has_token] = await Promise.all([getNotifySettings(c.env.DB), hasBotToken(c.env.DB)]);
