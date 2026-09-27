@@ -93,4 +93,6 @@ export interface MetaClient {
   sendMessage(token: string, igUserId: string, recipientId: string, msg: OutgoingMessage): Promise<MetaResult<{ message_id?: string }>>;
   replyToComment(token: string, commentId: string, text: string): Promise<MetaResult<{ id?: string }>>;
   checkFollow(token: string, igsid: string): Promise<FollowCheckOutcome>;
+  /** One post/reel (used to auto-attach newly published media to a campaign). */
+  getMedia?(token: string, mediaId: string): Promise<MetaResult<MediaItem>>;
 }

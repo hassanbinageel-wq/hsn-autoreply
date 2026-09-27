@@ -15,6 +15,8 @@ import {
   type ParticipantRow,
 } from "./context";
 import { enqueue, VERIFY_CHECK } from "./jobs";
+import { recordMessage } from "../services/inbox";
+import { cacheMediaStmt } from "../services/media";
 
 export interface EventRow {
   id: number;
@@ -53,12 +55,12 @@ export async function processEvent(ctx: EngineContext, row: EventRow, opts: { fo
   );
   if (!account) return { status: "ignored", reason: "unknown_account" };
   if (account.status !== "active") return { status: "ignored", reason: "account_not_active" };
-  if (!isDemo && !(await getSetting(ctx.db, "automation_enabled", true))) {
-    return { status: "ignored", reason: "automation_paused" };
-  }
+  const paused = !isDemo && !(await getSetting(ctx.db, "automation_enabled", true));
 
   switch (ev.kind) {
     case "echo":
+      // A message sent from the account (Instagram app, or our own send echoed back): kept for the inbox.
+      await recordEcho(ctx, account, ev);
       return { status: "ignored", reason: "message_echo" };
     case "reaction":
       return { status: "ignored", reason: "reaction_not_a_trigger" };
@@ -76,6 +78,21 @@ export async function processEvent(ctx: EngineContext, row: EventRow, opts: { fo
 
   const isInbound = ev.kind !== "comment"; // DMs, story replies/mentions, quick replies, postbacks are user messages
   const participant = await upsertParticipant(ctx, account, ev, isInbound);
+  if (isInbound) {
+    await recordMessage(ctx.db, {
+      accountId: account.id,
+      participantId: participant.id,
+      direction: "in",
+      source: "user",
+      kind: ev.kind,
+      text: ev.kind === "story_mention" ? `📣 أشار إليك في قصته${ev.text ? `\n${ev.text}` : ""}` : ev.kind === "story_reply" ? `↩️ ردّ على قصتك\n${ev.text ?? ""}` : ev.text ?? null,
+      mid: ev.mid ?? null,
+      isDemo,
+      at: Math.min(ev.time, ctx.now()),
+    });
+  }
+  // Messages are still recorded while automation is paused; only the automatic replies stop.
+  if (paused) return { status: "ignored", reason: "automation_paused" };
 
   switch (ev.kind) {
     case "comment":
@@ -90,6 +107,34 @@ export async function processEvent(ctx: EngineContext, row: EventRow, opts: { fo
       return routeControl(ctx, row, ev, participant);
   }
   return { status: "ignored", reason: "unsupported_event" };
+}
+
+async function recordEcho(ctx: EngineContext, account: AccountRow, ev: NormalizedEvent): Promise<void> {
+  if (!ev.recipientId || ev.recipientId === account.ig_user_id) return;
+  const now = ctx.now();
+  await run(
+    ctx.db,
+    `INSERT INTO participants (account_id, igsid, is_demo, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(account_id, igsid) DO NOTHING`,
+    account.id,
+    ev.recipientId,
+    account.is_demo,
+    now,
+    now,
+  );
+  const p = await first<{ id: number }>(ctx.db, "SELECT id FROM participants WHERE account_id = ? AND igsid = ?", account.id, ev.recipientId);
+  if (!p) return;
+  await recordMessage(ctx.db, {
+    accountId: account.id,
+    participantId: p.id,
+    direction: "out",
+    source: "app",
+    kind: "message",
+    text: ev.text ?? null,
+    mid: ev.mid ?? null,
+    isDemo: account.is_demo === 1,
+    at: Math.min(ev.time, now),
+  });
 }
 
 async function upsertParticipant(ctx: EngineContext, account: AccountRow, ev: NormalizedEvent, inbound: boolean): Promise<ParticipantRow> {
@@ -138,8 +183,36 @@ async function inCampaignScope(db: D1Database, c: CampaignRow, mediaId?: string)
   return !!(await first(db, "SELECT 1 AS ok FROM campaign_media WHERE campaign_id = ? AND media_id = ?", c.id, mediaId));
 }
 
+/**
+ * "Auto-attach new posts": a post/reel published after `auto_new_since` joins the campaign on its first comment.
+ * Its publish time comes from the media cache, or one Graph API read that is then cached.
+ */
+async function autoAttachNewMedia(ctx: EngineContext, c: CampaignRow, account: AccountRow, ev: NormalizedEvent): Promise<boolean> {
+  if (!c.auto_new_media || !c.auto_new_since || !ev.mediaId) return false;
+  let m = await first<{ posted_at: number | null; media_product_type: string | null }>(
+    ctx.db,
+    "SELECT posted_at, media_product_type FROM media_cache WHERE account_id = ? AND media_id = ?",
+    account.id,
+    ev.mediaId,
+  );
+  if (!m?.posted_at) {
+    const token = await ctx.getAccessToken(account);
+    const client = ctx.meta(account.is_demo === 1);
+    const r = token && client.getMedia ? await client.getMedia(token, ev.mediaId) : null;
+    if (!r?.ok) return false;
+    await cacheMediaStmt(ctx.db, account.id, r.data, "media", ctx.now()).run();
+    const posted = r.data.timestamp ? Date.parse(r.data.timestamp) : NaN;
+    m = { posted_at: Number.isFinite(posted) ? posted : null, media_product_type: r.data.media_product_type ?? null };
+  }
+  if (!m.posted_at || m.posted_at < c.auto_new_since) return false;
+  const type = m.media_product_type ?? ev.mediaProductType ?? null;
+  if (c.auto_new_reels_only && type !== "REELS") return false;
+  await run(ctx.db, "INSERT OR IGNORE INTO campaign_media (campaign_id, media_id) VALUES (?, ?)", c.id, ev.mediaId);
+  return true;
+}
+
 /** Evaluates one campaign for one event. Returns null on match, or the skip reason. */
-async function evaluateCampaign(ctx: EngineContext, c: CampaignRow, ev: NormalizedEvent, forced: boolean): Promise<string | null> {
+async function evaluateCampaign(ctx: EngineContext, c: CampaignRow, ev: NormalizedEvent, forced: boolean, account: AccountRow): Promise<string | null> {
   if (!forced) {
     if (c.schedule_start && ev.time < c.schedule_start) return "outside_schedule";
     if (c.schedule_end && ev.time > c.schedule_end) return "outside_schedule";
@@ -147,7 +220,7 @@ async function evaluateCampaign(ctx: EngineContext, c: CampaignRow, ev: Normaliz
   }
   if (c.type === "comment") {
     if (ev.parentId && !c.include_replies) return "threaded_reply_excluded";
-    if (!(await inCampaignScope(ctx.db, c, ev.mediaId))) return "media_not_in_scope";
+    if (!(await inCampaignScope(ctx.db, c, ev.mediaId)) && !(await autoAttachNewMedia(ctx, c, account, ev))) return "media_not_in_scope";
   }
   if (c.type === "story_reply" && c.scope === "selected") {
     if (!ev.storyId) return "story_not_identifiable";
@@ -181,7 +254,7 @@ async function triggerCampaign(
   const details: string[] = [];
   let chosen: CampaignRow | null = null;
   for (const c of candidates) {
-    const skip = await evaluateCampaign(ctx, c, ev, !!forcedCampaignId);
+    const skip = await evaluateCampaign(ctx, c, ev, !!forcedCampaignId, account);
     if (skip === null) {
       chosen = c;
       break;

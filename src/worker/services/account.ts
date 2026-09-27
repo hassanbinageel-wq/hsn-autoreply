@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { audit, first, run } from "../lib/db";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
+import { notify } from "./notify";
 import { HttpMetaClient, INSTAGRAM_SCOPES, WEBHOOK_FIELDS } from "../meta/client";
 import { DemoMetaClient } from "../meta/demo";
 import type { AccountRow, EngineContext } from "../engine/context";
@@ -61,7 +62,12 @@ export function engineContext(env: Env, onRequest?: () => void): EngineContext {
     now: () => Date.now(),
     meta: (isDemo) => (isDemo ? demo : real),
     getAccessToken: (a) => getAccessToken(env, env.DB, a),
-    onAuthError: (a, m) => markNeedsReauth(env.DB, a, m),
+    onAuthError: async (a, m) => {
+      await markNeedsReauth(env.DB, a, m);
+      if (!a.is_demo) await notify(env, "reauth", "🔌 انقطع ربط حساب إنستقرام — الردود التلقائية متوقفة. افتح التطبيق › الربط واضغط «ربط» من جديد.", onRequest);
+    },
+    publicBaseUrl: env.PUBLIC_BASE_URL,
+    notify: (kind, text) => notify(env, kind, text, onRequest),
   };
 }
 
@@ -215,6 +221,7 @@ export async function disconnectAccount(env: Env, accountId: number, opts: { pur
     stmts.push(
       env.DB.prepare("DELETE FROM media_cache WHERE account_id = ?").bind(accountId),
       env.DB.prepare("DELETE FROM conversation_flows WHERE account_id = ?").bind(accountId),
+      env.DB.prepare("DELETE FROM messages WHERE account_id = ?").bind(accountId),
       env.DB.prepare("DELETE FROM participants WHERE account_id = ?").bind(accountId),
       env.DB.prepare("UPDATE webhook_events SET text = NULL, sender_username = NULL, payload = '{}' WHERE account_ig_id = ?").bind(acc.ig_user_id),
     );

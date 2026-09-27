@@ -4,6 +4,7 @@ import { getSetting, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
 import { engineContext, refreshExpiringTokens } from "./services/account";
 import { sanitize } from "./meta/client";
+import { runNotifications } from "./services/notify";
 
 const app = createApp();
 
@@ -43,6 +44,7 @@ export async function cleanup(db: D1Database, now = Date.now()): Promise<void> {
     db.prepare("DELETE FROM action_attempts WHERE started_at < ?").bind(scrubBefore),
     db.prepare("DELETE FROM action_jobs WHERE updated_at < ? AND status IN ('accepted','failed','cancelled','uncertain')").bind(deleteBefore),
     db.prepare("DELETE FROM follow_checks WHERE checked_at < ?").bind(scrubBefore),
+    db.prepare("DELETE FROM messages WHERE created_at < ?").bind(scrubBefore),
     db
       .prepare("DELETE FROM conversation_flows WHERE updated_at < ? AND state IN ('content_sent','verification_unavailable','expired','failed','cancelled')")
       .bind(scrubBefore),
@@ -79,6 +81,7 @@ export default {
       deadlineMs: 25_000,
       budget: { used: () => used, limit: 45 }, // Workers Free: 50 external subrequests per invocation
     }).catch((e) => console.error("queue", sanitize(String(e))));
+    await runNotifications(env).catch((e) => console.error("notifications", sanitize(String(e))));
     await run(env.DB, "DELETE FROM rate_limits WHERE window_start < ?", Date.now() - 86_400_000).catch(() => undefined);
   },
 } satisfies ExportedHandler<Env>;

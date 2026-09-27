@@ -6,6 +6,9 @@ export type JobKind = "process_event" | "send_message" | "public_reply" | "follo
 export const VERIFY_CHECK = "verify";
 export const AUTO_RECHECK = "auto_recheck";
 export const AUTO_RECHECK_DELAY_MS = 15_000;
+/** Campaign option: re-check and remind once, N minutes after a "not following" result (inside the 24h window). */
+export const AUTO_REMINDER = "auto_reminder";
+export const MAX_REMINDER_MINUTES = 23 * 60;
 
 /** Jobs whose Meta call has side effects: an interrupted call means an uncertain outcome. */
 export const SIDE_EFFECT_KINDS: readonly JobKind[] = ["send_message", "public_reply"];

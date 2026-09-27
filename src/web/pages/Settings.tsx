@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, download } from "../api";
 import { APP_VERSION, isNative } from "../platform";
 import { Link } from "../App";
+import { NotificationsCard } from "../components/NotificationsCard";
 import { Alert, Card, Field, PageHeader, Spinner, Toggle, setTz, toast, useAsync } from "../components/ui";
 
 export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: string; setTheme: (t: any) => void; onLogout: () => void; username: string }) {
@@ -83,6 +84,7 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
         </div>
       </Card>
 
+      <NotificationsCard />
       <Card title="الاحتفاظ بالبيانات">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="مدة الاحتفاظ بالسجلات (أيام)" hint="بعدها تُمسح النصوص والبيانات الشخصية.">

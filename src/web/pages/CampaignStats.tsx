@@ -50,12 +50,13 @@ function Metric({ label, value, tone, onClick }: { label: string; value: number 
   );
 }
 
-type Segment = "all" | "reached" | "delivered" | "new_follower" | "already_following" | "not_followed" | "waiting" | "no_start";
+type Segment = "all" | "reached" | "delivered" | "clicked" | "new_follower" | "already_following" | "not_followed" | "waiting" | "no_start";
 
 const SEGMENTS: Array<[Segment, string, (p: any) => boolean]> = [
   ["all", "كل من تفاعل", () => true],
   ["reached", "وصلتهم الرسالة", (p) => p.reached],
   ["delivered", "استلموا المحتوى", (p) => p.delivered],
+  ["clicked", "ضغطوا الرابط", (p) => p.clicks > 0],
   ["new_follower", "متابعون جدد", (p) => p.new_follower],
   ["already_following", "متابعون أصلًا", (p) => p.already_following],
   ["not_followed", "لم يتابعوا", (p) => p.not_followed],
@@ -82,7 +83,7 @@ function PeopleList({ id, days, isComment, gated, mediaById, filter, setFilter }
   const counts = useMemo(() => Object.fromEntries(segments.map(([k, , f]) => [k, (data?.people ?? []).filter(f).length])), [data]);
 
   const exportCsv = () => {
-    const headers = ["الحساب", "رابط الحساب", "ماذا فعل", "النص", "المنشور", "وصلته الرسالة", "متابع جديد", "كان متابعًا", "استلم المحتوى", "الحالة", "آخر تحديث"];
+    const headers = ["الحساب", "رابط الحساب", "ماذا فعل", "النص", "المنشور", "وصلته الرسالة", "متابع جديد", "كان متابعًا", "استلم المحتوى", "ضغط الرابط", "الحالة", "آخر تحديث"];
     const yes = (v: boolean) => (v ? "نعم" : "لا");
     const rows = list.map((p: any) => ({
       "الحساب": p.username ?? "غير معروف",
@@ -94,6 +95,7 @@ function PeopleList({ id, days, isComment, gated, mediaById, filter, setFilter }
       "متابع جديد": yes(p.new_follower),
       "كان متابعًا": yes(p.already_following),
       "استلم المحتوى": yes(p.delivered),
+      "ضغط الرابط": p.clicks > 0 ? `نعم (${p.clicks})` : "لا",
       "الحالة": AR_LABELS[p.state] ?? p.state,
       "آخر تحديث": fmtTime(p.last_at),
     }));
@@ -153,6 +155,7 @@ function PeopleList({ id, days, isComment, gated, mediaById, filter, setFilter }
                     ) : (
                       <span className="muted font-bold">حساب غير معروف</span>
                     )}
+                    {p.clicks > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">🔗 ضغط الرابط{p.clicks > 1 ? ` ×${p.clicks}` : ""}</span>}
                     {p.delivered && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">استلم المحتوى</span>}
                     {p.new_follower && <span className="rounded-full bg-fuchsia-100 px-2 py-0.5 text-[11px] text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-300">متابع جديد</span>}
                     {p.already_following && <span className="surface-2 rounded-full px-2 py-0.5 text-[11px]">كان متابعًا</span>}
@@ -221,13 +224,14 @@ export function CampaignStatsPage({ id }: { id: number }) {
         <Alert tone="bad">{error}</Alert>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
             {isComment && <Stat label="التعليقات المستلمة" value={t.comments_total} hint={`${t.comments_matched} طابقت الكلمات`} />}
             <button className="text-right" onClick={() => show("all")}><Stat label="أشخاص تفاعلوا" value={t.people} hint={`${t.triggers} مرة تشغيل · اضغط لعرض الأسماء`} /></button>
             <button className="text-right" onClick={() => show("reached")}><Stat label="وصلتهم الرسالة" value={t.reached} hint={pct(t.reached, t.people)} tone="good" /></button>
             {gated && <button className="text-right" onClick={() => show("new_follower")}><Stat label="تابعوا بسبب الحملة" value={t.new_followers} hint="متابعون جدد" tone="good" /></button>}
             {gated && <button className="text-right" onClick={() => show("already_following")}><Stat label="كانوا متابعين أصلًا" value={t.already_following} /></button>}
             <button className="text-right" onClick={() => show("delivered")}><Stat label="استلموا المحتوى" value={t.delivered} hint={`تحويل ${pct(t.delivered, t.people)}`} tone="good" /></button>
+            <button className="text-right" onClick={() => show("clicked")}><Stat label="ضغطوا الرابط" value={t.clicked} hint={`${pct(t.clicked, t.delivered)} ممن استلموا · ${t.clicks_total} ضغطة`} tone="good" /></button>
           </div>
 
           {t.people > 0 && (
@@ -240,6 +244,7 @@ export function CampaignStatsPage({ id }: { id: number }) {
                     ["وصلتهم رسالة خاصة", t.reached, "bg-sky-500"],
                     ...(gated ? ([["ضغطوا «ابدأ» / تحقّقوا", t.interacted, "bg-indigo-500"], ["تابعوا الحساب (جدد)", t.new_followers, "bg-fuchsia-500"]] as Array<[string, number, string]>) : []),
                     ["استلموا المحتوى", t.delivered, "bg-emerald-500"],
+                    ["ضغطوا الرابط", t.clicked, "bg-teal-500"],
                   ]}
                 />
               </Card>
@@ -297,6 +302,7 @@ export function CampaignStatsPage({ id }: { id: number }) {
                     {gated && <Metric label="متابعون أصلًا" value={m.already_following} onClick={() => show("already_following", m.media_id ?? "")} />}
                     {gated && <Metric label="لم يتابعوا" value={m.not_followed} tone="text-amber-600 dark:text-amber-400" onClick={() => show("not_followed", m.media_id ?? "")} />}
                     <Metric label="استلموا المحتوى" value={m.delivered} tone="text-emerald-600 dark:text-emerald-400" onClick={() => show("delivered", m.media_id ?? "")} />
+                    <Metric label="ضغطوا الرابط" value={m.clicked} tone="text-teal-600 dark:text-teal-400" onClick={() => show("clicked", m.media_id ?? "")} />
                     <Metric label="بالانتظار" value={m.waiting} onClick={() => show("waiting", m.media_id ?? "")} />
                   </div>
                 </div>

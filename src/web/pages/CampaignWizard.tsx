@@ -37,6 +37,11 @@ type Form = {
   max_verify_attempts: number;
   verify_cooldown_seconds: number;
   process_old_events: boolean;
+  track_clicks: boolean;
+  follow_reminder_minutes: number;
+  auto_new_media: boolean;
+  auto_new_reels_only: boolean;
+  auto_new_since: number | null;
 };
 
 const EMPTY: Form = {
@@ -68,7 +73,22 @@ const EMPTY: Form = {
   max_verify_attempts: 5,
   verify_cooldown_seconds: 10,
   process_old_events: false,
+  track_clicks: true,
+  follow_reminder_minutes: 60,
+  auto_new_media: false,
+  auto_new_reels_only: false,
+  auto_new_since: null,
 };
+
+const REMINDER_OPTIONS: Array<[number, string]> = [
+  [0, "بدون تذكير"],
+  [30, "بعد 30 دقيقة"],
+  [60, "بعد ساعة"],
+  [120, "بعد ساعتين"],
+  [360, "بعد 6 ساعات"],
+  [720, "بعد 12 ساعة"],
+  [1380, "بعد 23 ساعة"],
+];
 
 const STEPS = [
   "اسم الحملة",
@@ -220,6 +240,11 @@ export function CampaignWizard({ id }: { id: number | null }) {
             require_follow: !!c.require_follow,
             public_reply_enabled: !!c.public_reply_enabled,
             process_old_events: !!c.process_old_events,
+            track_clicks: c.track_clicks === undefined ? true : !!c.track_clicks,
+            follow_reminder_minutes: c.follow_reminder_minutes ?? 0,
+            auto_new_media: !!c.auto_new_media,
+            auto_new_reels_only: !!c.auto_new_reels_only,
+            auto_new_since: c.auto_new_since ?? null,
             schedule_start: c.schedule_start,
             schedule_end: c.schedule_end,
           } as Form),
@@ -368,6 +393,25 @@ export function CampaignWizard({ id }: { id: number | null }) {
             {form.scope === "selected" && !isComment && (
               <Alert tone="warn">اختيار ستوري محددة يعمل فقط إذا تضمّن الحدث معرّف الستوري. إن لم يتضمّنه ستُتجاهل الردود (سبب: story_not_identifiable). الأوضح استخدام «جميع ردود الستوري».</Alert>
             )}
+            {form.scope === "selected" && isComment && (
+              <Card className="surface-2">
+                <Toggle
+                  checked={form.auto_new_media}
+                  onChange={(v) => setForm((f) => ({ ...f, auto_new_media: v, auto_new_since: v ? f.auto_new_since ?? Date.now() : null }))}
+                  label="اربط تلقائيًا كل منشور/ريل جديد أنشره"
+                  description={
+                    form.auto_new_media && form.auto_new_since
+                      ? `أي منشور تنشره بعد ${new Date(form.auto_new_since).toLocaleString("ar")} يدخل الحملة تلقائيًا عند أول تعليق عليه — بدون تعديل.`
+                      : "أي منشور جديد تنشره من الآن يدخل الحملة تلقائيًا عند أول تعليق عليه. يمكنك أيضًا اختيار منشورات حالية بالأسفل."
+                  }
+                />
+                {form.auto_new_media && (
+                  <div className="mt-2">
+                    <Toggle checked={form.auto_new_reels_only} onChange={(v) => set("auto_new_reels_only", v)} label="الريلز فقط" description="تجاهل منشورات الصور العادية الجديدة." />
+                  </div>
+                )}
+              </Card>
+            )}
             {form.scope === "selected" && (
               <>
                 <MediaPicker
@@ -438,13 +482,21 @@ export function CampaignWizard({ id }: { id: number | null }) {
               <textarea className="input" value={form.follow_request_text} onChange={(e) => set("follow_request_text", e.target.value)} />
               {templatePicker("follow_request", "follow_request_text")}
             </Field>
-            <Field label="تذكير لطيف (عند تكرار التحقق دون متابعة)">
+            <Field label="تذكير لطيف (عند تكرار التحقق دون متابعة، وفي التذكير التلقائي)">
               <textarea className="input" value={form.follow_reminder_text} onChange={(e) => set("follow_reminder_text", e.target.value)} />
               {templatePicker("reminder", "follow_reminder_text")}
             </Field>
             <Field label="رسالة تعذر التحقق (unknown / خطأ)">
               <textarea className="input" value={form.verify_error_text} onChange={(e) => set("verify_error_text", e.target.value)} />
               {templatePicker("error", "verify_error_text")}
+            </Field>
+            <Field
+              label="تذكير تلقائي لمن لم يتابع"
+              hint="يعيد النظام فحص المتابعة بعد المدة: إن تابع يصله المحتوى تلقائيًا، وإن لم يتابع تصله رسالة «التذكير اللطيف» أعلاه مرة واحدة فقط (داخل نافذة 24 ساعة التي يسمح بها إنستقرام)."
+            >
+              <select className="input" value={form.follow_reminder_minutes} onChange={(e) => set("follow_reminder_minutes", Number(e.target.value))}>
+                {REMINDER_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="حد محاولات التحقق (لكل 24 ساعة)">
@@ -466,6 +518,12 @@ export function CampaignWizard({ id }: { id: number | null }) {
             <Field label="رابط المحتوى (https)">
               <input className="input" dir="ltr" value={form.final_url} onChange={(e) => set("final_url", e.target.value)} placeholder="https://..." />
             </Field>
+            <Toggle
+              checked={form.track_clicks}
+              onChange={(v) => set("track_clicks", v)}
+              label="تتبّع الضغط على الرابط"
+              description="يُرسل الرابط كزر «فتح الرابط 🔗» يمر عبر خادمك أولًا فيُحسب الضغط ثم يُحوَّل فورًا للرابط الأصلي. تظهر الأرقام وأسماء من ضغطوا في الإحصائيات."
+            />
             <div className="muted text-xs">المتغيرات المتاحة: {Object.entries(TEMPLATE_VARIABLES).map(([k, v]) => `{{${k}}} — ${v}`).join(" · ")}. مثال بديل: {"{{username|يا غالي}}"}</div>
           </div>
         );

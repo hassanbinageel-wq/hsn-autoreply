@@ -11,7 +11,13 @@ export interface EngineContext {
   getAccessToken: (account: AccountRow) => Promise<string | null>;
   /** Called when Meta reports that the token is no longer valid. */
   onAuthError?: (account: AccountRow, message: string) => Promise<void>;
+  /** Public origin of this Worker (e.g. https://x.workers.dev); enables tracked content links. */
+  publicBaseUrl?: string;
+  /** Owner notifications (Telegram), best-effort: never throws, never blocks the flow. */
+  notify?: (kind: NotifyKind, text: string) => Promise<void>;
 }
+
+export type NotifyKind = "new_follower" | "delivery" | "reauth" | "failures" | "spike" | "report" | "test";
 
 export interface AccountRow {
   id: number;
@@ -53,6 +59,11 @@ export interface CampaignRow {
   process_old_events: number;
   activated_at: number | null;
   deleted_at: number | null;
+  track_clicks: number;
+  follow_reminder_minutes: number;
+  auto_new_media: number;
+  auto_new_since: number | null;
+  auto_new_reels_only: number;
 }
 
 export interface ParticipantRow {
@@ -66,6 +77,7 @@ export interface ParticipantRow {
   last_follow_status: string | null;
   last_follow_checked_at: number | null;
   demo_follow_script: string | null;
+  last_message_at?: number | null;
 }
 
 export interface FlowRow {
@@ -93,6 +105,9 @@ export interface FlowRow {
   expires_at: number | null;
   created_at: number;
   updated_at: number;
+  link_token?: string | null;
+  link_url?: string | null;
+  link_clicks?: number;
 }
 
 export const MESSAGING_WINDOW_MS = 24 * 60 * 60 * 1000;

@@ -55,12 +55,18 @@ export const campaignInputSchema = z
     max_verify_attempts: z.number().int().min(1).max(50).default(5),
     verify_cooldown_seconds: z.number().int().min(5).max(86_400).default(10),
     process_old_events: z.boolean().default(false),
+    // v1.2
+    track_clicks: z.boolean().default(true),
+    follow_reminder_minutes: z.number().int().min(0).max(23 * 60).default(0),
+    auto_new_media: z.boolean().default(false),
+    auto_new_reels_only: z.boolean().default(false),
+    auto_new_since: z.number().int().nullable().optional(),
   })
   .superRefine((c, ctx) => {
     if (!c.match_all && !c.keywords.some((k) => k.kind === "include") && c.type !== "story_mention") {
       ctx.addIssue({ code: "custom", path: ["keywords"], message: "أضف كلمة تشغيل واحدة على الأقل أو فعّل «جميع التعليقات/الردود»" });
     }
-    if (c.scope === "selected" && c.media_ids.length === 0) {
+    if (c.scope === "selected" && c.media_ids.length === 0 && !(c.type === "comment" && c.auto_new_media)) {
       ctx.addIssue({ code: "custom", path: ["media_ids"], message: "اختر منشورًا أو ستوري واحدة على الأقل" });
     }
     if (!c.final_text.trim() && !c.final_url) {

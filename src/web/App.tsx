@@ -9,6 +9,7 @@ import { MediaPage } from "./pages/Media";
 import { CampaignsPage } from "./pages/Campaigns";
 import { CampaignWizard } from "./pages/CampaignWizard";
 import { CampaignStatsPage } from "./pages/CampaignStats";
+import { InboxPage } from "./pages/Inbox";
 import { TemplatesPage } from "./pages/Templates";
 import { LogsPage } from "./pages/Logs";
 import { SimulatorPage } from "./pages/Simulator";
@@ -70,8 +71,9 @@ export function useTheme(): [Theme, (t: Theme) => void] {
 const NAV = [
   { to: "/", label: "الرئيسية", icon: "🏠", main: true },
   { to: "/campaigns", label: "الحملات", icon: "🎯", main: true },
+  { to: "/inbox", label: "الرسائل", icon: "📥", main: true },
   { to: "/logs", label: "السجل", icon: "📜", main: true },
-  { to: "/simulator", label: "المحاكاة", icon: "🧪", main: true },
+  { to: "/simulator", label: "المحاكاة", icon: "🧪" },
   { to: "/connection", label: "الربط", icon: "🔗" },
   { to: "/media", label: "المنشورات والستوري", icon: "🖼️" },
   { to: "/templates", label: "القوالب", icon: "🧩" },
@@ -155,6 +157,7 @@ export function App() {
       case "/campaigns": page = <CampaignsPage />; break;
       case "/templates": page = <TemplatesPage />; break;
       case "/logs": page = <LogsPage />; break;
+      case "/inbox": page = <InboxPage />; break;
       case "/simulator": page = <SimulatorPage />; break;
       case "/settings": page = <SettingsPage theme={theme} setTheme={setTheme} onLogout={logout} username={username} />; break;
       case "/download": page = <DownloadPage />; break;

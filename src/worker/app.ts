@@ -45,6 +45,13 @@ import {
   templateInputSchema,
 } from "../shared/schemas";
 import { claimsDelivery, publicReplyVariants } from "../shared/template";
+import { cacheMediaStmt } from "./services/media";
+import { markRead, recordMessage } from "./services/inbox";
+import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
+import { MESSAGING_WINDOW_MS } from "./engine/context";
+
+/** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
+const PUBLIC_SETTINGS_SQL = "key NOT LIKE 'telegram%' AND key NOT LIKE 'notify%'";
 import { toCsv } from "../shared/csv";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, termsPage } from "./pages";
 
@@ -128,6 +135,32 @@ export function createApp() {
     c.header("Content-Security-Policy", PAGE_CSP);
     return c.html(body);
   };
+  // Tracked content link: counts the tap, then redirects to the campaign's real link.
+  // Link-preview crawlers (Instagram/Meta fetch the URL to render a card) are redirected but not counted.
+  app.on(["GET", "HEAD"], "/l/:token", async (c) => {
+    const token = c.req.param("token");
+    const notFound = () => c.html('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body style="font-family:system-ui;text-align:center;padding:3rem">الرابط غير صالح أو منتهي.</body>', 404);
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return notFound();
+    const row = await first<{ id: number; link_url: string | null }>(c.env.DB, "SELECT id, link_url FROM conversation_flows WHERE link_token = ?", token);
+    if (!row?.link_url || !/^https?:\/\//i.test(row.link_url)) return notFound();
+    const ua = c.req.header("User-Agent") ?? "";
+    const isBot = !ua || /facebookexternalhit|facebot|meta-external|bot\b|bot\/|crawler|spider|preview|slurp|whatsapp|telegram|curl|wget|python-requests|headless/i.test(ua);
+    if (c.req.method === "GET" && !isBot) {
+      const now = Date.now();
+      await run(
+        c.env.DB,
+        "UPDATE conversation_flows SET link_clicks = link_clicks + 1, link_first_click_at = COALESCE(link_first_click_at, ?), link_last_click_at = ? WHERE id = ?",
+        now,
+        now,
+        row.id,
+      );
+    }
+    return new Response(null, {
+      status: 302,
+      headers: { Location: row.link_url, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex" },
+    });
+  });
+
   app.get("/privacy", (c) => html(c, privacyPage(c.env.PUBLIC_BASE_URL)));
   app.get("/terms", (c) => html(c, termsPage()));
   app.get("/data-deletion", (c) => html(c, dataDeletionPage()));
@@ -194,6 +227,7 @@ export function createApp() {
     } else {
       // A regular Instagram user who interacted with the account: remove their participant data.
       await c.env.DB.batch([
+        c.env.DB.prepare("DELETE FROM messages WHERE participant_id IN (SELECT id FROM participants WHERE igsid = ?)").bind(uid),
         c.env.DB.prepare("DELETE FROM participants WHERE igsid = ?").bind(uid),
         c.env.DB.prepare("UPDATE webhook_events SET text = NULL, sender_username = NULL, payload = '{}' WHERE sender_id = ?").bind(uid),
       ]);
@@ -470,29 +504,7 @@ export function createApp() {
       after = next;
     }
     const now = Date.now();
-    const stmts = items.map((m) => {
-      const posted = m.timestamp ? Date.parse(m.timestamp) : null;
-      // Only a preview URL is kept (thumbnail for videos, image url for images). Videos are never stored.
-      const preview = m.media_type === "VIDEO" ? m.thumbnail_url ?? null : m.thumbnail_url ?? m.media_url ?? null;
-      return c.env.DB.prepare(
-        `INSERT INTO media_cache (account_id, media_id, kind, media_type, media_product_type, caption, permalink, thumbnail_url, posted_at, expires_at, fetched_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(account_id, media_id) DO UPDATE SET caption = excluded.caption, permalink = excluded.permalink,
-           thumbnail_url = excluded.thumbnail_url, media_type = excluded.media_type, media_product_type = excluded.media_product_type, fetched_at = excluded.fetched_at`,
-      ).bind(
-        a.id,
-        m.id,
-        p.data.kind,
-        m.media_type ?? null,
-        m.media_product_type ?? null,
-        m.caption ? m.caption.slice(0, 2000) : null,
-        m.permalink ?? null,
-        preview,
-        posted,
-        p.data.kind === "story" && posted ? posted + 24 * 3_600_000 : null,
-        now,
-      );
-    });
+    const stmts = items.map((m) => cacheMediaStmt(c.env.DB, a.id, m, p.data.kind, now));
     if (stmts.length) await c.env.DB.batch(stmts);
     return c.json({ count: stmts.length, next });
   });
@@ -550,7 +562,7 @@ export function createApp() {
     const db = c.env.DB;
     // One row per flow with the facts we aggregate on (first follow result, did we reach them, did they convert).
     const perFlow = `
-      SELECT f.id, f.participant_id, COALESCE(f.source_media_id, '') AS media_id, f.state, f.public_reply_status, f.created_at,
+      SELECT f.id, f.participant_id, COALESCE(f.source_media_id, '') AS media_id, f.state, f.public_reply_status, f.created_at, f.link_clicks,
              (SELECT fc.result FROM follow_checks fc WHERE fc.flow_id = f.id ORDER BY fc.id LIMIT 1) AS first_follow,
              EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'not_following') AS saw_not_following,
              EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'following') AS saw_following,
@@ -570,6 +582,8 @@ export function createApp() {
       SUM(state IN ('awaiting_user_interaction','awaiting_follow','checking_follow','ready_to_deliver','delivering','trigger_received')) AS waiting,
       SUM(state IN ('expired','failed','cancelled','verification_unavailable')) AS dropped,
       SUM(public_reply_status = 'accepted') AS public_replies,
+      COUNT(DISTINCT CASE WHEN link_clicks > 0 THEN participant_id END) AS clicked,
+      COALESCE(SUM(link_clicks), 0) AS clicks_total,
       MAX(created_at) AS last_at`;
     const [rows, totals, comments] = await Promise.all([
       all<any>(db, `SELECT media_id, ${agg} FROM (${perFlow}) GROUP BY media_id`, id, since),
@@ -589,7 +603,7 @@ export function createApp() {
       ? await all<any>(db, `SELECT media_id, caption, permalink, thumbnail_url, media_product_type, posted_at FROM media_cache WHERE media_id IN (${[...mediaIds].map(() => "?").join(",")})`, ...mediaIds)
       : [];
     const byId = new Map(meta.map((m) => [m.media_id, m]));
-    const empty = { triggers: 0, people: 0, reached: 0, interacted: 0, already_following: 0, new_followers: 0, not_followed: 0, delivered: 0, waiting: 0, dropped: 0, public_replies: 0, last_at: null };
+    const empty = { triggers: 0, people: 0, reached: 0, interacted: 0, already_following: 0, new_followers: 0, not_followed: 0, delivered: 0, clicked: 0, clicks_total: 0, waiting: 0, dropped: 0, public_replies: 0, last_at: null };
     const commentsBy = new Map(comments.map((r) => [r.media_id, r]));
     const media = [...new Set<string>([...mediaIds, ...rows.map((r) => r.media_id)])].map((mid) => ({
       ...empty,
@@ -625,7 +639,7 @@ export function createApp() {
     const rows = await all<any>(
       c.env.DB,
       `SELECT f.id, f.participant_id, p.username, f.trigger_type, COALESCE(f.source_media_id, '') AS media_id, f.state, f.state_reason,
-              f.created_at, f.updated_at, f.content_delivered_at, e.text AS trigger_text, p.last_follow_status,
+              f.created_at, f.updated_at, f.content_delivered_at, e.text AS trigger_text, p.last_follow_status, f.link_clicks, f.link_first_click_at,
               (SELECT fc.result FROM follow_checks fc WHERE fc.flow_id = f.id ORDER BY fc.id LIMIT 1) AS first_follow,
               EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'not_following') AS saw_not_following,
               EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'following') AS saw_following,
@@ -648,7 +662,7 @@ export function createApp() {
           participant_id: r.participant_id, username: r.username, state: r.state, state_reason: r.state_reason,
           last_at: r.updated_at, first_at: r.created_at, follow_status: r.last_follow_status, interactions: [],
           reached: false, interacted: false, already_following: false, new_follower: false, not_followed: false,
-          delivered: false, waiting: WAITING.includes(r.state), delivered_at: null,
+          delivered: false, waiting: WAITING.includes(r.state), delivered_at: null, clicks: 0, clicked_at: null,
         };
         people.set(r.participant_id, p);
       }
@@ -658,6 +672,8 @@ export function createApp() {
       p.already_following ||= r.first_follow === "following";
       p.new_follower ||= !!(r.saw_not_following && r.saw_following);
       p.delivered ||= r.state === "content_sent";
+      p.clicks += r.link_clicks ?? 0;
+      if (r.link_first_click_at) p.clicked_at = p.clicked_at ? Math.min(p.clicked_at, r.link_first_click_at) : r.link_first_click_at;
       if (r.content_delivered_at) p.delivered_at = Math.max(p.delivered_at ?? 0, r.content_delivered_at);
       p.not_followed ||= !!(r.saw_not_following && !r.saw_following);
       if (p.interactions.length < 10) p.interactions.push({ type: r.trigger_type, text: r.trigger_text, media_id: r.media_id || null, at: r.created_at, state: r.state });
@@ -684,6 +700,12 @@ export function createApp() {
       schedule_start: d.schedule_start ?? null, schedule_end: d.schedule_end ?? null, timezone: d.timezone,
       per_user_cooldown_hours: d.per_user_cooldown_hours, max_deliveries_per_user: d.max_deliveries_per_user,
       max_verify_attempts: d.max_verify_attempts, verify_cooldown_seconds: d.verify_cooldown_seconds, process_old_events: d.process_old_events ? 1 : 0,
+      track_clicks: d.track_clicks ? 1 : 0, follow_reminder_minutes: d.follow_reminder_minutes,
+      auto_new_media: d.auto_new_media && d.type === "comment" ? 1 : 0, auto_new_reels_only: d.auto_new_reels_only ? 1 : 0,
+      // "New posts from now on": the starting point is kept once set (or taken from the request), else it is now.
+      auto_new_since: d.auto_new_media && d.type === "comment"
+        ? d.auto_new_since ?? (id !== null ? (await first<{ v: number | null }>(c.env.DB, "SELECT auto_new_since AS v FROM campaigns WHERE id = ?", id))?.v : null) ?? now
+        : null,
     };
     const keys = Object.keys(cols);
     let campaignId: number;
@@ -718,26 +740,47 @@ export function createApp() {
     return id ? saveCampaign(c, id) : apiError(c, 404, "not_found", "غير موجود");
   });
 
+  // Duplicate a campaign. Optional: attach it to other posts/reels ("copy to a new reel") and activate it right away.
   api.post("/campaigns/:id/duplicate", async (c) => {
     const id = idParam(c);
+    const p = await parseBody(
+      c,
+      z.object({
+        media_ids: z.array(z.string().regex(/^[0-9A-Za-z_]{1,64}$/)).min(1).max(50).optional(),
+        name: z.string().trim().min(1).max(120).optional(),
+        activate: z.boolean().default(false),
+      }),
+    );
+    if (!p.ok) return p.res;
     const src = id && (await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
     if (!src) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const now = Date.now();
     const { id: _id, status: _s, activated_at: _a, created_at: _c, updated_at: _u, deleted_at: _d, name, ...rest } = src;
+    if (p.data.media_ids) {
+      rest.scope = "selected";
+      rest.auto_new_media = 0;
+      rest.auto_new_since = null;
+    }
     const keys = Object.keys(rest);
+    const status = p.data.activate ? "active" : "draft";
     const r = await first<{ id: number }>(
       c.env.DB,
-      `INSERT INTO campaigns (name, ${keys.join(",")}, status, created_at, updated_at) VALUES (?, ${keys.map(() => "?").join(",")}, 'draft', ?, ?) RETURNING id`,
-      `${name} (نسخة)`,
+      `INSERT INTO campaigns (name, ${keys.join(",")}, status, activated_at, created_at, updated_at) VALUES (?, ${keys.map(() => "?").join(",")}, ?, ?, ?, ?) RETURNING id`,
+      p.data.name ?? `${name} (نسخة)`,
       ...Object.values(rest),
+      status,
+      p.data.activate ? now : null,
       now,
       now,
     );
     await c.env.DB.batch([
       c.env.DB.prepare("INSERT INTO campaign_keywords (campaign_id, keyword, kind, match_type) SELECT ?, keyword, kind, match_type FROM campaign_keywords WHERE campaign_id = ?").bind(r!.id, id),
-      c.env.DB.prepare("INSERT INTO campaign_media (campaign_id, media_id) SELECT ?, media_id FROM campaign_media WHERE campaign_id = ?").bind(r!.id, id),
+      ...(p.data.media_ids
+        ? [...new Set(p.data.media_ids)].map((m) => c.env.DB.prepare("INSERT OR IGNORE INTO campaign_media (campaign_id, media_id) VALUES (?, ?)").bind(r!.id, m))
+        : [c.env.DB.prepare("INSERT INTO campaign_media (campaign_id, media_id) SELECT ?, media_id FROM campaign_media WHERE campaign_id = ?").bind(r!.id, id)]),
     ]);
-    return c.json({ id: r!.id });
+    await audit(c.env.DB, c.get("session").username, "campaign.duplicated", String(r!.id), { from: id, activate: p.data.activate });
+    return c.json({ id: r!.id, status });
   });
 
   api.post("/campaigns/:id/status", async (c) => {
@@ -901,9 +944,133 @@ export function createApp() {
 
   api.get("/audit", async (c) => c.json(await all(c.env.DB, "SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200")));
 
+  // ---- Notifications (Telegram)
+  api.get("/notifications", async (c) => {
+    const [settings, has_token] = await Promise.all([getNotifySettings(c.env.DB), hasBotToken(c.env.DB)]);
+    return c.json({ settings, has_token });
+  });
+  api.put("/notifications", async (c) => {
+    const p = await parseBody(
+      c,
+      z.object({
+        bot_token: z.string().trim().max(100).optional(), // "" removes it
+        enabled: z.boolean().optional(),
+        chat_id: z.string().regex(/^-?\d{1,20}$/).nullable().optional(),
+        daily_report: z.boolean().optional(),
+        report_hour: z.number().int().min(0).max(23).optional(),
+        timezone: z.string().max(64).optional(),
+        alert_reauth: z.boolean().optional(),
+        alert_failures: z.boolean().optional(),
+        alert_spike: z.boolean().optional(),
+        spike_per_hour: z.number().int().min(5).max(10_000).optional(),
+        notify_new_follower: z.boolean().optional(),
+        notify_delivery: z.boolean().optional(),
+      }),
+    );
+    if (!p.ok) return p.res;
+    const { bot_token, ...rest } = p.data;
+    if (rest.timezone) {
+      try {
+        new Intl.DateTimeFormat("en", { timeZone: rest.timezone });
+      } catch {
+        return apiError(c, 422, "validation", "منطقة زمنية غير صحيحة");
+      }
+    }
+    if (bot_token !== undefined) {
+      if (bot_token && !isTelegramToken(bot_token)) return apiError(c, 422, "validation", "توكن البوت غير صحيح — انسخه كما أعطاك إياه BotFather");
+      await saveBotToken(c.env, bot_token || null);
+      if (!bot_token) rest.chat_id = null;
+    }
+    const cur = await getNotifySettings(c.env.DB);
+    const next = { ...cur, ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) };
+    await setSetting(c.env.DB, "notify", next);
+    await audit(c.env.DB, c.get("session").username, "notifications.updated", undefined, { ...rest, bot_token: bot_token === undefined ? undefined : bot_token ? "set" : "removed" });
+    return c.json({ settings: next, has_token: await hasBotToken(c.env.DB) });
+  });
+  api.post("/notifications/detect", async (c) => {
+    const r = await detectChat(c.env);
+    if (!r.ok) return apiError(c, 422, "telegram", r.error ?? "تعذر العثور على المحادثة");
+    const next = { ...(await getNotifySettings(c.env.DB)), chat_id: r.chat_id!, enabled: true };
+    await setSetting(c.env.DB, "notify", next);
+    return c.json({ settings: next, name: r.name ?? null });
+  });
+  api.post("/notifications/test", async (c) => {
+    const p = await parseBody(c, z.object({ kind: z.enum(["test", "report"]).default("test") }));
+    if (!p.ok) return p.res;
+    const text = p.data.kind === "report" ? await buildDailyReport(c.env.DB) : "✅ تم ربط إشعارات HSN AutoReply بنجاح. ستصلك التنبيهات والتقرير اليومي هنا.";
+    const r = await sendTelegram(c.env, text);
+    if (!r.ok) return apiError(c, 422, "telegram", r.error ?? "تعذر الإرسال");
+    return c.json({ ok: true });
+  });
+
+  // ---- Inbox: conversations started or answered by the automation, and manual replies (24h window only)
+  api.get("/inbox", async (c) => {
+    const q = (c.req.query("q") ?? "").trim().replace(/^@/, "").slice(0, 60);
+    const params: unknown[] = [];
+    let where = "p.is_demo = 0 AND p.last_message_at IS NOT NULL";
+    if (q) {
+      where += " AND p.username LIKE ? ESCAPE '\\'";
+      params.push(`%${q.replace(/[%_\\]/g, (m) => "\\" + m)}%`);
+    }
+    const rows = await all<any>(
+      c.env.DB,
+      `SELECT p.id, p.username, p.last_message_at, p.last_user_message_at, p.inbox_read_at, p.last_follow_status,
+              (SELECT m.text FROM messages m WHERE m.participant_id = p.id ORDER BY m.id DESC LIMIT 1) AS last_text,
+              (SELECT m.direction FROM messages m WHERE m.participant_id = p.id ORDER BY m.id DESC LIMIT 1) AS last_direction,
+              (SELECT COUNT(*) FROM messages m WHERE m.participant_id = p.id AND m.direction = 'in' AND m.created_at > COALESCE(p.inbox_read_at, 0)) AS unread
+         FROM participants p WHERE ${where} ORDER BY p.last_message_at DESC LIMIT 150`,
+      ...params,
+    );
+    const now = Date.now();
+    return c.json(rows.map((r) => ({ ...r, window_open: !!r.last_user_message_at && now - r.last_user_message_at < MESSAGING_WINDOW_MS })));
+  });
+  api.get("/inbox/:id", async (c) => {
+    const id = idParam(c);
+    const p = id && (await first<any>(c.env.DB, "SELECT id, username, last_user_message_at, last_follow_status, is_demo FROM participants WHERE id = ? AND is_demo = 0", id));
+    if (!p) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    const [messages, flows] = await Promise.all([
+      all<any>(c.env.DB, "SELECT id, direction, source, kind, text, created_at FROM messages WHERE participant_id = ? ORDER BY id DESC LIMIT 200", id),
+      all<any>(
+        c.env.DB,
+        `SELECT f.id, f.state, f.created_at, f.link_clicks, c.name AS campaign_name FROM conversation_flows f JOIN campaigns c ON c.id = f.campaign_id
+          WHERE f.participant_id = ? AND f.is_demo = 0 ORDER BY f.id DESC LIMIT 10`,
+        id,
+      ),
+    ]);
+    const now = Date.now();
+    await markRead(c.env.DB, id!, now);
+    const expires = p.last_user_message_at ? p.last_user_message_at + MESSAGING_WINDOW_MS : null;
+    return c.json({ participant: p, messages: messages.reverse(), flows, window_open: !!expires && expires > now, window_expires_at: expires });
+  });
+  api.post("/inbox/:id/send", async (c) => {
+    const id = idParam(c);
+    const body = await parseBody(c, z.object({ text: z.string().trim().min(1).max(1000) }));
+    if (!body.ok) return body.res;
+    const p = id && (await first<any>(c.env.DB, "SELECT * FROM participants WHERE id = ? AND is_demo = 0", id));
+    if (!p) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    const now = Date.now();
+    if (!p.last_user_message_at || now - p.last_user_message_at >= MESSAGING_WINDOW_MS) {
+      return apiError(c, 409, "window_closed", "مرّت 24 ساعة على آخر رسالة من الشخص — إنستقرام لا يسمح بالرد حتى يراسلك مرة أخرى");
+    }
+    const a = await first<AccountRow>(c.env.DB, "SELECT * FROM instagram_accounts WHERE id = ?", p.account_id);
+    if (!a || a.status !== "active") return apiError(c, 409, "no_account", "الحساب غير مربوط");
+    const token = await getAccessToken(c.env, c.env.DB, a);
+    if (!token) return apiError(c, 409, "no_token", "التفويض غير متاح — أعد الربط");
+    const r = await metaClient(c.env).sendMessage(token, a.ig_user_id, p.igsid, { text: body.data.text });
+    if (!r.ok) {
+      if (r.error.kind === "auth") await engineContext(c.env).onAuthError?.(a, r.error.message);
+      const msg = r.error.kind === "window_closed" ? "انتهت نافذة المراسلة (24 ساعة)" : r.error.kind === "uncertain" ? "انقطع الاتصال — قد تكون الرسالة وصلت، تحقق قبل إعادة الإرسال" : r.error.message;
+      return apiError(c, 502 as any, "meta_error", msg);
+    }
+    await recordMessage(c.env.DB, { accountId: a.id, participantId: p.id, direction: "out", source: "manual", kind: "message", text: body.data.text, mid: r.data.message_id ?? null, at: now });
+    await markRead(c.env.DB, p.id, now);
+    await audit(c.env.DB, c.get("session").username, "inbox.sent", String(p.id));
+    return c.json({ ok: true });
+  });
+
   // ---- Settings
   api.get("/settings", async (c) => {
-    const rows = await all<{ key: string; value: string }>(c.env.DB, "SELECT key, value FROM app_settings");
+    const rows = await all<{ key: string; value: string }>(c.env.DB, `SELECT key, value FROM app_settings WHERE ${PUBLIC_SETTINGS_SQL}`);
     const out: Record<string, unknown> = {};
     for (const r of rows) out[r.key] = JSON.parse(r.value);
     return c.json({ settings: out, app_version: c.env.APP_VERSION, releases_url: c.env.RELEASES_URL || null, apk_url: c.env.APK_DOWNLOAD_URL || null });
@@ -926,7 +1093,7 @@ export function createApp() {
   // Backup of configuration only — never tokens, secrets, sessions or personal data.
   api.get("/settings/backup", async (c) => {
     const [settings, campaigns, keywords, media, templates] = await Promise.all([
-      all(c.env.DB, "SELECT key, value FROM app_settings"),
+      all(c.env.DB, `SELECT key, value FROM app_settings WHERE ${PUBLIC_SETTINGS_SQL}`),
       all(c.env.DB, "SELECT * FROM campaigns WHERE deleted_at IS NULL"),
       all(c.env.DB, "SELECT campaign_id, keyword, kind, match_type FROM campaign_keywords"),
       all(c.env.DB, "SELECT campaign_id, media_id FROM campaign_media"),
@@ -1009,6 +1176,7 @@ export function createApp() {
         db.prepare("DELETE FROM action_attempts"),
         db.prepare("DELETE FROM follow_checks"),
         db.prepare("DELETE FROM conversation_flows"),
+        db.prepare("DELETE FROM messages"),
         db.prepare("DELETE FROM participants"),
         db.prepare("UPDATE action_jobs SET payload = '{}', result = NULL WHERE status NOT IN ('pending','processing','retry_scheduled')"),
         db.prepare("UPDATE webhook_events SET text = NULL, sender_username = NULL, sender_id = NULL, payload = '{}'"),

@@ -35,12 +35,12 @@ export async function storeEvents(
           opts.isDemo ? 1 : 0,
         ),
     );
-    // Echoes / reactions / unknown events are logged but need no processing job.
-    if (ev.kind === "echo" || ev.kind === "other") {
+    // Unknown events are logged but need no processing job. (Echoes are processed: they feed the inbox.)
+    if (ev.kind === "other") {
       stmts.push(
         db
           .prepare("UPDATE webhook_events SET status = 'ignored', reason = ?, processed_at = ? WHERE dedup_key = ? AND status = 'pending'")
-          .bind(ev.kind === "echo" ? "message_echo" : "unsupported_event", now, dedupKey),
+          .bind("unsupported_event", now, dedupKey),
       );
       continue;
     }

@@ -38,6 +38,7 @@ export async function simulate(env: Env, input: z.infer<typeof simulateSchema>) 
   if (input.reset) {
     await db.batch([
       db.prepare("DELETE FROM conversation_flows WHERE account_id = ? AND participant_id IN (SELECT id FROM participants WHERE account_id = ? AND igsid = ?)").bind(accountId, accountId, igsid),
+      db.prepare("DELETE FROM messages WHERE participant_id IN (SELECT id FROM participants WHERE account_id = ? AND igsid = ?)").bind(accountId, igsid),
       db.prepare("DELETE FROM participants WHERE account_id = ? AND igsid = ?").bind(accountId, igsid),
     ]);
   }

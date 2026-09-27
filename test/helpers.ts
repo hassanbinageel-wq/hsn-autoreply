@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import type { EngineContext } from "../src/worker/engine/context";
-import type { FollowCheckOutcome, MetaClient, MetaResult, OutgoingMessage } from "../src/worker/meta/types";
+import type { FollowCheckOutcome, MediaItem, MetaClient, MetaResult, OutgoingMessage } from "../src/worker/meta/types";
 import { runQueue } from "../src/worker/engine/executor";
 import { storeEvents } from "../src/worker/services/webhook";
 import { parseWebhook } from "../src/worker/meta/webhook-parse";
@@ -10,7 +10,7 @@ export const DB: D1Database = TEST_ENV.DB;
 export const IG_ID = "17841400000000001";
 
 export interface SentCall {
-  kind: "private_reply" | "dm" | "public_reply" | "follow_check";
+  kind: "private_reply" | "dm" | "public_reply" | "follow_check" | "get_media";
   target: string;
   text?: string;
   msg?: OutgoingMessage;
@@ -57,8 +57,21 @@ export class MockMeta implements MetaClient {
     return this.follow.length > 1 ? this.follow.shift()! : (this.follow[0] ?? { result: "unknown", fieldPresent: false });
   }
   sends() {
-    return this.calls.filter((c) => c.kind !== "follow_check");
+    return this.calls.filter((c) => c.kind !== "follow_check" && c.kind !== "get_media");
   }
+  /** Posts/reels returned by getMedia (auto-attach of new posts). */
+  media: Record<string, MediaItem> = {};
+  async getMedia(_t: string, mediaId: string): Promise<MetaResult<MediaItem>> {
+    this.calls.push({ kind: "get_media", target: mediaId });
+    const m = this.media[mediaId];
+    return m ? { ok: true, httpStatus: 200, data: m } : { ok: false, error: { kind: "permanent", httpStatus: 400, code: 100, message: "not found" } };
+  }
+}
+
+/** Extra engine-context fields for the next deliveries (e.g. publicBaseUrl, notify). Reset in resetDb(). */
+let ctxExtra: Partial<EngineContext> = {};
+export function setCtxExtra(x: Partial<EngineContext>) {
+  ctxExtra = x;
 }
 
 export function makeCtx(meta: MockMeta, clock?: { t: number }): EngineContext {
@@ -70,6 +83,7 @@ export function makeCtx(meta: MockMeta, clock?: { t: number }): EngineContext {
     onAuthError: async (a, m) => {
       await DB.prepare("UPDATE instagram_accounts SET status = 'needs_reauth', last_error = ? WHERE id = ?").bind(m, a.id).run();
     },
+    ...ctxExtra,
   };
 }
 
@@ -77,6 +91,7 @@ const TABLES = [
   "action_attempts",
   "action_jobs",
   "follow_checks",
+  "messages",
   "conversation_flows",
   "participants",
   "webhook_events",
@@ -93,6 +108,7 @@ const TABLES = [
 ];
 
 export async function resetDb() {
+  ctxExtra = {};
   await DB.batch(TABLES.map((t) => DB.prepare(`DELETE FROM ${t}`)));
   await DB.prepare("UPDATE app_settings SET value = 'true' WHERE key IN ('automation_enabled','any_reply_counts_as_start')").run();
   await DB.prepare("UPDATE app_settings SET value = '10' WHERE key = 'global_user_hourly_limit'").run();
@@ -132,6 +148,11 @@ export interface CampaignSeed {
   max_verify_attempts?: number;
   verify_cooldown_seconds?: number;
   status?: string;
+  track_clicks?: boolean;
+  follow_reminder_minutes?: number;
+  auto_new_media?: boolean;
+  auto_new_since?: number;
+  auto_new_reels_only?: boolean;
 }
 
 export async function seedCampaign(c: CampaignSeed = {}) {
@@ -168,6 +189,9 @@ export async function seedCampaign(c: CampaignSeed = {}) {
     )
     .first<{ id: number }>();
   const id = r!.id;
+  await DB.prepare("UPDATE campaigns SET track_clicks = ?, follow_reminder_minutes = ?, auto_new_media = ?, auto_new_since = ?, auto_new_reels_only = ? WHERE id = ?")
+    .bind(c.track_clicks === false ? 0 : 1, c.follow_reminder_minutes ?? 0, c.auto_new_media ? 1 : 0, c.auto_new_since ?? null, c.auto_new_reels_only ? 1 : 0, id)
+    .run();
   for (const k of c.keywords ?? [{ keyword: "كورس" }]) {
     await DB.prepare("INSERT INTO campaign_keywords (campaign_id, keyword, kind, match_type) VALUES (?, ?, ?, ?)")
       .bind(id, k.keyword, k.kind ?? "include", k.match_type ?? "contains")

@@ -1,6 +1,8 @@
 import { renderTemplate, claimsDelivery, contentLinkButton, pickVariant, publicReplyVariants, SAFE_PUBLIC_REPLIES } from "../../shared/template";
 import { TERMINAL_FLOW_STATES } from "../../shared/states";
 import { first, getSetting, run } from "../lib/db";
+import { randomToken } from "../lib/crypto";
+import { recordMessage } from "../services/inbox";
 import type { MetaError, OutgoingMessage, QuickReply } from "../meta/types";
 import {
   loadAccount,
@@ -20,6 +22,8 @@ import { buttonPayload, processEvent, type EventRow } from "./events";
 import {
   AUTO_RECHECK,
   AUTO_RECHECK_DELAY_MS,
+  AUTO_REMINDER,
+  MAX_REMINDER_MINUTES,
   claimNextJob,
   enqueue,
   finishJob,
@@ -208,7 +212,8 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
   const l = await loadAll(ctx, job);
   if (!l) return cancelFlowAndJob(ctx, job, owner, null, "flow_missing");
   // A silent automatic re-check only runs while the flow is still waiting for the follow (no other check in flight).
-  const silent = job.purpose === AUTO_RECHECK;
+  // AUTO_REMINDER works the same way, but sends one reminder if the person still does not follow.
+  const silent = job.purpose === AUTO_RECHECK || job.purpose === AUTO_REMINDER;
   if (silent && l.flow.state !== "awaiting_follow") {
     await finishJob(ctx.db, job, owner, "cancelled", ctx.now(), { error: `flow state is ${l.flow.state}` });
     return { outcome: "cancelled" };
@@ -288,13 +293,20 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
   if (silent && outcome.result !== "following") {
     // Nothing changed yet: go back to waiting without messaging the person (they already got a reply to their tap).
     const extra = outcome.result === "not_following" ? { last_follow_result: "not_following" } : {};
-    await transitionFlow(ctx, l.flow, "awaiting_follow", extra, `auto_recheck_${outcome.result}`);
+    await transitionFlow(ctx, l.flow, "awaiting_follow", extra, `${job.purpose}_${outcome.result}`);
+    // The automatic reminder: one message, only inside the 24h window Instagram allows.
+    if (job.purpose === AUTO_REMINDER && outcome.result === "not_following" && windowOpen(l.participant, now)) {
+      await enqueue(ctx.db, { ...common, kind: "send_message", purpose: "reminder", dedupKey: `msg:${l.flow.id}:auto_reminder` }, now);
+    }
     await finishJob(ctx.db, job, owner, "accepted", now, { result: { follow: outcome.result, field_present: outcome.fieldPresent, silent: true } });
     return { outcome: outcome.result };
   }
   switch (outcome.result) {
     case "following":
       await transitionFlow(ctx, l.flow, "ready_to_deliver", { last_follow_result: "following" }, "follow_verified");
+      if (prev === "not_following" && ctx.notify && !l.flow.is_demo) {
+        await ctx.notify("new_follower", `🎉 متابع جديد: ${l.participant.username ? "@" + l.participant.username : "شخص"} تابعك عبر حملة «${l.campaign.name}»`);
+      }
       await enqueue(ctx.db, { ...common, kind: "send_message", purpose: "content", dedupKey: `deliver:${l.flow.id}` }, now);
       break;
     case "not_following": {
@@ -305,6 +317,11 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
       // re-check once, quietly, so the content arrives on its own if the follow lands shortly after.
       if (job.purpose === VERIFY_CHECK) {
         await enqueue(ctx.db, { ...common, kind: "follow_check", purpose: AUTO_RECHECK, runAt: now + AUTO_RECHECK_DELAY_MS, dedupKey: `recheck:${l.flow.id}:${job.id}` }, now);
+      }
+      // Optional automatic reminder later on (once per flow), which first re-checks the follow.
+      const mins = Math.min(Math.max(0, l.campaign.follow_reminder_minutes ?? 0), MAX_REMINDER_MINUTES);
+      if (mins > 0) {
+        await enqueue(ctx.db, { ...common, kind: "follow_check", purpose: AUTO_REMINDER, runAt: now + mins * 60_000, dedupKey: `autoremind:${l.flow.id}` }, now);
       }
       break;
     }
@@ -326,6 +343,24 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
   }
   await finishJob(ctx.db, job, owner, "accepted", now, { result: { follow: outcome.result, field_present: outcome.fieldPresent } });
   return { outcome: outcome.result };
+}
+
+/**
+ * Click tracking: the content button points to /l/<token> on this Worker, which counts the tap and redirects
+ * to the real link. The token is created once per flow (a retry reuses it) and only for the content message.
+ */
+async function trackLink(ctx: EngineContext, l: Loaded, msg: OutgoingMessage): Promise<void> {
+  if (!msg.linkButton || !l.campaign.track_clicks || !ctx.publicBaseUrl) return;
+  await run(
+    ctx.db,
+    "UPDATE conversation_flows SET link_token = COALESCE(link_token, ?), link_url = ?, updated_at = ? WHERE id = ?",
+    randomToken(16),
+    msg.linkButton.url,
+    ctx.now(),
+    l.flow.id,
+  );
+  const row = await first<{ link_token: string }>(ctx.db, "SELECT link_token FROM conversation_flows WHERE id = ?", l.flow.id);
+  if (row?.link_token) msg.linkButton = { ...msg.linkButton, url: `${ctx.publicBaseUrl.replace(/\/+$/, "")}/l/${row.link_token}` };
 }
 
 async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): Promise<ExecResult> {
@@ -390,6 +425,7 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
   }
 
   const msg = buildMessage(purpose, l, channel);
+  if (isContent && msg.linkButton) await trackLink(ctx, l, msg);
   const token = await ctx.getAccessToken(l.account);
   if (!token) {
     await finishJob(ctx.db, job, owner, "failed", now, { error: "no access token" });
@@ -411,8 +447,22 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
       await run(ctx.db, "UPDATE conversation_flows SET private_reply_status = 'accepted', updated_at = ? WHERE id = ?", now, l.flow.id);
       l.flow.private_reply_status = "accepted";
     }
+    await recordMessage(ctx.db, {
+      accountId: l.account.id,
+      participantId: l.participant.id,
+      direction: "out",
+      source: "bot",
+      kind: channel === "private_reply" ? "private_reply" : purpose,
+      text: msg.linkButton ? `${msg.linkButton.text}\n[${msg.linkButton.title}]` : msg.text,
+      mid: r.data.message_id ?? null,
+      isDemo: l.flow.is_demo === 1,
+      at: now,
+    });
     if (isContent) {
       await transitionFlow(ctx, l.flow, "content_sent", { content_status: "accepted", content_delivered_at: now }, "content_accepted_by_meta");
+      if (ctx.notify && !l.flow.is_demo) {
+        await ctx.notify("delivery", `✅ استلم ${l.participant.username ? "@" + l.participant.username : "شخص"} محتوى حملة «${l.campaign.name}»`);
+      }
     }
     if (channel === "private_reply" && l.campaign.public_reply_enabled && l.flow.source_comment_id) {
       await enqueue(ctx.db, { kind: "public_reply", purpose: "success", accountId: l.account.id, flowId: l.flow.id, campaignId: l.campaign.id, isDemo: l.flow.is_demo === 1, dedupKey: `public_reply:${l.flow.source_comment_id}` }, now);

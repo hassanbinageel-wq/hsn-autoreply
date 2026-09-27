@@ -224,6 +224,12 @@ export class HttpMetaClient implements MetaClient {
     return this.request(u.toString(), this.authGet(token), false);
   }
 
+  async getMedia(token: string, mediaId: string): Promise<MetaResult<MediaItem>> {
+    const u = new URL(`${this.graphBase}/${encodeURIComponent(mediaId)}`);
+    u.searchParams.set("fields", "id,caption,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp");
+    return this.request(u.toString(), this.authGet(token), false);
+  }
+
   async listStories(token: string): Promise<MetaResult<Paged<MediaItem>>> {
     const u = new URL(`${this.graphBase}/me/stories`);
     u.searchParams.set("fields", "id,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp");
