@@ -133,3 +133,27 @@ export const simulateSchema = z.object({
     .optional(),
   reset: z.boolean().default(false),
 });
+
+export const drawInputSchema = z
+  .object({
+    name: text(120).min(1, "اكتب اسم السحب"),
+    source_type: z.enum(["media", "story"]),
+    media_id: z.string().regex(/^[0-9A-Za-z_]{1,64}$/).optional(),
+    url: z.string().trim().max(500).optional(),
+    winners_count: z.number().int().min(1, "عدد الفائزين 1 على الأقل").max(500),
+    starts_at: z.number().int().nullable().optional(),
+    ends_at: z.number().int().nullable().optional(),
+    timezone: text(64).optional(),
+    include_replies: z.boolean().default(false),
+    keyword: text(100).nullable().optional(),
+    exclude_own: z.boolean().default(true),
+    excluded_accounts: z.array(z.string().trim().max(80)).max(500).default([]),
+    entry_mode: z.enum(["per_person", "per_comment"]).default("per_person"),
+    allow_repeat_winner: z.boolean().default(false),
+    exclude_previous_winners: z.boolean().default(false),
+  })
+  .superRefine((d, ctx) => {
+    if (!d.media_id && !d.url) ctx.addIssue({ code: "custom", path: ["media_id"], message: "اختر منشورًا أو ستوري، أو الصق رابط المنشور" });
+    if (d.starts_at && d.ends_at && d.ends_at <= d.starts_at) ctx.addIssue({ code: "custom", path: ["ends_at"], message: "نهاية الفترة يجب أن تكون بعد بدايتها" });
+  });
+export type DrawInput = z.infer<typeof drawInputSchema>;

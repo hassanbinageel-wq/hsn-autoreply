@@ -97,6 +97,8 @@ export function classifyError(httpStatus: number, body: any, retryAfterMs?: numb
   return { kind: "permanent", ...base };
 }
 
+const COMMENT_FIELDS = "id,text,timestamp,username,from{id,username}";
+
 export class HttpMetaClient implements MetaClient {
   private readonly f: FetchLike;
   constructor(private readonly opts: HttpMetaClientOptions) {
@@ -227,7 +229,7 @@ export class HttpMetaClient implements MetaClient {
 
   async getMedia(token: string, mediaId: string): Promise<MetaResult<MediaItem>> {
     const u = new URL(`${this.graphBase}/${encodeURIComponent(mediaId)}`);
-    u.searchParams.set("fields", "id,caption,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp");
+    u.searchParams.set("fields", "id,caption,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp,comments_count");
     return this.request(u.toString(), this.authGet(token), false);
   }
 
@@ -235,6 +237,22 @@ export class HttpMetaClient implements MetaClient {
     const u = new URL(`${this.graphBase}/${encodeURIComponent(mediaId)}/comments`);
     u.searchParams.set("fields", "id,text,timestamp,username,from{id,username},parent_id");
     u.searchParams.set("limit", "50");
+    return this.request(u.toString(), this.authGet(token), false);
+  }
+
+  async listCommentsPage(token: string, mediaId: string, after?: string): Promise<MetaResult<Paged<CommentItem>>> {
+    const u = new URL(`${this.graphBase}/${encodeURIComponent(mediaId)}/comments`);
+    u.searchParams.set("fields", `${COMMENT_FIELDS},replies.limit(50){${COMMENT_FIELDS},parent_id}`);
+    u.searchParams.set("limit", "50");
+    if (after) u.searchParams.set("after", after);
+    return this.request(u.toString(), this.authGet(token), false);
+  }
+
+  async listReplies(token: string, commentId: string, after?: string): Promise<MetaResult<Paged<CommentItem>>> {
+    const u = new URL(`${this.graphBase}/${encodeURIComponent(commentId)}/replies`);
+    u.searchParams.set("fields", `${COMMENT_FIELDS},parent_id`);
+    u.searchParams.set("limit", "50");
+    if (after) u.searchParams.set("after", after);
     return this.request(u.toString(), this.authGet(token), false);
   }
 

@@ -205,6 +205,7 @@ export function CampaignStatsPage({ id }: { id: number }) {
         subtitle="أرقام حقيقية من الإنتاج فقط (بدون المحاكاة). «وصلتهم الرسالة» = قبلت Meta إرسالها، وليس بالضرورة أنها قُرئت."
         actions={
           <>
+            <Link to={`/campaigns/${id}/draws`} className="btn btn-ghost">🎁 السحوبات</Link>
             <Link to={`/campaigns/${id}`} className="btn btn-ghost">✏️ تعديل الحملة</Link>
             <Link to="/campaigns" className="btn btn-ghost">→ الحملات</Link>
           </>

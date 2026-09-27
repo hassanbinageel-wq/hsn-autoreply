@@ -38,6 +38,7 @@ import { cancelJobsWhere } from "./engine/jobs";
 import type { AccountRow } from "./engine/context";
 import {
   campaignInputSchema,
+  drawInputSchema,
   loginSchema,
   settingsSchema,
   setupSchema,
@@ -51,6 +52,8 @@ import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegra
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage } from "./services/usage";
 import { recoverMissedComments } from "./services/recover";
+import { DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
+import { instagramShortcode } from "../shared/draw";
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 const PUBLIC_SETTINGS_SQL = "key NOT LIKE 'telegram%' AND key NOT LIKE 'notify%'";
@@ -1003,6 +1006,150 @@ export function createApp() {
       delete i.participant_id;
     }
     return c.json({ items });
+  });
+
+  // ---- Random Comment Picker (draws)
+  const drawError = (c: C, e: unknown) => {
+    if (e instanceof DrawFailure) return c.json({ error: e.code, message: e.message, ...e.extra }, e.status as any);
+    throw e;
+  };
+  async function resolveDrawMedia(c: C, d: { source_type: "media" | "story"; media_id?: string; url?: string }) {
+    const acc = await currentAccount(c.env.DB);
+    if (!acc || acc.status !== "active") throw new DrawFailure(409, "no_account", "اربط حساب إنستقرام أولًا");
+    if (d.source_type === "story") {
+      const id = d.media_id;
+      if (!id) throw new DrawFailure(422, "validation", "اختر الستوري");
+      const cached = await first<any>(c.env.DB, "SELECT media_id, caption, permalink, thumbnail_url FROM media_cache WHERE account_id = ? AND media_id = ? AND kind = 'story'", acc.id, id);
+      const seen = await first(c.env.DB, "SELECT 1 AS ok FROM webhook_events WHERE event_type = 'story_reply' AND is_demo = 0 AND media_id = ? LIMIT 1", id);
+      if (!cached && !seen) throw new DrawFailure(404, "unknown_story", "الستوري غير معروفة للنظام — اجلب الستوري الحالية أولًا");
+      return { media_id: id, permalink: cached?.permalink ?? null, caption: cached?.caption ?? null, thumb: cached?.thumbnail_url ?? null, comments_count: null };
+    }
+    let mediaId = d.media_id;
+    if (!mediaId && d.url) {
+      const code = instagramShortcode(d.url);
+      if (!code) throw new DrawFailure(422, "bad_url", "الرابط ليس رابط منشور أو ريل من إنستقرام");
+      const hit = await first<{ media_id: string }>(c.env.DB, "SELECT media_id FROM media_cache WHERE account_id = ? AND kind = 'media' AND permalink LIKE ?", acc.id, `%/${code}/%`);
+      if (!hit) throw new DrawFailure(404, "not_own_media", "لم يُعثر على هذا المنشور في حسابك المربوط. السحب متاح لمنشورات حسابك فقط — حدّث قائمة المنشورات ثم أعد المحاولة.");
+      mediaId = hit.media_id;
+    }
+    // Confirm with Meta that the media is reachable with the current authorization.
+    const token = await getAccessToken(c.env, c.env.DB, acc);
+    if (!token) throw new DrawFailure(409, "no_token", "التفويض غير متاح — أعد الربط");
+    const r = await metaClient(c.env).getMedia(token, mediaId!);
+    if (!r.ok) throw new DrawFailure(422, "media_unreachable", `تعذر الوصول إلى المنشور عبر Meta: ${r.error.message}`);
+    const m = r.data;
+    const preview = m.media_type === "VIDEO" ? m.thumbnail_url ?? null : m.thumbnail_url ?? m.media_url ?? null;
+    return { media_id: m.id, permalink: m.permalink ?? null, caption: m.caption?.slice(0, 500) ?? null, thumb: preview, comments_count: m.comments_count ?? null };
+  }
+
+  api.get("/campaigns/:id/draws", async (c) => {
+    const id = idParam(c);
+    const rows = await all<any>(
+      c.env.DB,
+      `SELECT d.id, d.name, d.source_type, d.media_thumb, d.media_caption, d.winners_count, d.status, d.fetch_status, d.fetched_count, d.drawn_at, d.created_at,
+              (SELECT COUNT(*) FROM draw_winners w WHERE w.draw_id = d.id AND w.status = 'active') AS active_winners
+         FROM draws d WHERE d.campaign_id = ? ORDER BY d.id DESC LIMIT 200`,
+      id,
+    );
+    return c.json(rows);
+  });
+  api.post("/campaigns/:id/draws", async (c) => {
+    const cid = idParam(c);
+    const camp = cid && (await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND deleted_at IS NULL", cid));
+    if (!camp) return apiError(c, 404, "not_found", "الحملة غير موجودة");
+    const p = await parseBody(c, drawInputSchema);
+    if (!p.ok) return p.res;
+    const d = p.data;
+    try {
+      const m = await resolveDrawMedia(c, d);
+      const now = Date.now();
+      const r = await first<{ id: number }>(
+        c.env.DB,
+        `INSERT INTO draws (campaign_id, name, source_type, media_id, media_permalink, media_caption, media_thumb, media_comments_count, winners_count,
+           starts_at, ends_at, timezone, include_replies, keyword, exclude_own, excluded_accounts, entry_mode, allow_repeat_winner, exclude_previous_winners, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        cid, d.name, d.source_type, m.media_id, m.permalink, m.caption, m.thumb, m.comments_count, d.winners_count,
+        d.starts_at ?? null, d.ends_at ?? null, d.timezone ?? null, d.source_type === "story" ? 0 : +d.include_replies, d.keyword?.trim() || null, +d.exclude_own,
+        JSON.stringify(d.excluded_accounts), d.entry_mode, d.entry_mode === "per_comment" ? +d.allow_repeat_winner : 0, +d.exclude_previous_winners, now, now,
+      );
+      await audit(c.env.DB, c.get("session").username, "draw.created", String(r!.id), { campaign: cid });
+      return c.json({ id: r!.id });
+    } catch (e) {
+      return drawError(c, e);
+    }
+  });
+  api.get("/draws/:id", async (c) => {
+    const id = idParam(c);
+    const d = id && (await loadDraw(c.env.DB, id));
+    if (!d) return apiError(c, 404, "not_found", "السحب غير موجود");
+    const [pv, winners, campaign] = await Promise.all([
+      preview(c.env.DB, d),
+      winnersOf(c.env.DB, d.id),
+      first<{ id: number; name: string }>(c.env.DB, "SELECT id, name FROM campaigns WHERE id = ?", d.campaign_id),
+    ]);
+    const { fetch_state: _fs, ...draw } = d;
+    return c.json({ draw: { ...draw, excluded_accounts: settingsOf(d).excluded_accounts }, campaign, preview: pv, winners, labels: EXCLUDE_LABELS });
+  });
+  api.put("/draws/:id", async (c) => {
+    const id = idParam(c);
+    const d = id && (await loadDraw(c.env.DB, id));
+    if (!d) return apiError(c, 404, "not_found", "السحب غير موجود");
+    if (d.status !== "draft") return apiError(c, 409, "locked", "تم تنفيذ السحب — الإعدادات مجمّدة");
+    const p = await parseBody(c, drawInputSchema);
+    if (!p.ok) return p.res;
+    const x = p.data;
+    await run(
+      c.env.DB,
+      `UPDATE draws SET name = ?, winners_count = ?, starts_at = ?, ends_at = ?, timezone = ?, include_replies = ?, keyword = ?, exclude_own = ?,
+         excluded_accounts = ?, entry_mode = ?, allow_repeat_winner = ?, exclude_previous_winners = ?, updated_at = ? WHERE id = ? AND status = 'draft'`,
+      x.name, x.winners_count, x.starts_at ?? null, x.ends_at ?? null, x.timezone ?? null, d.source_type === "story" ? 0 : +x.include_replies, x.keyword?.trim() || null,
+      +x.exclude_own, JSON.stringify(x.excluded_accounts), x.entry_mode, x.entry_mode === "per_comment" ? +x.allow_repeat_winner : 0, +x.exclude_previous_winners, Date.now(), id,
+    );
+    return c.json({ ok: true });
+  });
+  api.post("/draws/:id/fetch", async (c) => {
+    const id = idParam(c);
+    const p = await parseBody(c, z.object({ restart: z.boolean().default(false) }));
+    if (!p.ok) return p.res;
+    try {
+      const d = await fetchBatch(engineContext(c.env), id!, { restart: p.data.restart });
+      return c.json({ fetch_status: d.fetch_status, fetched_count: d.fetched_count, fetch_error: d.fetch_error, fetch_updated_at: d.fetch_updated_at });
+    } catch (e) {
+      return drawError(c, e);
+    }
+  });
+  api.post("/draws/:id/run", async (c) => {
+    const id = idParam(c);
+    const p = await parseBody(c, z.object({ request_id: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) }));
+    if (!p.ok) return p.res;
+    try {
+      const r = await runDraw(c.env.DB, id!, p.data.request_id);
+      if (!r.replay) await audit(c.env.DB, c.get("session").username, "draw.run", String(id));
+      return c.json({ ok: true, replay: r.replay, winners: await winnersOf(c.env.DB, id!) });
+    } catch (e) {
+      return drawError(c, e);
+    }
+  });
+  api.post("/draws/:id/winners/:wid/replace", async (c) => {
+    const id = idParam(c);
+    const wid = Number(c.req.param("wid"));
+    const p = await parseBody(c, z.object({ reason: z.string().trim().min(2, "اكتب سبب الاستبدال").max(300) }));
+    if (!p.ok) return p.res;
+    try {
+      const r = await replaceWinner(c.env.DB, id!, wid, p.data.reason);
+      await audit(c.env.DB, c.get("session").username, "draw.winner_replaced", String(id), { winner: wid, reason: p.data.reason });
+      return c.json({ ok: true, ...r, winners: await winnersOf(c.env.DB, id!) });
+    } catch (e) {
+      return drawError(c, e);
+    }
+  });
+  api.delete("/draws/:id", async (c) => {
+    const id = idParam(c);
+    const d = id && (await loadDraw(c.env.DB, id));
+    if (!d) return apiError(c, 404, "not_found", "السحب غير موجود");
+    if (d.status !== "draft") return apiError(c, 409, "locked", "السحوبات المنفّذة تبقى في السجل ولا تُحذف");
+    await run(c.env.DB, "DELETE FROM draws WHERE id = ? AND status = 'draft'", id);
+    return c.json({ ok: true });
   });
 
   // ---- Notifications (Telegram)

@@ -10,6 +10,7 @@ import { CampaignsPage } from "./pages/Campaigns";
 import { CampaignWizard } from "./pages/CampaignWizard";
 import { CampaignStatsPage } from "./pages/CampaignStats";
 import { InboxPage } from "./pages/Inbox";
+import { CampaignDrawsPage, DrawPage } from "./pages/Draws";
 import { TemplatesPage } from "./pages/Templates";
 import { LogsPage } from "./pages/Logs";
 import { SimulatorPage } from "./pages/Simulator";
@@ -147,8 +148,12 @@ export function App() {
   let page: ReactNode;
   const m = route.match(/^\/campaigns\/(new|\d+)$/);
   const ms = route.match(/^\/campaigns\/(\d+)\/stats$/);
+  const md = route.match(/^\/campaigns\/(\d+)\/draws$/);
+  const mdr = route.match(/^\/draws\/(\d+)$/);
   if (m) page = <CampaignWizard id={m[1] === "new" ? null : Number(m[1])} />;
   else if (ms) page = <CampaignStatsPage id={Number(ms[1])} />;
+  else if (md) page = <CampaignDrawsPage campaignId={Number(md[1])} />;
+  else if (mdr) page = <DrawPage key={mdr[1]} id={Number(mdr[1])} />;
   else
     switch (route) {
       case "/": page = <DashboardPage />; break;

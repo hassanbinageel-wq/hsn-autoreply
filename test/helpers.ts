@@ -65,6 +65,28 @@ export class MockMeta implements MetaClient {
     this.calls.push({ kind: "list_comments", target: mediaId });
     return { ok: true, httpStatus: 200, data: { data: this.comments[mediaId] ?? [] } };
   }
+  /** Paged comments for the random picker: pages[mediaId][i] is returned for cursor `c<i>` (first page: no cursor). */
+  commentPages: Record<string, Array<CommentItem[]>> = {};
+  replyPages: Record<string, Array<CommentItem[]>> = {};
+  /** Errors to return (once each) for the next picker calls, e.g. rate limits. */
+  pickerErrors: Array<"rate_limited" | "retryable" | "permission"> = [];
+  private pageOf(pages: Array<CommentItem[]> | undefined, after?: string): MetaResult<Paged<CommentItem>> {
+    const err = this.pickerErrors.shift();
+    if (err) return { ok: false, error: { kind: err, httpStatus: err === "rate_limited" ? 429 : err === "retryable" ? 500 : 403, message: err } };
+    const i = after ? Number(after.slice(1)) : 0;
+    const list = pages ?? [];
+    const data = list[i] ?? [];
+    const hasNext = i + 1 < list.length;
+    return { ok: true, httpStatus: 200, data: { data, paging: hasNext ? { cursors: { after: `c${i + 1}` }, next: "https://next" } : {} } };
+  }
+  async listCommentsPage(_t: string, mediaId: string, after?: string) {
+    this.calls.push({ kind: "list_comments", target: `${mediaId}@${after ?? ""}` });
+    return this.pageOf(this.commentPages[mediaId], after);
+  }
+  async listReplies(_t: string, commentId: string, after?: string) {
+    this.calls.push({ kind: "list_comments", target: `replies:${commentId}@${after ?? ""}` });
+    return this.pageOf(this.replyPages[commentId], after);
+  }
   /** Posts/reels returned by getMedia (auto-attach of new posts). */
   media: Record<string, MediaItem> = {};
   async getMedia(_t: string, mediaId: string): Promise<MetaResult<MediaItem>> {
@@ -98,6 +120,9 @@ const TABLES = [
   "action_jobs",
   "follow_checks",
   "messages",
+  "draw_winners",
+  "draw_entries",
+  "draws",
   "conversation_flows",
   "participants",
   "webhook_events",

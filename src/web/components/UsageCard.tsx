@@ -61,12 +61,24 @@ function RecoveredList({ onClose }: { onClose: () => void }) {
   );
 }
 
-function Bar({ label, used, limit, pct }: { label: string; used: number; limit: number; pct: number }) {
+function Bar({ label, used, limit, pct, info }: { label: string; used: number; limit: number; pct: number; info: string }) {
   const color = pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500";
+  const [open, setOpen] = useState(false);
   return (
     <div>
       <div className="mb-1 flex justify-between text-sm">
-        <span>{label}</span>
+        <span className="flex items-center gap-1.5">
+          {label}
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            aria-label={`ما معنى «${label}»؟`}
+            className="surface-2 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold"
+          >
+            ؟
+          </button>
+        </span>
         <span className="tabular-nums">
           <b>{pct}%</b> <span className="muted">({used.toLocaleString("ar")} من {limit.toLocaleString("ar")})</span>
         </span>
@@ -74,9 +86,15 @@ function Bar({ label, used, limit, pct }: { label: string; used: number; limit: 
       <div className="surface-2 h-2.5 overflow-hidden rounded-full">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.max(1, pct)}%` }} />
       </div>
+      {open && <p className="surface-2 mt-2 rounded-lg p-2.5 text-xs leading-relaxed">{info}</p>}
     </div>
   );
 }
+
+const INFO_REQUESTS =
+  "كل مرة يتصل فيها أي شيء بخادمك تُحسب «طلبًا»: كل تنبيه يرسله إنستقرام (تعليق جديد، رسالة، ضغطة زر)، كل ضغطة على رابط المحتوى، الفحص الآلي كل دقيقة، وفتحك للتطبيق. الحد المجاني 100 ألف طلب يوميًا، ويكفي عادة آلاف الأشخاص في اليوم.";
+const INFO_WRITES =
+  "كل مرة يحفظ فيها النظام معلومة في قاعدة البيانات تُحسب «كتابة»: تسجيل التعليق، إنشاء مسار للشخص، حفظ الرسائل، نتيجة التحقق من المتابعة، تحديث حالة الإرسال… التفاعل الواحد يحتاج عدة كتابات، لذلك هذا غالبًا أول حد تقترب منه (100 ألف يوميًا). عند بلوغه تتوقف الردود حتى 03:00 بتوقيت السعودية بدون أي رسوم.";
 
 /** Today's (estimated) share of the Cloudflare free limits, and recovery of comments whose webhook was missed. */
 export function UsageCard() {
@@ -112,8 +130,8 @@ export function UsageCard() {
     <Card title="استهلاك اليوم من الحد المجاني">
       {showList && <RecoveredList onClose={() => setShowList(false)} />}
       <div className="space-y-3">
-        <Bar label="الطلبات" {...u.requests} />
-        <Bar label="الكتابة في قاعدة البيانات" {...u.writes} />
+        <Bar label="الطلبات" {...u.requests} info={INFO_REQUESTS} />
+        <Bar label="الكتابة في قاعدة البيانات" {...u.writes} info={INFO_WRITES} />
         <p className="muted text-xs">
           تقدير تقريبي من نشاط اليوم (الأرقام الدقيقة في لوحة Cloudflare). يتجدد الحد {fmtTime(u.reset_at)} (03:00 بتوقيت السعودية). عند بلوغ 100% تتوقف
           الردود مؤقتًا بدون أي رسوم، ثم تكمل تلقائيًا.

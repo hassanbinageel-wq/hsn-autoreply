@@ -61,6 +61,7 @@ export interface MediaItem {
   thumbnail_url?: string;
   media_url?: string;
   timestamp?: string;
+  comments_count?: number;
 }
 
 export interface CommentItem {
@@ -70,6 +71,8 @@ export interface CommentItem {
   username?: string;
   from?: { id?: string; username?: string };
   parent_id?: string;
+  /** Present when requested as a field expansion (first page of replies). */
+  replies?: Paged<CommentItem>;
 }
 
 export interface Paged<T> {
@@ -106,4 +109,8 @@ export interface MetaClient {
   getMedia?(token: string, mediaId: string): Promise<MetaResult<MediaItem>>;
   /** Latest top-level comments of a post/reel (used to recover comments whose webhook never arrived). */
   listComments?(token: string, mediaId: string): Promise<MetaResult<Paged<CommentItem>>>;
+  /** One page of top-level comments (with the first page of replies expanded), for the random picker. */
+  listCommentsPage?(token: string, mediaId: string, after?: string): Promise<MetaResult<Paged<CommentItem>>>;
+  /** One page of replies to a comment. */
+  listReplies?(token: string, commentId: string, after?: string): Promise<MetaResult<Paged<CommentItem>>>;
 }
