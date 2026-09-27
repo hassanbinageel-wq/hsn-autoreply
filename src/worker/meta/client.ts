@@ -303,6 +303,14 @@ export class HttpMetaClient implements MetaClient {
     return r;
   }
 
+  sendImage(token: string, igUserId: string, recipientId: string, imageUrl: string) {
+    return this.request<{ message_id?: string }>(
+      `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`,
+      this.authJson(token, { recipient: { id: recipientId }, message: { attachment: { type: "image", payload: { url: imageUrl } } } }),
+      true,
+    );
+  }
+
   sendMessage(token: string, igUserId: string, recipientId: string, msg: OutgoingMessage) {
     const url = `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`;
     const plain = () => this.request<{ message_id?: string }>(url, this.authJson(token, { recipient: { id: recipientId }, message: this.messageBody(msg) }), true);

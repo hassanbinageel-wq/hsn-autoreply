@@ -46,6 +46,7 @@ export interface DrawRow {
   draw_request_id: string | null;
   created_at: number;
   updated_at: number;
+  card_design_id?: number | null;
 }
 
 export class DrawFailure extends Error {
@@ -537,6 +538,7 @@ export async function winnersOf(db: D1Database, drawId: number) {
   return all<any>(
     db,
     `SELECT w.id, w.position, w.status, w.replaced_reason, w.replaced_at, w.replaced_by, w.created_at, w.identity_key,
+            w.send_status, w.send_channel, w.sent_at, w.send_error,
             e.comment_id, e.author_id, e.author_username, e.text, e.created_time, e.source
        FROM draw_winners w JOIN draw_entries e ON e.id = w.entry_id
       WHERE w.draw_id = ? ORDER BY w.position, w.id`,

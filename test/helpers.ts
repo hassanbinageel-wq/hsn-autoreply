@@ -48,6 +48,10 @@ export class MockMeta implements MetaClient {
     this.calls.push({ kind: "dm", target: recipientId, text: msg.text, msg });
     return this.res(this.dm);
   }
+  async sendImage(_t: string, _ig: string, recipientId: string, imageUrl: string) {
+    this.calls.push({ kind: "dm", target: recipientId, text: `[image] ${imageUrl}` });
+    return this.res(this.dm);
+  }
   async replyToComment(_t: string, commentId: string, text: string) {
     this.calls.push({ kind: "public_reply", target: commentId, text });
     return this.res(this.publicReply);
@@ -120,9 +124,11 @@ const TABLES = [
   "action_jobs",
   "follow_checks",
   "messages",
+  "draw_cards",
   "draw_winners",
   "draw_entries",
   "draws",
+  "card_designs",
   "conversation_flows",
   "participants",
   "webhook_events",

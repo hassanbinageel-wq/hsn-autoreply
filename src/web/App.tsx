@@ -11,6 +11,7 @@ import { CampaignWizard } from "./pages/CampaignWizard";
 import { CampaignStatsPage } from "./pages/CampaignStats";
 import { InboxPage } from "./pages/Inbox";
 import { DrawsHomePage, DrawPage } from "./pages/Draws";
+import { CardDesignsPage } from "./pages/CardDesigns";
 import { TemplatesPage } from "./pages/Templates";
 import { LogsPage } from "./pages/Logs";
 import { SimulatorPage } from "./pages/Simulator";
@@ -164,6 +165,7 @@ export function App() {
       case "/templates": page = <TemplatesPage />; break;
       case "/logs": page = <LogsPage />; break;
       case "/draws": page = <DrawsHomePage />; break;
+      case "/draws/designs": page = <CardDesignsPage />; break;
       case "/inbox": page = <InboxPage />; break;
       case "/simulator": page = <SimulatorPage />; break;
       case "/settings": page = <SettingsPage theme={theme} setTheme={setTheme} onLogout={logout} username={username} />; break;

@@ -54,6 +54,8 @@ import { estimateUsage } from "./services/usage";
 import { recoverMissedComments } from "./services/recover";
 import { DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
 import { instagramShortcode } from "../shared/draw";
+import { cardDesignSchema } from "../shared/card";
+import { cardByToken, planFor, sendCard, storeCard } from "./services/cards";
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 const PUBLIC_SETTINGS_SQL = "key NOT LIKE 'telegram%' AND key NOT LIKE 'notify%'";
@@ -140,6 +142,15 @@ export function createApp() {
     c.header("Content-Security-Policy", PAGE_CSP);
     return c.html(body);
   };
+  // Public congratulation card image (unguessable token) — Meta fetches it when the card is sent.
+  app.get("/c/:token", async (c) => {
+    const token = c.req.param("token").replace(/\.(jpg|jpeg|png)$/, "");
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return c.text("not found", 404);
+    const card = await cardByToken(c.env.DB, token);
+    if (!card) return c.text("not found", 404);
+    return new Response(card.data, { headers: { "Content-Type": card.mime, "Cache-Control": "public, max-age=31536000, immutable", "X-Robots-Tag": "noindex" } });
+  });
+
   // Tracked content link: counts the tap, then redirects to the campaign's real link.
   // Link-preview crawlers (Instagram/Meta fetch the URL to render a card) are redirected but not counted.
   app.on(["GET", "HEAD"], "/l/:token", async (c) => {
@@ -1173,6 +1184,65 @@ export function createApp() {
     if (d.status !== "draft") return apiError(c, 409, "locked", "السحوبات المنفّذة تبقى في السجل ولا تُحذف");
     await run(c.env.DB, "DELETE FROM draws WHERE id = ? AND status = 'draft'", id);
     return c.json({ ok: true });
+  });
+
+  // ---- Congratulation cards (designs, generated images, sending to winners)
+  api.get("/card-designs", async (c) => c.json(await all(c.env.DB, "SELECT id, name, design, updated_at FROM card_designs ORDER BY id DESC")));
+  const designBody = z.object({ name: z.string().trim().min(1, "اكتب اسم التصميم").max(80), design: cardDesignSchema });
+  api.post("/card-designs", async (c) => {
+    const p = await parseBody(c, designBody);
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO card_designs (name, design, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id", p.data.name, JSON.stringify(p.data.design), now, now);
+    return c.json({ id: r!.id });
+  });
+  api.put("/card-designs/:id", async (c) => {
+    const id = idParam(c);
+    const p = await parseBody(c, designBody);
+    if (!p.ok) return p.res;
+    await run(c.env.DB, "UPDATE card_designs SET name = ?, design = ?, updated_at = ? WHERE id = ?", p.data.name, JSON.stringify(p.data.design), Date.now(), id);
+    return c.json({ ok: true });
+  });
+  api.delete("/card-designs/:id", async (c) => {
+    const id = idParam(c);
+    await run(c.env.DB, "UPDATE draws SET card_design_id = NULL WHERE card_design_id = ?", id);
+    await run(c.env.DB, "DELETE FROM card_designs WHERE id = ?", id);
+    return c.json({ ok: true });
+  });
+  api.put("/draws/:id/card-design", async (c) => {
+    const id = idParam(c);
+    const p = await parseBody(c, z.object({ card_design_id: z.number().int().positive().nullable() }));
+    if (!p.ok) return p.res;
+    await run(c.env.DB, "UPDATE draws SET card_design_id = ?, updated_at = ? WHERE id = ?", p.data.card_design_id, Date.now(), id);
+    return c.json({ ok: true });
+  });
+  api.get("/draws/:id/winners/:wid/plan", async (c) => {
+    try {
+      return c.json(await planFor(c.env.DB, idParam(c)!, Number(c.req.param("wid"))));
+    } catch (e) {
+      return drawError(c, e);
+    }
+  });
+  api.post("/draws/:id/winners/:wid/card", async (c) => {
+    const p = await parseBody(c, z.object({ image: z.string().max(2_100_000) }));
+    if (!p.ok) return p.res;
+    try {
+      const token = await storeCard(c.env.DB, idParam(c)!, Number(c.req.param("wid")), p.data.image);
+      return c.json({ token, url: `${c.env.PUBLIC_BASE_URL.replace(/\/+$/, "")}/c/${token}` });
+    } catch (e) {
+      return drawError(c, e);
+    }
+  });
+  api.post("/draws/:id/winners/:wid/send", async (c) => {
+    const id = idParam(c)!;
+    const wid = Number(c.req.param("wid"));
+    try {
+      const r = await sendCard(engineContext(c.env), c.env.PUBLIC_BASE_URL, id, wid);
+      await audit(c.env.DB, c.get("session").username, "draw.card_sent", String(id), { winner: wid, channel: r.channel });
+      return c.json({ ok: true, ...r, winners: await winnersOf(c.env.DB, id) });
+    } catch (e) {
+      return drawError(c, e);
+    }
   });
 
   // ---- Notifications (Telegram)

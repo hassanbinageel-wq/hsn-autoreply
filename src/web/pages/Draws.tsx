@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api";
 import { Link, navigate } from "../App";
 import { Alert, Card, Field, Modal, PageHeader, Spinner, Toggle, fmtTime, toast, useAsync } from "../components/ui";
 import { toCsv } from "../../shared/csv";
 import { canvasesToPdf, renderPages, saveBlob, type PdfLine } from "../lib/pdf";
 import { Celebration } from "../components/Celebration";
+import { DrawsTabs } from "./CardDesigns";
+import { DEFAULT_CARD, cardDesignSchema, type CardDesign } from "../../shared/card";
+import { canvasToJpegDataUrl, renderCard } from "../lib/card";
 
 // ---------------------------------------------------------------------------------------------------------------
 // Settings form (create + edit while draft)
@@ -280,7 +284,12 @@ export function DrawsHomePage() {
       <PageHeader
         title="🎁 السحوبات"
         subtitle="سحب عشوائي عادل للفائزين من تعليقات منشوراتك وريلزاتك أو ردود الستوري. الاختيار يتم على الخادم بمولد أرقام عشوائية آمن."
-        actions={<button className="btn btn-primary" onClick={() => setCreating(true)}>+ سحب جديد</button>}
+        actions={
+          <>
+            <DrawsTabs active="draws" />
+            <button className="btn btn-primary" onClick={() => setCreating(true)}>+ سحب جديد</button>
+          </>
+        }
       />
       {creating && (
         <Modal open onClose={() => setCreating(false)} title="سحب جديد">
@@ -368,8 +377,11 @@ function Countdown({ title, names, winner, onDone }: { title: string; names: str
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [n]);
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-br from-violet-900 via-fuchsia-800 to-orange-700 p-6 text-center text-white" onClick={() => revealed && onDone()}>
+  return createPortal(
+    <div
+      className={`fixed inset-0 z-[70] flex min-h-[100dvh] flex-col items-center justify-center p-6 text-center text-white transition-colors duration-700 ${revealed ? "bg-gradient-to-b from-[#05030f] via-[#0b0a24] to-[#1a0b2e]" : "bg-gradient-to-br from-violet-900 via-fuchsia-800 to-orange-700"}`}
+      onClick={() => revealed && onDone()}
+    >
       <div className="mb-6 text-2xl font-bold opacity-90">🎁 {title}</div>
       {n > 0 ? (
         <div key={n} className="count-pop text-[9rem] font-black leading-none drop-shadow-lg">{n}</div>
@@ -388,10 +400,17 @@ function Countdown({ title, names, winner, onDone }: { title: string; names: str
       )}
       {revealed && <Celebration />}
     </div>
-  );
+  , document.body);
 }
 
-function WinnerCard({ w, onReplace }: { w: any; onReplace?: () => void }) {
+const SEND_LABEL: Record<string, [string, string]> = {
+  sent: ["✅ أُرسلت البطاقة", "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"],
+  failed: ["⚠️ فشل الإرسال", "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"],
+  uncertain: ["❔ غير مؤكد", "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"],
+  sending: ["⏳ جارٍ الإرسال", "surface-2"],
+};
+
+function WinnerCard({ w, onReplace, onCard }: { w: any; onReplace?: () => void; onCard?: () => void }) {
   return (
     <div className="card count-pop flex items-start gap-3 p-4">
       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-orange-600 text-xl font-black text-white">{w.position}</div>
@@ -409,12 +428,79 @@ function WinnerCard({ w, onReplace }: { w: any; onReplace?: () => void }) {
           {w.created_time ? ` · ${fmtTime(w.created_time)}` : ""}
         </div>
       </div>
-      {onReplace && (
-        <button className="btn btn-ghost shrink-0 text-xs" onClick={onReplace}>
-          🔁 استبدال
-        </button>
-      )}
+      <div className="flex shrink-0 flex-col items-end gap-1.5">
+        {w.send_status && SEND_LABEL[w.send_status] && <span className={`rounded-full px-2 py-0.5 text-[11px] ${SEND_LABEL[w.send_status][1]}`}>{SEND_LABEL[w.send_status][0]}</span>}
+        {onCard && <button className="btn btn-primary text-xs" onClick={onCard}>🖼️ البطاقة</button>}
+        {onReplace && <button className="btn btn-ghost text-xs" onClick={onReplace}>🔁 استبدال</button>}
+      </div>
     </div>
+  );
+}
+
+function WinnerCardModal({ draw, winner, design, account, onClose, onSent }: { draw: any; winner: any; design: CardDesign; account: string | null; onClose: () => void; onSent: () => void }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [plan, setPlan] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    renderCard(design, {
+      username: winner.author_username,
+      position: winner.position,
+      contest: design.title || draw.name,
+      account,
+      drawnAt: draw.drawn_at ?? winner.created_at ?? Date.now(),
+      timezone: draw.timezone,
+    }).then((c) => setSrc(canvasToJpegDataUrl(c)));
+    api(`/api/draws/${draw.id}/winners/${winner.id}/plan`).then(setPlan).catch((e) => setPlan({ can: false, reason: e.message }));
+  }, [design, winner.id]);
+  const download = () => {
+    if (!src) return;
+    const a = document.createElement("a");
+    a.href = src;
+    a.download = `winner-${winner.position}-${winner.author_username ?? winner.id}.jpg`;
+    a.click();
+  };
+  const send = async () => {
+    if (!src || !plan?.can) return;
+    const how = plan.channel === "dm" ? "صورة البطاقة + رسالة التهنئة في الخاص" : "رد خاص واحد على تعليقه (نص التهنئة + زر يفتح البطاقة)";
+    if (!confirm(`إرسال إلى ${winner.author_username ? "@" + winner.author_username : "الفائز"}؟\n${how}\nهذه رسالة حقيقية ولا يمكن التراجع عنها.`)) return;
+    setBusy(true);
+    try {
+      await api(`/api/draws/${draw.id}/winners/${winner.id}/card`, { body: { image: src } });
+      await api(`/api/draws/${draw.id}/winners/${winner.id}/send`, { body: {} });
+      toast("تم إرسال البطاقة ✅");
+      onSent();
+      onClose();
+    } catch (e: any) {
+      toast(e.message, "bad");
+      onSent();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title={`بطاقة الفائز ${winner.position} — ${winner.author_username ? "@" + winner.author_username : ""}`}>
+      <div className="space-y-3">
+        {src ? <img src={src} alt="بطاقة الفوز" className="mx-auto max-h-[60vh] rounded-xl shadow-lg" /> : <Spinner />}
+        <div className="flex flex-wrap gap-2">
+          <button className="btn btn-ghost" disabled={!src} onClick={download}>⬇️ تنزيل الصورة</button>
+        </div>
+        {!plan ? (
+          <Spinner />
+        ) : plan.can ? (
+          <Alert tone="info">
+            <b>طريقة الإرسال المتاحة:</b> {plan.reason}
+            {plan.window_expires_at ? <span className="block text-xs">متاح حتى {fmtTime(plan.window_expires_at)}</span> : null}
+          </Alert>
+        ) : (
+          <Alert tone="warn">
+            <b>لا يمكن الإرسال الآن:</b> {plan.reason}
+            <span className="block text-xs">يمكنك تنزيل الصورة ونشرها أو إرسالها بنفسك، أو اطلب من الفائز أن يراسلك ثم أعد المحاولة خلال 24 ساعة.</span>
+          </Alert>
+        )}
+        <button className="btn btn-primary w-full" disabled={!plan?.can || !src || busy} onClick={send}>{busy ? "جارٍ الإرسال…" : "📨 إرسال للفائز"}</button>
+        <p className="muted text-xs">لا يُرسل شيء إلا بضغطك وتأكيدك. الرسالة المرسلة تظهر في «الرسائل».</p>
+      </div>
+    </Modal>
   );
 }
 
@@ -427,6 +513,9 @@ export function DrawPage({ id }: { id: number }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | "eligible" | "excluded">("all");
   const [replaceFor, setReplaceFor] = useState<any>(null);
+  const [cardFor, setCardFor] = useState<any>(null);
+  const { data: designs } = useAsync(() => api<any[]>("/api/card-designs"), []);
+  const { data: account } = useAsync(() => api("/api/account").then((r) => r.account).catch(() => null), []);
   const [reason, setReason] = useState("");
   const reqId = useRef<string>(newRequestId());
   const stopFetch = useRef(false);
@@ -722,6 +811,28 @@ export function DrawPage({ id }: { id: number }) {
         </div>
       </Card>
 
+      <Card title="🎨 بطاقة التهنئة">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <select
+            className="input w-auto"
+            value={d.card_design_id ?? ""}
+            onChange={async (e) => {
+              try {
+                await api(`/api/draws/${id}/card-design`, { method: "PUT", body: { card_design_id: e.target.value ? Number(e.target.value) : null } });
+                reload();
+              } catch (err: any) {
+                toast(err.message, "bad");
+              }
+            }}
+          >
+            <option value="">البطاقة الافتراضية</option>
+            {designs?.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+          <Link to="/draws/designs" className="btn btn-ghost text-sm">🎨 تصميم بطاقة</Link>
+          <span className="muted text-xs">بعد اختيار كل فائز اضغط «🖼️ البطاقة» لمعاينتها وتنزيلها أو إرسالها له.</span>
+        </div>
+      </Card>
+
       <Card title="4) السحب والنتائج">
         <div className="space-y-3">
           {d.fetch_status !== "complete" && d.status === "draft" && <Alert tone="warn">أكمل جلب المشاركات أولًا — لا يبدأ السحب على بيانات ناقصة.</Alert>}
@@ -741,7 +852,7 @@ export function DrawPage({ id }: { id: number }) {
           <div className="space-y-2">
             {Array.from({ length: d.winners_count }, (_, i) => i + 1).map((pos) => {
               const w = byPosition.get(pos);
-              if (w) return <WinnerCard key={w.id} w={w} onReplace={() => setReplaceFor(w)} />;
+              if (w) return <WinnerCard key={w.id} w={w} onReplace={() => setReplaceFor(w)} onCard={() => setCardFor(w)} />;
               if (pos === nextPosition)
                 return (
                   <button key={pos} className="btn btn-primary w-full py-4 text-lg" disabled={running || !firstPickOk} onClick={() => pickNextWinner(pos)}>
@@ -773,6 +884,22 @@ export function DrawPage({ id }: { id: number }) {
           )}
         </div>
       </Card>
+
+      {cardFor && (
+        <WinnerCardModal
+          draw={d}
+          winner={cardFor}
+          account={account?.username ?? null}
+          design={(() => {
+            const row = designs?.find((x) => x.id === d.card_design_id);
+            if (!row) return DEFAULT_CARD;
+            const parsed = cardDesignSchema.safeParse(JSON.parse(row.design));
+            return parsed.success ? parsed.data : DEFAULT_CARD;
+          })()}
+          onClose={() => setCardFor(null)}
+          onSent={reload}
+        />
+      )}
 
       {replaceFor && (
         <Modal open onClose={() => setReplaceFor(null)} title={`استبدال الفائز في المركز ${replaceFor.position}`}>

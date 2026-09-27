@@ -103,6 +103,8 @@ export interface TokenExchange {
 export interface MetaClient {
   sendPrivateReply(token: string, igUserId: string, commentId: string, msg: OutgoingMessage): Promise<MetaResult<{ message_id?: string }>>;
   sendMessage(token: string, igUserId: string, recipientId: string, msg: OutgoingMessage): Promise<MetaResult<{ message_id?: string }>>;
+  /** DM with one image attachment (public URL fetched by Meta). Only inside the 24h messaging window. */
+  sendImage?(token: string, igUserId: string, recipientId: string, imageUrl: string): Promise<MetaResult<{ message_id?: string }>>;
   replyToComment(token: string, commentId: string, text: string): Promise<MetaResult<{ id?: string }>>;
   checkFollow(token: string, igsid: string): Promise<FollowCheckOutcome>;
   /** One post/reel (used to auto-attach newly published media to a campaign). */
