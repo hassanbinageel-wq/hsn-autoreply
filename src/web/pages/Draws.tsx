@@ -4,6 +4,7 @@ import { Link, navigate } from "../App";
 import { Alert, Card, Field, Modal, PageHeader, Spinner, Toggle, fmtTime, toast, useAsync } from "../components/ui";
 import { toCsv } from "../../shared/csv";
 import { canvasesToPdf, renderPages, saveBlob, type PdfLine } from "../lib/pdf";
+import { Celebration } from "../components/Celebration";
 
 // ---------------------------------------------------------------------------------------------------------------
 // Settings form (create + edit while draft)
@@ -104,23 +105,18 @@ function SourcePicker({ form, set, locked }: { form: DrawForm; set: (p: Partial<
   const list = form.source_type === "media" ? media : stories;
   return (
     <div className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-2">
         <button type="button" className={`btn ${form.source_type === "media" ? "btn-primary" : "btn-ghost"}`} onClick={() => set({ source_type: "media", media_id: "", url: "" })}>
           منشور أو ريلز
         </button>
         <button type="button" className={`btn ${form.source_type === "story" ? "btn-primary" : "btn-ghost"}`} onClick={() => set({ source_type: "story", media_id: "", url: "", include_replies: false })}>
           ردود ستوري (عبر الخاص)
         </button>
-        <button type="button" className="btn btn-ghost opacity-60" disabled title="غير متاح في واجهة Meta">
-          تعليقات الستوري العامة — غير متاحة
-        </button>
       </div>
       {form.source_type === "story" ? (
         <Alert tone="info">
           <b>ردود الستوري</b> تصل كرسائل خاصة مرتبطة بالستوري (reply_to.story). يشمل السحب فقط الردود التي وصلت للنظام عبر التنبيهات منذ ربط الحساب ومرتبطة
           بهذه الستوري تحديدًا — لا توفر Meta طريقة لاسترجاع ردود أقدم، ولا تُدخل المنشنات أو الرسائل العادية.
-          <br />
-          <b>تعليقات الستوري العامة</b> لا توجد لها واجهة في Instagram API حاليًا، لذلك الخيار معطّل.
         </Alert>
       ) : (
         <div className="flex gap-2 text-sm">
@@ -252,15 +248,20 @@ function SettingsFields({ form, set }: { form: DrawForm; set: (p: Partial<DrawFo
 // Campaign draws list + create
 // ---------------------------------------------------------------------------------------------------------------
 
-export function CampaignDrawsPage({ campaignId }: { campaignId: number }) {
-  const { data: campaign } = useAsync(() => api<any>(`/api/campaigns/${campaignId}`), [campaignId]);
-  const { data: draws } = useAsync(() => api<any[]>(`/api/campaigns/${campaignId}/draws`), [campaignId]);
+export function DrawsHomePage() {
+  const { data: draws } = useAsync(() => api<any[]>("/api/draws"), []);
+  const { data: campaigns } = useAsync(() => api<any[]>("/api/campaigns"), []);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<DrawForm>(EMPTY);
+  const [campaignId, setCampaignId] = useState<number | "">("");
   const [busy, setBusy] = useState(false);
   const set = (p: Partial<DrawForm>) => setForm((f) => ({ ...f, ...p }));
+  useEffect(() => {
+    if (campaignId === "" && campaigns?.length) setCampaignId(campaigns[0].id);
+  }, [campaigns, campaignId]);
 
   const create = async () => {
+    if (!campaignId) return toast("اختر الحملة المرتبطة بالسحب", "bad");
     setBusy(true);
     try {
       const r = await api(`/api/campaigns/${campaignId}/draws`, { body: payload(form) });
@@ -273,25 +274,26 @@ export function CampaignDrawsPage({ campaignId }: { campaignId: number }) {
     }
   };
 
-  const STATUS: Record<string, string> = { draft: "مسودة", drawing: "قيد التنفيذ", drawn: "تم السحب" };
+  const STATUS: Record<string, string> = { draft: "مسودة", drawing: "قيد السحب", drawn: "اكتمل" };
   return (
     <div className="space-y-4">
       <PageHeader
-        title={`🎁 السحوبات: ${campaign?.name ?? "…"}`}
-        subtitle="سحب عشوائي عادل للفائزين من تعليقات منشوراتك أو ردود الستوري. الاختيار يتم على الخادم بمولد أرقام عشوائية آمن."
-        actions={
-          <>
-            <button className="btn btn-primary" onClick={() => setCreating(true)}>+ سحب جديد</button>
-            <Link to="/campaigns" className="btn btn-ghost">→ الحملات</Link>
-          </>
-        }
+        title="🎁 السحوبات"
+        subtitle="سحب عشوائي عادل للفائزين من تعليقات منشوراتك وريلزاتك أو ردود الستوري. الاختيار يتم على الخادم بمولد أرقام عشوائية آمن."
+        actions={<button className="btn btn-primary" onClick={() => setCreating(true)}>+ سحب جديد</button>}
       />
       {creating && (
         <Modal open onClose={() => setCreating(false)} title="سحب جديد">
           <div className="space-y-4">
+            <Field label="الحملة المرتبطة" hint="تُستخدم لتنظيم السحوبات ولخيار «استبعاد من فاز في سحوبات سابقة بهذه الحملة».">
+              <select className="input" value={campaignId} onChange={(e) => setCampaignId(e.target.value ? Number(e.target.value) : "")}>
+                {!campaigns?.length && <option value="">— لا توجد حملات، أنشئ حملة أولًا —</option>}
+                {campaigns?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </Field>
             <SourcePicker form={form} set={set} locked={false} />
             <SettingsFields form={form} set={set} />
-            <button className="btn btn-primary w-full" disabled={busy || !form.name.trim() || (!form.media_id && !form.url.trim())} onClick={create}>
+            <button className="btn btn-primary w-full" disabled={busy || !campaignId || !form.name.trim() || (!form.media_id && !form.url.trim())} onClick={create}>
               {busy ? "جارٍ التحقق…" : "إنشاء السحب"}
             </button>
           </div>
@@ -312,8 +314,9 @@ export function CampaignDrawsPage({ campaignId }: { campaignId: number }) {
                 <div className="min-w-0 flex-1">
                   <div className="font-bold">{d.name}</div>
                   <div className="muted text-xs">
-                    {d.source_type === "story" ? "ردود ستوري" : "تعليقات منشور"} · {d.winners_count} فائز · {d.fetched_count} مشاركة ·{" "}
-                    {d.drawn_at ? `سُحب ${fmtTime(d.drawn_at)}` : `أُنشئ ${fmtTime(d.created_at)}`}
+                    {d.campaign_name ? `${d.campaign_name} · ` : ""}
+                    {d.source_type === "story" ? "ردود ستوري" : "تعليقات منشور"} · {d.active_winners}/{d.winners_count} فائز · {d.fetched_count} مشاركة ·{" "}
+                    {d.drawn_at ? `اكتمل ${fmtTime(d.drawn_at)}` : `أُنشئ ${fmtTime(d.created_at)}`}
                   </div>
                 </div>
                 <span className={`rounded-full px-2 py-0.5 text-xs ${d.status === "drawn" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "surface-2"}`}>{STATUS[d.status]}</span>
@@ -333,54 +336,64 @@ export function CampaignDrawsPage({ campaignId }: { campaignId: number }) {
 /** Keeps a left-to-right token (e.g. @username, a link) intact inside Arabic text (Unicode isolate). */
 const ltr = (t: string) => `\u2066${t}\u2069`;
 
+function ordinal(n: number): string {
+  const o = ["الأول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر"];
+  return o[n - 1] ?? `رقم ${n}`;
+}
+
 const newRequestId = () => {
   const a = new Uint8Array(12);
   crypto.getRandomValues(a);
   return "req_" + Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
-function Countdown({ names, onDone }: { names: string[]; onDone: () => void }) {
+function Countdown({ title, names, winner, onDone }: { title: string; names: string[]; winner: any; onDone: () => void }) {
   const [n, setN] = useState(3);
   const [spin, setSpin] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(false);
   useEffect(() => {
     if (n > 0) {
-      const t = setTimeout(() => setN(n - 1), 900);
+      const t = setTimeout(() => setN(n - 1), 850);
       return () => clearTimeout(t);
     }
-    // Purely visual shuffle over participant names; the result was already decided on the server.
+    // Purely visual shuffle over participant names; the winner was already chosen and saved on the server.
     let i = 0;
     const iv = setInterval(() => {
       setSpin(names.length ? names[Math.floor(Math.random() * names.length)] : "…");
-      if (++i > 22) {
+      if (++i > 24) {
         clearInterval(iv);
-        onDone();
+        setRevealed(true);
       }
-    }, 90);
+    }, 85);
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [n]);
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-br from-violet-900 via-fuchsia-800 to-orange-700 text-white">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-br from-violet-900 via-fuchsia-800 to-orange-700 p-6 text-center text-white" onClick={() => revealed && onDone()}>
+      <div className="mb-6 text-2xl font-bold opacity-90">🎁 {title}</div>
       {n > 0 ? (
-        <div key={n} className="count-pop text-[9rem] font-black leading-none drop-shadow-lg">
-          {n}
-        </div>
-      ) : (
-        <div className="text-center">
-          <div className="mb-3 text-lg opacity-80">جارٍ الكشف…</div>
+        <div key={n} className="count-pop text-[9rem] font-black leading-none drop-shadow-lg">{n}</div>
+      ) : !revealed ? (
+        <div>
+          <div className="mb-3 text-lg opacity-80">جارٍ الاختيار…</div>
           <div className="text-4xl font-black" dir="ltr">@{spin}</div>
         </div>
+      ) : (
+        <div className="count-pop">
+          <div className="mb-2 text-xl opacity-90">🎉 مبروك</div>
+          <div className="text-5xl font-black drop-shadow-lg" dir="ltr">{winner?.author_username ? `@${winner.author_username}` : "فائز"}</div>
+          {winner?.text && <div className="mx-auto mt-4 max-w-xl text-lg opacity-90">«{winner.text}»</div>}
+          <div className="mt-8 text-sm opacity-70">اضغط في أي مكان للمتابعة</div>
+        </div>
       )}
+      {revealed && <Celebration />}
     </div>
   );
 }
 
-function WinnerCard({ w, index, onReplace, reveal }: { w: any; index: number; onReplace?: () => void; reveal: boolean }) {
+function WinnerCard({ w, onReplace }: { w: any; onReplace?: () => void }) {
   return (
-    <div
-      className={`card flex items-start gap-3 p-4 transition-all duration-700 ${reveal ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"}`}
-      style={{ transitionDelay: reveal ? `${index * 120}ms` : "0ms" }}
-    >
+    <div className="card count-pop flex items-start gap-3 p-4">
       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-orange-600 text-xl font-black text-white">{w.position}</div>
       <div className="min-w-0 flex-1">
         {w.author_username ? (
@@ -410,10 +423,7 @@ export function DrawPage({ id }: { id: number }) {
   const [form, setForm] = useState<DrawForm | null>(null);
   const [fetching, setFetching] = useState(false);
   const [running, setRunning] = useState(false);
-  const [showAnim, setShowAnim] = useState(false);
-  const [reveal, setReveal] = useState(true);
-  const [oneByOne, setOneByOne] = useState(false);
-  const [revealed, setRevealed] = useState(0);
+  const [anim, setAnim] = useState<{ title: string; winner: any } | null>(null);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | "eligible" | "excluded">("all");
   const [replaceFor, setReplaceFor] = useState<any>(null);
@@ -458,7 +468,7 @@ export function DrawPage({ id }: { id: number }) {
   if (!d || !form) return <Spinner />;
   const pv = data.preview;
   const labels: Record<string, string> = data.labels ?? {};
-  const locked = d.status !== "draft";
+  const locked = d.status !== "draft"; // settings and entries are frozen from the first pick
   const winners: any[] = data.winners ?? [];
   const active = winners.filter((w) => w.status === "active").sort((a, b) => a.position - b.position);
   const history = winners.filter((w) => w.status === "replaced");
@@ -507,25 +517,24 @@ export function DrawPage({ id }: { id: number }) {
     }
   };
 
-  const start = async () => {
+  // Picks the next winner on the server (the same request id is reused until it succeeds, so a retry never picks twice).
+  const pickNextWinner = async (position: number) => {
     setRunning(true);
     try {
-      await api(`/api/draws/${id}/run`, { body: { request_id: reqId.current } });
-      setReveal(false);
-      setRevealed(0);
-      setShowAnim(true); // the result is already saved on the server; the animation only presents it
+      const r = await api(`/api/draws/${id}/next`, { body: { request_id: reqId.current } });
+      reqId.current = newRequestId();
+      const winner = (r.winners as any[]).find((w) => w.id === r.winner_id);
+      setAnim({ title: `الفائز ${ordinal(position)}`, winner });
     } catch (e: any) {
       toast(e.message, "bad");
-      reqId.current = newRequestId();
+      if (e.status !== 0) reqId.current = newRequestId();
     } finally {
       setRunning(false);
     }
   };
-  const animDone = async () => {
-    await reload();
-    setShowAnim(false);
-    setReveal(true);
-    setRevealed(oneByOne ? 1 : 9999);
+  const animDone = () => {
+    setAnim(null);
+    reload();
   };
 
   const doReplace = async () => {
@@ -584,16 +593,17 @@ export function DrawPage({ id }: { id: number }) {
     saveBlob(canvasesToPdf(renderPages(lines, `HSN AutoReply — ${d.name}`)), `draw-${id}-results.pdf`);
   };
 
-  const canRun = !locked && d.fetch_status === "complete" && pv.max_winners != null && d.winners_count <= pv.max_winners && pv.eligible_count > 0;
-  const shown = active.slice(0, revealed);
+  const firstPickOk = d.fetch_status === "complete" && (d.status !== "draft" || (pv.max_winners != null && d.winners_count <= pv.max_winners && pv.eligible_count > 0));
+  const byPosition = new Map(active.map((w) => [w.position, w]));
+  const nextPosition = Array.from({ length: d.winners_count }, (_, i) => i + 1).find((p) => !byPosition.has(p)) ?? null;
 
   return (
     <div className="space-y-4">
-      {showAnim && <Countdown names={entries.filter((e) => e.eligible && e.author_username).map((e) => e.author_username)} onDone={animDone} />}
+      {anim && <Countdown title={anim.title} winner={anim.winner} names={entries.filter((e) => e.eligible && e.author_username).map((e) => e.author_username)} onDone={animDone} />}
       <PageHeader
         title={`🎁 ${d.name}`}
         subtitle={`حملة «${data.campaign?.name ?? ""}» · ${d.source_type === "story" ? "ردود ستوري" : "تعليقات منشور"}`}
-        actions={<Link to={`/campaigns/${d.campaign_id}/draws`} className="btn btn-ghost">→ سحوبات الحملة</Link>}
+        actions={<Link to="/draws" className="btn btn-ghost">→ كل السحوبات</Link>}
       />
 
       <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
@@ -640,7 +650,7 @@ export function DrawPage({ id }: { id: number }) {
                   )}
                 </div>
               )}
-              {locked && <p className="muted text-xs">تم تنفيذ السحب — المشاركات والإعدادات مجمّدة كنسخة ثابتة.</p>}
+              {locked && <p className="muted text-xs">بدأ السحب — المشاركات والإعدادات مجمّدة كنسخة ثابتة.</p>}
             </div>
           </Card>
 
@@ -713,44 +723,55 @@ export function DrawPage({ id }: { id: number }) {
       </Card>
 
       <Card title="4) السحب والنتائج">
-        {!locked ? (
-          <div className="space-y-3">
-            {d.fetch_status !== "complete" && <Alert tone="warn">أكمل جلب المشاركات أولًا — لا يبدأ السحب على بيانات ناقصة.</Alert>}
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={oneByOne} onChange={(e) => setOneByOne(e.target.checked)} /> عرض الفائزين واحدًا تلو الآخر</label>
-            <button className="btn btn-primary w-full py-4 text-lg" disabled={!canRun || running} onClick={start}>
-              {running ? "جارٍ السحب…" : `🎲 ابدأ السحب (${d.winners_count} فائز)`}
-            </button>
-            <p className="muted text-xs">الاختيار يتم مرة واحدة على الخادم ويُحفظ فورًا؛ الحركة للعرض فقط ولا تؤثر على النتيجة. الضغط المتكرر لا ينفّذ سحبًا ثانيًا. لا تُرسل أي رسائل ولا تُنشر الأسماء تلقائيًا.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
+        <div className="space-y-3">
+          {d.fetch_status !== "complete" && d.status === "draft" && <Alert tone="warn">أكمل جلب المشاركات أولًا — لا يبدأ السحب على بيانات ناقصة.</Alert>}
+          {d.status !== "draft" && (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm">تم السحب {d.drawn_at ? fmtTime(d.drawn_at) : ""} من {d.eligible_count} مشاركة مؤهلة ({d.unique_people} حساب).</span>
-              <button className="btn btn-ghost text-sm" onClick={exportCsv}>⬇️ CSV</button>
-              <button className="btn btn-ghost text-sm" onClick={exportPdf}>⬇️ PDF</button>
+              <span className="text-sm">
+                {d.status === "drawn" ? `اكتمل السحب ${d.drawn_at ? fmtTime(d.drawn_at) : ""}` : `تم اختيار ${active.length} من ${d.winners_count}`} · من {d.eligible_count} مشاركة مؤهلة ({d.unique_people} حساب)
+              </span>
+              {active.length > 0 && (
+                <>
+                  <button className="btn btn-ghost text-sm" onClick={exportCsv}>⬇️ CSV</button>
+                  <button className="btn btn-ghost text-sm" onClick={exportPdf}>⬇️ PDF</button>
+                </>
+              )}
             </div>
-            <div className="space-y-2">
-              {(revealed ? shown : active).map((w, i) => (
-                <WinnerCard key={w.id} w={w} index={i} reveal={reveal} onReplace={() => setReplaceFor(w)} />
-              ))}
-            </div>
-            {revealed > 0 && revealed < active.length && (
-              <button className="btn btn-primary w-full" onClick={() => setRevealed((r) => r + 1)}>اكشف الفائز التالي ({revealed + 1} من {active.length})</button>
-            )}
-            {history.length > 0 && (
-              <details className="text-sm">
-                <summary className="cursor-pointer font-semibold">سجل الاستبدال ({history.length})</summary>
-                <ul className="mt-2 space-y-1">
-                  {history.map((w) => (
-                    <li key={w.id} className="muted">
-                      المركز {w.position}: {w.author_username ? `@${w.author_username}` : "—"} — استُبدل {w.replaced_at ? fmtTime(w.replaced_at) : ""} بسبب: {w.replaced_reason}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
+          )}
+          <div className="space-y-2">
+            {Array.from({ length: d.winners_count }, (_, i) => i + 1).map((pos) => {
+              const w = byPosition.get(pos);
+              if (w) return <WinnerCard key={w.id} w={w} onReplace={() => setReplaceFor(w)} />;
+              if (pos === nextPosition)
+                return (
+                  <button key={pos} className="btn btn-primary w-full py-4 text-lg" disabled={running || !firstPickOk} onClick={() => pickNextWinner(pos)}>
+                    {running ? "جارٍ الاختيار…" : `🎲 اختر الفائز ${ordinal(pos)}`}
+                  </button>
+                );
+              return (
+                <div key={pos} className="surface-2 rounded-xl p-4 text-center text-sm opacity-60">
+                  المركز {pos} — الفائز {ordinal(pos)} (بعد اختيار السابق)
+                </div>
+              );
+            })}
           </div>
-        )}
+          <p className="muted text-xs">
+            كل فائز يُختار على الخادم عند ضغطك ويُحفظ فورًا؛ الحركة للعرض فقط ولا تؤثر على النتيجة. الضغط المتكرر لا يختار فائزًا إضافيًا. بعد اختيار الفائز الأول تُجمَّد
+            الإعدادات والمشاركات. لا تُرسل أي رسائل ولا تُنشر الأسماء تلقائيًا.
+          </p>
+          {history.length > 0 && (
+            <details className="text-sm">
+              <summary className="cursor-pointer font-semibold">سجل الاستبدال ({history.length})</summary>
+              <ul className="mt-2 space-y-1">
+                {history.map((w) => (
+                  <li key={w.id} className="muted">
+                    المركز {w.position}: {w.author_username ? `@${w.author_username}` : "—"} — استُبدل {w.replaced_at ? fmtTime(w.replaced_at) : ""} بسبب: {w.replaced_reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
       </Card>
 
       {replaceFor && (

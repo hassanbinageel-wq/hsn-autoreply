@@ -10,7 +10,7 @@ import { CampaignsPage } from "./pages/Campaigns";
 import { CampaignWizard } from "./pages/CampaignWizard";
 import { CampaignStatsPage } from "./pages/CampaignStats";
 import { InboxPage } from "./pages/Inbox";
-import { CampaignDrawsPage, DrawPage } from "./pages/Draws";
+import { DrawsHomePage, DrawPage } from "./pages/Draws";
 import { TemplatesPage } from "./pages/Templates";
 import { LogsPage } from "./pages/Logs";
 import { SimulatorPage } from "./pages/Simulator";
@@ -72,6 +72,7 @@ export function useTheme(): [Theme, (t: Theme) => void] {
 const NAV = [
   { to: "/", label: "الرئيسية", icon: "🏠", main: true },
   { to: "/campaigns", label: "الحملات", icon: "🎯", main: true },
+  { to: "/draws", label: "السحوبات", icon: "🎁" },
   { to: "/inbox", label: "الرسائل", icon: "📥", main: true },
   { to: "/logs", label: "السجل", icon: "📜", main: true },
   { to: "/simulator", label: "المحاكاة", icon: "🧪" },
@@ -152,7 +153,7 @@ export function App() {
   const mdr = route.match(/^\/draws\/(\d+)$/);
   if (m) page = <CampaignWizard id={m[1] === "new" ? null : Number(m[1])} />;
   else if (ms) page = <CampaignStatsPage id={Number(ms[1])} />;
-  else if (md) page = <CampaignDrawsPage campaignId={Number(md[1])} />;
+  else if (md) page = <DrawsHomePage />;
   else if (mdr) page = <DrawPage key={mdr[1]} id={Number(mdr[1])} />;
   else
     switch (route) {
@@ -162,6 +163,7 @@ export function App() {
       case "/campaigns": page = <CampaignsPage />; break;
       case "/templates": page = <TemplatesPage />; break;
       case "/logs": page = <LogsPage />; break;
+      case "/draws": page = <DrawsHomePage />; break;
       case "/inbox": page = <InboxPage />; break;
       case "/simulator": page = <SimulatorPage />; break;
       case "/settings": page = <SettingsPage theme={theme} setTheme={setTheme} onLogout={logout} username={username} />; break;

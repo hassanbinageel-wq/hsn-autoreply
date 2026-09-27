@@ -104,7 +104,6 @@ function CardMenu({ c, act, onCopy }: { c: any; act: (fn: () => Promise<unknown>
       {open && (
         <div role="menu" className="card absolute bottom-9 left-0 z-20 w-44 overflow-hidden p-0 shadow-xl" onClick={(e) => e.stopPropagation()}>
           <button role="menuitem" className={item} onClick={() => navigate(`/campaigns/${c.id}/stats`)}>📊 الإحصائيات</button>
-          <button role="menuitem" className={item} onClick={() => navigate(`/campaigns/${c.id}/draws`)}>🎁 السحوبات</button>
           <button role="menuitem" className={item} onClick={() => navigate(`/campaigns/${c.id}`)}>✏️ تعديل</button>
           {c.status === "active" ? (
             <button role="menuitem" className={item} onClick={() => act(() => api(`/api/campaigns/${c.id}/status`, { body: { status: "paused" } }), "تم الإيقاف")}>⏸️ إيقاف</button>

@@ -401,28 +401,14 @@ export async function runDraw(db: D1Database, drawId: number, requestId: string,
  */
 export async function replaceWinner(db: D1Database, drawId: number, winnerId: number, reason: string, now = Date.now(), rand32?: () => number) {
   const d = await loadDraw(db, drawId);
-  if (!d || d.status !== "drawn") throw new DrawFailure(409, "not_drawn", "لا يمكن الاستبدال قبل تنفيذ السحب");
+  if (!d || d.status === "draft") throw new DrawFailure(409, "not_drawn", "لا يمكن الاستبدال قبل اختيار الفائز");
   const w = await first<{ id: number; position: number; status: string }>(db, "SELECT id, position, status FROM draw_winners WHERE id = ? AND draw_id = ?", winnerId, drawId);
   if (!w) throw new DrawFailure(404, "not_found", "الفائز غير موجود");
   if (w.status !== "active") throw new DrawFailure(409, "already_replaced", "تم استبدال هذا الفائز مسبقًا");
 
-  const eligible = await all<DrawEntry>(
-    db,
-    "SELECT id, comment_id, author_id, author_username, text, created_time, source FROM draw_entries WHERE draw_id = ? AND eligible = 1",
-    drawId,
-  );
-  const history = await all<{ identity_key: string; comment_id: string; status: string }>(
-    db,
-    "SELECT w.identity_key, e.comment_id, w.status FROM draw_winners w JOIN draw_entries e ON e.id = w.entry_id WHERE w.draw_id = ?",
-    drawId,
-  );
   const settings = settingsOf(d);
-  const repeat = effectiveAllowRepeat(settings);
   const replacedKey = (await first<{ identity_key: string }>(db, "SELECT identity_key FROM draw_winners WHERE id = ?", winnerId))!.identity_key;
-  const blockedComments = new Set(history.map((h) => h.comment_id)); // no comment ever wins twice
-  const blockedKeys = new Set<string>([replacedKey]); // the replaced person is out of this draw
-  for (const h of history) if (h.status === "replaced" || !repeat) blockedKeys.add(h.identity_key);
-  const pool = eligible.filter((e) => !blockedKeys.has(identityKey(e)!) && !blockedComments.has(e.comment_id));
+  const pool = await remainingPool(db, d, replacedKey); // the replaced person is out of this draw
   let pick: DrawEntry;
   try {
     [pick] = pickWinners(pool, settings, 1, { rand32 });
@@ -444,6 +430,107 @@ export async function replaceWinner(db: D1Database, drawId: number, winnerId: nu
   );
   await run(db, "UPDATE draw_winners SET replaced_by = ? WHERE id = ?", ins!.id, winnerId);
   return { winner_id: ins!.id };
+}
+
+/** Arabic ordinal for a winner position (الأول، الثاني، …). */
+export function ordinal(n: number): string {
+  const o = ["الأول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر"];
+  return o[n - 1] ?? `رقم ${n}`;
+}
+
+/**
+ * Picks ONE winner (the next free position). The first pick validates the fetch and the feasibility, freezes the
+ * eligibility of every entry and locks the settings; the draw becomes "drawn" once all positions are filled.
+ * Idempotent per request id (a resend returns the same winner) and safe against concurrent clicks (one active winner
+ * per position is enforced by a unique index).
+ */
+export async function pickNext(db: D1Database, drawId: number, requestId: string, now = Date.now(), rand32?: () => number): Promise<{ winner_id: number; position: number; replay: boolean; done: boolean }> {
+  let d = await loadDraw(db, drawId);
+  if (!d) throw new DrawFailure(404, "not_found", "السحب غير موجود");
+  const replay = await first<{ id: number; position: number }>(db, "SELECT id, position FROM draw_winners WHERE draw_id = ? AND request_id = ?", drawId, requestId);
+  if (replay) return { winner_id: replay.id, position: replay.position, replay: true, done: d.status === "drawn" };
+  if (d.status === "drawn") throw new DrawFailure(409, "already_drawn", "اكتمل اختيار جميع الفائزين — النتيجة محفوظة ولا تتغير");
+
+  if (d.status === "draft") {
+    if (d.fetch_status !== "complete") {
+      throw new DrawFailure(409, "incomplete_fetch", "جلب المشاركات لم يكتمل — أكمل الجلب أولًا حتى لا يُسحب من بيانات ناقصة");
+    }
+    const entries = await loadEntries(db, d.id);
+    const s = summarize(entries, settingsOf(d), await eligibilityContext(db, d));
+    if (d.winners_count > s.max_winners) {
+      throw new DrawFailure(422, "not_enough", `عدد الفائزين المطلوب (${d.winners_count}) أكبر من الممكن وفق إعداداتك (${s.max_winners}). عدّل العدد أو الإعدادات.`, {
+        possible: s.max_winners,
+      });
+    }
+    // Freeze eligibility and lock the settings in one transaction (the status change is last and conditional).
+    const reasonOf = new Map(s.excluded.map((x) => [x.entry.id, x.reason]));
+    const stmts = entries.map((e) => db.prepare("UPDATE draw_entries SET eligible = ?, exclude_reason = ? WHERE id = ?").bind(reasonOf.has(e.id) ? 0 : 1, reasonOf.get(e.id) ?? null, e.id));
+    stmts.push(
+      db
+        .prepare("UPDATE draws SET status = 'drawing', eligible_count = ?, unique_people = ?, draw_request_id = ?, updated_at = ? WHERE id = ? AND status = 'draft'")
+        .bind(s.eligible.length, s.unique_people, requestId, now, d.id),
+    );
+    for (let i = 0; i < stmts.length; i += 90) await db.batch(stmts.slice(i, i + 90));
+    d = (await loadDraw(db, d.id))!;
+  }
+
+  const active = await all<{ position: number }>(db, "SELECT position FROM draw_winners WHERE draw_id = ? AND status = 'active'", d.id);
+  const taken = new Set(active.map((a) => a.position));
+  let position = 1;
+  while (taken.has(position)) position++;
+  if (position > d.winners_count) {
+    await run(db, "UPDATE draws SET status = 'drawn', drawn_at = COALESCE(drawn_at, ?), updated_at = ? WHERE id = ?", now, now, d.id);
+    throw new DrawFailure(409, "already_drawn", "اكتمل اختيار جميع الفائزين");
+  }
+
+  const pool = await remainingPool(db, d);
+  let pick: DrawEntry;
+  try {
+    [pick] = pickWinners(pool, settingsOf(d), 1, { rand32 });
+  } catch (err) {
+    if (err instanceof DrawError) throw new DrawFailure(422, "not_enough", "لا توجد مشاركات مؤهلة متبقية وفق قواعد السحب", { possible: 0 });
+    throw err;
+  }
+  let ins: { id: number } | null;
+  try {
+    ins = await first<{ id: number }>(
+      db,
+      "INSERT INTO draw_winners (draw_id, position, entry_id, identity_key, status, request_id, created_at) VALUES (?, ?, ?, ?, 'active', ?, ?) RETURNING id",
+      d.id,
+      position,
+      pick.id,
+      identityKey(pick)!,
+      requestId,
+      now,
+    );
+  } catch {
+    // Another click took this position (or the same request raced): report the current state instead.
+    const again = await first<{ id: number; position: number }>(db, "SELECT id, position FROM draw_winners WHERE draw_id = ? AND request_id = ?", d.id, requestId);
+    if (again) return { winner_id: again.id, position: again.position, replay: true, done: false };
+    throw new DrawFailure(409, "in_progress", "يتم اختيار فائز الآن — انتظر لحظة");
+  }
+  const done = taken.size + 1 >= d.winners_count;
+  if (done) await run(db, "UPDATE draws SET status = 'drawn', drawn_at = ?, updated_at = ? WHERE id = ?", now, now, d.id);
+  return { winner_id: ins!.id, position, replay: false, done };
+}
+
+/** Eligible entries still able to win, applying the repeat rules against current and replaced winners. */
+async function remainingPool(db: D1Database, d: DrawRow, extraBlockedKey?: string): Promise<DrawEntry[]> {
+  const eligible = await all<DrawEntry>(
+    db,
+    "SELECT id, comment_id, author_id, author_username, text, created_time, source FROM draw_entries WHERE draw_id = ? AND eligible = 1",
+    d.id,
+  );
+  const history = await all<{ identity_key: string; comment_id: string; status: string }>(
+    db,
+    "SELECT w.identity_key, e.comment_id, w.status FROM draw_winners w JOIN draw_entries e ON e.id = w.entry_id WHERE w.draw_id = ?",
+    d.id,
+  );
+  const repeat = effectiveAllowRepeat(settingsOf(d));
+  const blockedComments = new Set(history.map((h) => h.comment_id)); // no comment ever wins twice
+  const blockedKeys = new Set<string>(extraBlockedKey ? [extraBlockedKey] : []);
+  for (const h of history) if (h.status === "replaced" || !repeat) blockedKeys.add(h.identity_key);
+  return eligible.filter((e) => !blockedKeys.has(identityKey(e)!) && !blockedComments.has(e.comment_id));
 }
 
 export async function winnersOf(db: D1Database, drawId: number) {

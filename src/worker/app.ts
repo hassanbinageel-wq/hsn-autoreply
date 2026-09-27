@@ -52,7 +52,7 @@ import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegra
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage } from "./services/usage";
 import { recoverMissedComments } from "./services/recover";
-import { DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
+import { DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
 import { instagramShortcode } from "../shared/draw";
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
@@ -1042,6 +1042,29 @@ export function createApp() {
     return { media_id: m.id, permalink: m.permalink ?? null, caption: m.caption?.slice(0, 500) ?? null, thumb: preview, comments_count: m.comments_count ?? null };
   }
 
+  // All draws (the standalone «السحوبات» section), newest first.
+  api.get("/draws", async (c) => {
+    const rows = await all<any>(
+      c.env.DB,
+      `SELECT d.id, d.name, d.campaign_id, c.name AS campaign_name, d.source_type, d.media_thumb, d.media_caption, d.winners_count, d.status, d.fetch_status,
+              d.fetched_count, d.drawn_at, d.created_at,
+              (SELECT COUNT(*) FROM draw_winners w WHERE w.draw_id = d.id AND w.status = 'active') AS active_winners
+         FROM draws d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.id DESC LIMIT 300`,
+    );
+    return c.json(rows);
+  });
+  api.post("/draws/:id/next", async (c) => {
+    const id = idParam(c);
+    const p = await parseBody(c, z.object({ request_id: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) }));
+    if (!p.ok) return p.res;
+    try {
+      const r = await pickNext(c.env.DB, id!, p.data.request_id);
+      if (!r.replay) await audit(c.env.DB, c.get("session").username, "draw.pick", String(id), { position: r.position });
+      return c.json({ ok: true, ...r, winners: await winnersOf(c.env.DB, id!) });
+    } catch (e) {
+      return drawError(c, e);
+    }
+  });
   api.get("/campaigns/:id/draws", async (c) => {
     const id = idParam(c);
     const rows = await all<any>(

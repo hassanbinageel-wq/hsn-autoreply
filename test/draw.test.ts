@@ -11,7 +11,7 @@ import {
   type DrawEntry,
   type DrawSettings,
 } from "../src/shared/draw";
-import { fetchBatch, replaceWinner, runDraw, winnersOf } from "../src/worker/services/draws";
+import { fetchBatch, ordinal, pickNext, replaceWinner, runDraw, winnersOf } from "../src/worker/services/draws";
 import { DB, IG_ID, makeCtx, MockMeta, resetDb, seedAccount, seedCampaign, deliver, messagePayload } from "./helpers";
 import type { CommentItem } from "../src/worker/meta/types";
 
@@ -305,6 +305,70 @@ describe("running the draw, idempotency, replacement", () => {
     await runDraw(DB, d2, "req_prev_2");
     const [w] = await winnersOf(DB, d2);
     expect(firstWinners.has(w.author_id)).toBe(false);
+  });
+});
+
+describe("one winner at a time", () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedAccount();
+  });
+
+  async function ready(winners: number, comments: CommentItem[]) {
+    const cid = await seedCampaign({});
+    const id = await newDraw(cid, { winners_count: winners });
+    const meta = new MockMeta();
+    meta.commentPages["reel_1"] = [comments];
+    await fetchBatch(makeCtx(meta), id);
+    return id;
+  }
+
+  it("picks positions 1..N in order, locks settings on the first pick, a resend returns the same winner", async () => {
+    const id = await ready(3, [cm("a", "A"), cm("b", "B"), cm("c", "C"), cm("d", "D"), cm("a2", "A")]);
+    const p1 = await pickNext(DB, id, "req_step_1");
+    expect(p1).toMatchObject({ position: 1, replay: false, done: false });
+    let d = await DB.prepare("SELECT status, eligible_count FROM draws WHERE id = ?").bind(id).first<any>();
+    expect(d).toMatchObject({ status: "drawing", eligible_count: 5 });
+    expect(await pickNext(DB, id, "req_step_1")).toMatchObject({ winner_id: p1.winner_id, replay: true });
+    const p2 = await pickNext(DB, id, "req_step_2");
+    const p3 = await pickNext(DB, id, "req_step_3");
+    expect([p2.position, p3.position]).toEqual([2, 3]);
+    expect(p3.done).toBe(true);
+    d = await DB.prepare("SELECT status, drawn_at FROM draws WHERE id = ?").bind(id).first<any>();
+    expect(d.status).toBe("drawn");
+    expect(d.drawn_at).toBeTruthy();
+    const w = await winnersOf(DB, id);
+    expect(new Set(w.map((x) => x.author_id)).size).toBe(3); // one chance per person → three different people
+    await expect(pickNext(DB, id, "req_step_4")).rejects.toMatchObject({ code: "already_drawn" });
+    expect(ordinal(2)).toBe("الثاني");
+  });
+
+  it("concurrent clicks never create two winners for one position", async () => {
+    const id = await ready(2, [cm("a", "A"), cm("b", "B"), cm("c", "C")]);
+    await pickNext(DB, id, "req_first_1");
+    const r = await Promise.allSettled([pickNext(DB, id, "req_race_a1"), pickNext(DB, id, "req_race_b2"), pickNext(DB, id, "req_race_c3")]);
+    expect(r.filter((x) => x.status === "fulfilled").length).toBeGreaterThanOrEqual(1);
+    const active = (await winnersOf(DB, id)).filter((w) => w.status === "active");
+    expect(active.map((w) => w.position).sort()).toEqual([1, 2]);
+    expect(new Set(active.map((w) => w.author_id)).size).toBe(2);
+  });
+
+  it("the first pick is refused on incomplete data or when the count is impossible, without changing settings", async () => {
+    const id = await ready(5, [cm("a", "A"), cm("b", "B")]);
+    await expect(pickNext(DB, id, "req_impossible")).rejects.toMatchObject({ code: "not_enough", extra: { possible: 2 } });
+    const d = await DB.prepare("SELECT status, winners_count FROM draws WHERE id = ?").bind(id).first<any>();
+    expect(d).toMatchObject({ status: "draft", winners_count: 5 });
+  });
+
+  it("a winner can be replaced while the remaining positions are still being picked", async () => {
+    const id = await ready(2, [cm("a", "A"), cm("b", "B"), cm("c", "C")]);
+    const p1 = await pickNext(DB, id, "req_rp_1");
+    await replaceWinner(DB, id, p1.winner_id, "حساب وهمي");
+    const p2 = await pickNext(DB, id, "req_rp_2");
+    expect(p2.position).toBe(2);
+    const active = (await winnersOf(DB, id)).filter((w) => w.status === "active");
+    expect(active).toHaveLength(2);
+    expect(new Set(active.map((w) => w.author_id)).size).toBe(2);
   });
 });
 
