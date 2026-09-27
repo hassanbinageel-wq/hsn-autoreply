@@ -113,6 +113,7 @@ export const settingsSchema = z.object({
   dedup_retention_days: z.number().int().min(8).max(3650).optional(),
   any_reply_counts_as_start: z.boolean().optional(),
   global_user_hourly_limit: z.number().int().min(0).max(1000).optional(),
+  auto_recover_comments: z.boolean().optional(),
 });
 
 export const simulateSchema = z.object({

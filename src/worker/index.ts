@@ -5,6 +5,7 @@ import { runQueue } from "./engine/executor";
 import { engineContext, refreshExpiringTokens } from "./services/account";
 import { sanitize } from "./meta/client";
 import { runNotifications } from "./services/notify";
+import { autoRecover } from "./services/recover";
 
 const app = createApp();
 
@@ -75,11 +76,15 @@ export default {
     let used = 0;
     const ectx = engineContext(env, () => used++);
     await expireFlows(env.DB);
+    // Once an hour: pick up comments whose webhook never arrived (quota reached, outage, Meta stopped retrying).
+    if (new Date(controller.scheduledTime).getUTCMinutes() === 7) {
+      await autoRecover(env, ectx).catch((e) => console.error("recover", sanitize(String(e))));
+    }
     await runQueue(ectx, {
       maxJobs: 25,
       includeDemo: false,
       deadlineMs: 25_000,
-      budget: { used: () => used, limit: 45 }, // Workers Free: 50 external subrequests per invocation
+      budget: { used: () => used, limit: 44 }, // Workers Free: 50 external subrequests per invocation (shared with recovery/alerts)
     }).catch((e) => console.error("queue", sanitize(String(e))));
     await runNotifications(env).catch((e) => console.error("notifications", sanitize(String(e))));
     await run(env.DB, "DELETE FROM rate_limits WHERE window_start < ?", Date.now() - 86_400_000).catch(() => undefined);

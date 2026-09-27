@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { Link } from "../App";
 import { Alert, Badge, Card, PageHeader, Spinner, Stat, Toggle, toast, useAsync, fmtTime } from "../components/ui";
+import { UsageCard } from "../components/UsageCard";
 
 type Row = { n: number; [k: string]: any };
 const sum = (rows: Row[] | undefined, pred: (r: Row) => boolean) => (rows ?? []).filter(pred).reduce((a, r) => a + r.n, 0);
@@ -76,6 +77,7 @@ export function DashboardPage() {
         )}
       </Card>
 
+      <UsageCard />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Stat label="الحملات النشطة" value={d.campaigns?.active ?? 0} hint={`${d.campaigns?.paused ?? 0} متوقفة · ${d.campaigns?.draft ?? 0} مسودة`} />
         <Stat label="تعليقات مستلمة" value={sum(ev, (r) => r.event_type === "comment")} />

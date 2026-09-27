@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import type { EngineContext } from "../src/worker/engine/context";
-import type { FollowCheckOutcome, MediaItem, MetaClient, MetaResult, OutgoingMessage } from "../src/worker/meta/types";
+import type { CommentItem, FollowCheckOutcome, MediaItem, MetaClient, MetaResult, OutgoingMessage, Paged } from "../src/worker/meta/types";
 import { runQueue } from "../src/worker/engine/executor";
 import { storeEvents } from "../src/worker/services/webhook";
 import { parseWebhook } from "../src/worker/meta/webhook-parse";
@@ -10,7 +10,7 @@ export const DB: D1Database = TEST_ENV.DB;
 export const IG_ID = "17841400000000001";
 
 export interface SentCall {
-  kind: "private_reply" | "dm" | "public_reply" | "follow_check" | "get_media";
+  kind: "private_reply" | "dm" | "public_reply" | "follow_check" | "get_media" | "list_comments";
   target: string;
   text?: string;
   msg?: OutgoingMessage;
@@ -57,7 +57,13 @@ export class MockMeta implements MetaClient {
     return this.follow.length > 1 ? this.follow.shift()! : (this.follow[0] ?? { result: "unknown", fieldPresent: false });
   }
   sends() {
-    return this.calls.filter((c) => c.kind !== "follow_check" && c.kind !== "get_media");
+    return this.calls.filter((c) => c.kind !== "follow_check" && c.kind !== "get_media" && c.kind !== "list_comments");
+  }
+  /** Comments returned by listComments (recovery of missed webhooks), per media id. */
+  comments: Record<string, CommentItem[]> = {};
+  async listComments(_t: string, mediaId: string): Promise<MetaResult<Paged<CommentItem>>> {
+    this.calls.push({ kind: "list_comments", target: mediaId });
+    return { ok: true, httpStatus: 200, data: { data: this.comments[mediaId] ?? [] } };
   }
   /** Posts/reels returned by getMedia (auto-attach of new posts). */
   media: Record<string, MediaItem> = {};

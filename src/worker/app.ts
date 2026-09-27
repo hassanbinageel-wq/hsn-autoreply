@@ -49,6 +49,8 @@ import { cacheMediaStmt } from "./services/media";
 import { markRead, recordMessage } from "./services/inbox";
 import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
 import { MESSAGING_WINDOW_MS } from "./engine/context";
+import { estimateUsage } from "./services/usage";
+import { recoverMissedComments } from "./services/recover";
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 const PUBLIC_SETTINGS_SQL = "key NOT LIKE 'telegram%' AND key NOT LIKE 'notify%'";
@@ -944,6 +946,30 @@ export function createApp() {
 
   api.get("/audit", async (c) => c.json(await all(c.env.DB, "SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200")));
 
+  // ---- Daily usage (estimate) and recovery of missed comments
+  api.get("/usage", async (c) => {
+    const [usage, recover_last, auto_recover] = await Promise.all([
+      estimateUsage(c.env.DB),
+      getSetting<Record<string, unknown> | null>(c.env.DB, "recover_last", null),
+      getSetting(c.env.DB, "auto_recover_comments", true),
+    ]);
+    return c.json({ usage, recover_last, auto_recover });
+  });
+  api.post("/recover", async (c) => {
+    if (!(await rateLimit(c.env.DB, `recover:${c.get("session").username}`, 6, 3_600_000))) return apiError(c, 429, "rate_limited", "انتظر قليلًا قبل تشغيل الاسترجاع مرة أخرى");
+    let used = 0;
+    const ctx = engineContext(c.env, () => used++);
+    const r = await recoverMissedComments(ctx, { maxMedia: 15 });
+    await setSetting(c.env.DB, "recover_last", { at: Date.now(), ...r, auto: false });
+    await audit(c.env.DB, c.get("session").username, "comments.recovered", undefined, r);
+    if (r.recovered > 0) {
+      c.executionCtx.waitUntil(
+        runQueue(ctx, { maxJobs: 20, includeDemo: false, deadlineMs: 25_000, budget: { used: () => used, limit: 44 } }).catch((e) => console.error("recover queue", sanitize(String(e)))),
+      );
+    }
+    return c.json(r);
+  });
+
   // ---- Notifications (Telegram)
   api.get("/notifications", async (c) => {
     const [settings, has_token] = await Promise.all([getNotifySettings(c.env.DB), hasBotToken(c.env.DB)]);
@@ -962,6 +988,7 @@ export function createApp() {
         alert_reauth: z.boolean().optional(),
         alert_failures: z.boolean().optional(),
         alert_spike: z.boolean().optional(),
+        alert_usage: z.boolean().optional(),
         spike_per_hour: z.number().int().min(5).max(10_000).optional(),
         notify_new_follower: z.boolean().optional(),
         notify_delivery: z.boolean().optional(),

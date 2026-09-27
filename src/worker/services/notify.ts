@@ -3,6 +3,7 @@ import type { NotifyKind } from "../engine/context";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
 import { all, first, getSetting, setSetting } from "../lib/db";
 import { sanitize } from "../meta/client";
+import { estimateUsage } from "./usage";
 
 /**
  * Owner notifications through a Telegram bot the owner creates (free, no extra account needed).
@@ -18,6 +19,7 @@ export interface NotifySettings {
   alert_failures: boolean;
   alert_spike: boolean;
   spike_per_hour: number;
+  alert_usage: boolean;
   notify_new_follower: boolean;
   notify_delivery: boolean;
 }
@@ -32,6 +34,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   alert_failures: true,
   alert_spike: true,
   spike_per_hour: 50,
+  alert_usage: true,
   notify_new_follower: false,
   notify_delivery: false,
 };
@@ -45,6 +48,7 @@ const THROTTLE_MS: Partial<Record<NotifyKind, number>> = {
   reauth: 6 * 3_600_000,
   failures: 3 * 3_600_000,
   spike: 6 * 3_600_000,
+  usage: 12 * 3_600_000,
 };
 
 export function isTelegramToken(t: string): boolean {
@@ -123,6 +127,7 @@ export async function notify(env: Env, kind: NotifyKind, text: string, onRequest
       reauth: s.alert_reauth,
       failures: s.alert_failures,
       spike: s.alert_spike,
+      usage: s.alert_usage,
       report: s.daily_report,
       test: true,
     };
@@ -213,6 +218,17 @@ export async function runNotifications(env: Env, now = Date.now()): Promise<void
   if (s.alert_failures) {
     const f = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM action_jobs WHERE is_demo = 0 AND status IN ('failed','uncertain') AND updated_at >= ?", now - 3_600_000);
     if ((f?.n ?? 0) >= 3) await notify(env, "failures", `⚠️ ${f!.n} رسائل فشلت أو نتيجتها غير مؤكدة خلال الساعة الأخيرة. افتح «السجل» في التطبيق للتفاصيل.`);
+  }
+  if (s.alert_usage) {
+    const u = await estimateUsage(env.DB, now);
+    const worst = u.writes.pct >= u.requests.pct ? { name: "عمليات الكتابة في قاعدة البيانات", ...u.writes } : { name: "الطلبات", ...u.requests };
+    if (worst.pct >= 80) {
+      await notify(
+        env,
+        "usage",
+        `⚠️ اقتربت من الحد المجاني اليومي في Cloudflare: ${worst.name} ≈ ${worst.pct}% (تقديري). عند بلوغ 100% تتوقف الردود حتى 03:00 بتوقيت السعودية ثم تكمل تلقائيًا، ويسترجع النظام التعليقات الفائتة.`,
+      );
+    }
   }
   if (s.alert_spike) {
     const c = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM conversation_flows WHERE is_demo = 0 AND created_at >= ?", now - 3_600_000);

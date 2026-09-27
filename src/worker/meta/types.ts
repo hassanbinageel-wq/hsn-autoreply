@@ -63,6 +63,15 @@ export interface MediaItem {
   timestamp?: string;
 }
 
+export interface CommentItem {
+  id: string;
+  text?: string;
+  timestamp?: string;
+  username?: string;
+  from?: { id?: string; username?: string };
+  parent_id?: string;
+}
+
 export interface Paged<T> {
   data: T[];
   paging?: { cursors?: { after?: string; before?: string }; next?: string };
@@ -95,4 +104,6 @@ export interface MetaClient {
   checkFollow(token: string, igsid: string): Promise<FollowCheckOutcome>;
   /** One post/reel (used to auto-attach newly published media to a campaign). */
   getMedia?(token: string, mediaId: string): Promise<MetaResult<MediaItem>>;
+  /** Latest top-level comments of a post/reel (used to recover comments whose webhook never arrived). */
+  listComments?(token: string, mediaId: string): Promise<MetaResult<Paged<CommentItem>>>;
 }

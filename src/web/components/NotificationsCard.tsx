@@ -93,6 +93,7 @@ export function NotificationsCard() {
               )}
               <Toggle checked={s.alert_reauth} onChange={(v) => save({ alert_reauth: v })} label="تنبيه عند انقطاع ربط إنستقرام" description="حتى تعيد الربط بسرعة ولا تتوقف الردود." />
               <Toggle checked={s.alert_failures} onChange={(v) => save({ alert_failures: v })} label="تنبيه عند فشل عدة رسائل" description="3 رسائل أو أكثر فشلت خلال ساعة (مرة كل 3 ساعات كحد أقصى)." />
+              <Toggle checked={s.alert_usage !== false} onChange={(v) => save({ alert_usage: v })} label="تنبيه عند الاقتراب من الحد المجاني (80%)" description="تقديري، مرة كل 12 ساعة كحد أقصى." />
               <Toggle checked={s.alert_spike} onChange={(v) => save({ alert_spike: v })} label="تنبيه التفاعل الكبير" description={`عندما يتفاعل ${s.spike_per_hour} شخصًا أو أكثر خلال ساعة.`} />
               {s.alert_spike && (
                 <Field label="حد التفاعل الكبير (أشخاص في الساعة)">

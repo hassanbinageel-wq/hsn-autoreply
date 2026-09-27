@@ -7,7 +7,7 @@ import type { NormalizedEvent } from "../meta/webhook-parse";
 export async function storeEvents(
   db: D1Database,
   events: NormalizedEvent[],
-  opts: { isDemo?: boolean; now?: number; forcedCampaignId?: number } = {},
+  opts: { isDemo?: boolean; now?: number; forcedCampaignId?: number; touchAccount?: boolean } = {},
 ): Promise<number> {
   if (!events.length) return 0;
   const now = opts.now ?? Date.now();
@@ -61,7 +61,7 @@ export async function storeEvents(
         ),
     );
   }
-  const ids = [...new Set(events.map((e) => e.accountIgId))];
+  const ids = opts.touchAccount === false ? [] : [...new Set(events.map((e) => e.accountIgId))];
   for (const id of ids) {
     stmts.push(db.prepare("UPDATE instagram_accounts SET last_webhook_at = ? WHERE ig_user_id = ?").bind(now, id));
   }
