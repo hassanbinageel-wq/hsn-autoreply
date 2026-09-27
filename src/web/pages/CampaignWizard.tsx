@@ -130,17 +130,18 @@ function utcToLocalInput(ms: number | null, tz: string): string {
 
 type MediaFilter = "all" | "reels" | "posts";
 
-function MediaPicker({ media, selected, onChange, onRefreshed }: { media: any[]; selected: string[]; onChange: (ids: string[]) => void; onRefreshed: (items: any[]) => void }) {
+function MediaPicker({ media, selected, onChange, onRefreshed, kind = "media" }: { media: any[]; selected: string[]; onChange: (ids: string[]) => void; onRefreshed: (items: any[]) => void; kind?: "media" | "story" }) {
   const [filter, setFilter] = useState<MediaFilter>("all");
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
+  const isStory = kind === "story";
   const refresh = async () => {
     setBusy(true);
     try {
-      const r = await api<{ count: number }>("/api/media/refresh", { body: { kind: "media", all: true } });
-      const m = await api("/api/media?kind=media");
+      const r = await api<{ count: number }>("/api/media/refresh", { body: { kind, all: true } });
+      const m = await api(`/api/media?kind=${kind}`);
       onRefreshed(m.items);
-      toast(`تم جلب ${r.count} منشور`);
+      toast(isStory ? (r.count ? `تم جلب ${r.count} ستوري` : "لا توجد ستوري منشورة حاليًا (آخر 24 ساعة)") : `تم جلب ${r.count} منشور`);
     } catch (e: any) {
       toast(e.message, "bad");
     } finally {
@@ -149,22 +150,25 @@ function MediaPicker({ media, selected, onChange, onRefreshed }: { media: any[];
   };
   const isReel = (m: any) => m.media_product_type === "REELS";
   const list = media.filter(
-    (m) => (filter === "all" || (filter === "reels" ? isReel(m) : !isReel(m))) && (!q.trim() || (m.caption ?? "").toLowerCase().includes(q.trim().toLowerCase())),
+    (m) => (isStory || filter === "all" || (filter === "reels" ? isReel(m) : !isReel(m))) && (!q.trim() || (m.caption ?? "").toLowerCase().includes(q.trim().toLowerCase())),
   );
   const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="btn btn-primary" onClick={refresh} disabled={busy}>{busy ? "جارٍ الجلب…" : media.length ? "🔄 تحديث منشوراتي" : "جلب منشوراتي من إنستقرام"}</button>
-        <div className="surface-2 flex rounded-xl p-1 text-sm" role="tablist">
+        <button type="button" className="btn btn-primary" onClick={refresh} disabled={busy}>
+          {busy ? "جارٍ الجلب…" : isStory ? (media.length ? "🔄 تحديث الستوري" : "جلب الستوري الحالية") : media.length ? "🔄 تحديث منشوراتي" : "جلب منشوراتي من إنستقرام"}
+        </button>
+        {!isStory && <div className="surface-2 flex rounded-xl p-1 text-sm" role="tablist">
           {([["all", "الكل"], ["reels", "ريلز"], ["posts", "منشورات"]] as const).map(([k, v]) => (
             <button key={k} type="button" role="tab" aria-selected={filter === k} onClick={() => setFilter(k)} className={`rounded-lg px-3 py-1.5 font-semibold ${filter === k ? "bg-[var(--surface)] shadow" : "muted"}`}>{v}</button>
           ))}
-        </div>
+        </div>}
         <span className="muted text-sm">{list.length} عنصر · المحدد: {selected.length}</span>
       </div>
-      {media.length > 0 && <input className="input" placeholder="بحث في وصف المنشور…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="بحث في المنشورات" />}
-      {!media.length && !busy && <Alert tone="info">لم تُجلب منشوراتك بعد — اضغط «جلب منشوراتي».</Alert>}
+      {!isStory && media.length > 0 && <input className="input" placeholder="بحث في وصف المنشور…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="بحث في المنشورات" />}
+      {isStory && <p className="muted text-xs">تظهر هنا الستوري المنشورة حاليًا فقط (آخر 24 ساعة) — هذا ما يتيحه إنستقرام. الستوري المنتهية لا تستقبل ردودًا أصلًا.</p>}
+      {!media.length && !busy && <Alert tone="info">{isStory ? "اضغط «جلب الستوري الحالية» لعرض الستوري المنشورة الآن." : "لم تُجلب منشوراتك بعد — اضغط «جلب منشوراتي»."}</Alert>}
       <div className="grid max-h-[28rem] grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4">
         {list.map((m) => {
           const on = selected.includes(m.media_id);
@@ -222,6 +226,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
   const [savedId, setSavedId] = useState<number | null>(id);
   const [errors, setErrors] = useState<Array<{ path: string; message: string }>>([]);
   const [media, setMedia] = useState<any[]>([]);
+  const [stories, setStories] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
   const [account, setAccount] = useState<any>(null);
   const [testText, setTestText] = useState("أبغى الكورس");
@@ -253,6 +258,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
         .finally(() => setLoading(false));
     }
     api("/api/media?kind=media").then((r) => setMedia(r.items)).catch(() => undefined);
+    api("/api/media?kind=story").then((r) => setStories(r.items)).catch(() => undefined);
     api("/api/templates").then(setTemplates).catch(() => undefined);
     api("/api/account").then((r) => setAccount(r.account)).catch(() => undefined);
   }, [id]);
@@ -365,7 +371,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
           <div className="space-y-2">
             {(["comment", "story_reply", "story_mention"] as const).map((t) => (
               <label key={t} className={`card flex cursor-pointer items-start gap-3 p-4 ${form.type === t ? "ring-2 ring-brand-600" : ""}`}>
-                <input type="radio" name="type" className="mt-1.5" checked={form.type === t} onChange={() => set("type", t)} />
+                <input type="radio" name="type" className="mt-1.5" checked={form.type === t} onChange={() => setForm((f) => (f.type === t ? f : { ...f, type: t, media_ids: [], auto_new_media: false, auto_new_since: null }))} />
                 <span>
                   <b>{AR_LABELS[t]}</b>
                   <span className="muted block text-sm">
@@ -415,10 +421,12 @@ export function CampaignWizard({ id }: { id: number | null }) {
             {form.scope === "selected" && (
               <>
                 <MediaPicker
-                  media={media}
+                  key={form.type}
+                  kind={isComment ? "media" : "story"}
+                  media={isComment ? media : stories.filter((m) => !m.expires_at || m.expires_at > Date.now() || form.media_ids.includes(m.media_id))}
                   selected={form.media_ids}
                   onChange={(ids) => set("media_ids", ids)}
-                  onRefreshed={(items) => setMedia(items)}
+                  onRefreshed={(items) => (isComment ? setMedia(items) : setStories(items))}
                 />
                 <Field label="معرفات يدوية (اختياري — للمتقدمين)" hint="أرقام معرّفات Meta فقط، مفصولة بفاصلة. روابط المنشورات لا تُقبل هنا — اختر المنشور من الصور أعلاه.">
                   <input className="input" dir="ltr" value={form.media_ids.join(",")} onChange={(e) => set("media_ids", e.target.value.split(",").map((s) => s.trim()).filter((s) => /^[0-9A-Za-z_]{1,64}$/.test(s)))} />
@@ -687,13 +695,13 @@ export function CampaignWizard({ id }: { id: number | null }) {
           : []),
       ]
     : [];
-  const selected = media.find((m) => form.media_ids.includes(m.media_id));
+  const selected = (isComment ? media : stories).find((m) => form.media_ids.includes(m.media_id));
   const preview = (
     <PhonePreview
       key={form.type}
       accountUsername={account?.username ?? "your_account"}
       avatarUrl={account?.profile_picture_url}
-      postImage={isComment ? selected?.thumbnail_url : null}
+      postImage={isComment || form.type === "story_reply" ? selected?.thumbnail_url : null}
       postCaption={isComment ? selected?.caption : form.type === "story_reply" ? "📱 قصتك" : "📣 قصة أشار فيها إليك أحدهم"}
       comments={comments}
       dm={dm}
