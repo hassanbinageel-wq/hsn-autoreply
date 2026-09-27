@@ -208,6 +208,8 @@ export async function runNotifications(env: Env, now = Date.now()): Promise<void
       await sendTelegram(env, await buildDailyReport(env.DB, now), s);
     }
   }
+  // Failure/spike checks every 10 minutes (not every cron minute) to stay far below the free D1 read quota.
+  if (Math.floor(now / 60_000) % 10 !== 0) return;
   if (s.alert_failures) {
     const f = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM action_jobs WHERE is_demo = 0 AND status IN ('failed','uncertain') AND updated_at >= ?", now - 3_600_000);
     if ((f?.n ?? 0) >= 3) await notify(env, "failures", `⚠️ ${f!.n} رسائل فشلت أو نتيجتها غير مؤكدة خلال الساعة الأخيرة. افتح «السجل» في التطبيق للتفاصيل.`);
