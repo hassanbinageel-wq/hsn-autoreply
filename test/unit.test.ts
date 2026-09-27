@@ -222,3 +222,10 @@ describe("public reply phrasings", () => {
     expect(campaignInputSchema.safeParse({ ...base, public_reply_text: "x".repeat(301) }).success).toBe(false);
   });
 });
+
+describe("follow check also returns the username", () => {
+  it("keeps a valid Instagram username, ignores anything else", () => {
+    expect(interpretFollowResponse({ ok: true, httpStatus: 200, data: { username: "sara.test_1", is_user_follow_business: true } }).username).toBe("sara.test_1");
+    expect(interpretFollowResponse({ ok: true, httpStatus: 200, data: { username: "<b>x</b>", is_user_follow_business: false } }).username).toBeUndefined();
+  });
+});

@@ -257,9 +257,10 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
   );
   await run(
     ctx.db,
-    "UPDATE participants SET last_follow_status = ?, last_follow_checked_at = ?, updated_at = ? WHERE id = ?",
+    "UPDATE participants SET last_follow_status = ?, last_follow_checked_at = ?, username = COALESCE(?, username), updated_at = ? WHERE id = ?",
     outcome.result,
     now,
+    outcome.username ?? null,
     now,
     l.participant.id,
   );

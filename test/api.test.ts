@@ -268,6 +268,18 @@ describe("campaign stats", () => {
     expect(s.totals).toMatchObject({ people: 3, delivered: 2, new_followers: 1, comments_total: 4 });
     const other = await call("/api/campaigns/999999/stats", auth);
     expect(other.status).toBe(404);
+
+    // the people behind the numbers
+    const pr = (await (await call(`/api/campaigns/${cid}/people`, auth)).json()) as any;
+    expect(pr.people).toHaveLength(3);
+    const u2 = pr.people.find((p: any) => p.interactions[0].text === "كورس" && p.new_follower);
+    expect(u2).toMatchObject({ reached: true, delivered: true, new_follower: true, already_following: false, not_followed: false });
+    expect(u2.username).toBeTruthy();
+    expect(pr.people.filter((p: any) => p.already_following)).toHaveLength(1);
+    expect(pr.people.filter((p: any) => p.waiting)).toHaveLength(1);
+    const onlyB = (await (await call(`/api/campaigns/${cid}/people?media_id=media_B`, auth)).json()) as any;
+    expect(onlyB.people).toHaveLength(1);
+    expect(onlyB.people[0].interactions[0]).toMatchObject({ type: "comment", media_id: "media_B" });
   });
 });
 

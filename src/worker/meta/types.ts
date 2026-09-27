@@ -72,6 +72,8 @@ export type FollowResult = "following" | "not_following" | "unknown" | "needs_in
 
 export interface FollowCheckOutcome {
   result: FollowResult;
+  /** Returned by the same User Profile API call; fills in names for people who only messaged (story replies). */
+  username?: string;
   fieldPresent: boolean;
   httpStatus?: number;
   errorCode?: string;

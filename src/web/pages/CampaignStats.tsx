@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Link } from "../App";
-import { Alert, Card, Empty, PageHeader, Spinner, Stat, fmtTime, useAsync } from "../components/ui";
+import { Alert, Badge, Card, Empty, PageHeader, Spinner, Stat, fmtTime, useAsync } from "../components/ui";
+import { toCsv } from "../../shared/csv";
+import { AR_LABELS } from "../../shared/states";
 
 const PERIODS: Array<[number, string]> = [
   [1, "اليوم"],
@@ -33,22 +35,165 @@ function Funnel({ steps, base }: { steps: Array<[string, number, string]>; base:
   );
 }
 
-function Metric({ label, value, tone }: { label: string; value: number | string; tone?: string }) {
+function Metric({ label, value, tone, onClick }: { label: string; value: number | string; tone?: string; onClick?: () => void }) {
   return (
-    <div className="surface-2 rounded-xl px-2 py-2 text-center">
+    <button
+      type="button"
+      disabled={!onClick}
+      onClick={onClick}
+      title={onClick ? "عرض الأسماء" : undefined}
+      className="surface-2 rounded-xl px-2 py-2 text-center enabled:hover:ring-1 enabled:hover:ring-[var(--color-brand-500)]"
+    >
       <div className={`text-lg font-bold tabular-nums ${tone ?? ""}`}>{value}</div>
       <div className="muted text-[11px] leading-tight">{label}</div>
-    </div>
+    </button>
+  );
+}
+
+type Segment = "all" | "reached" | "delivered" | "new_follower" | "already_following" | "not_followed" | "waiting" | "no_start";
+
+const SEGMENTS: Array<[Segment, string, (p: any) => boolean]> = [
+  ["all", "كل من تفاعل", () => true],
+  ["reached", "وصلتهم الرسالة", (p) => p.reached],
+  ["delivered", "استلموا المحتوى", (p) => p.delivered],
+  ["new_follower", "متابعون جدد", (p) => p.new_follower],
+  ["already_following", "متابعون أصلًا", (p) => p.already_following],
+  ["not_followed", "لم يتابعوا", (p) => p.not_followed],
+  ["waiting", "بالانتظار", (p) => p.waiting],
+  ["no_start", "لم يضغطوا «ابدأ»", (p) => p.reached && !p.interacted && !p.delivered],
+];
+
+const TRIGGER: Record<string, string> = { comment: "💬 علّق", story_reply: "↩️ رد على ستوري", story_mention: "📣 منشن في ستوري" };
+
+/** People behind the numbers: who they are, what they did, where they stopped. */
+function PeopleList({ id, days, isComment, gated, mediaById, filter, setFilter }: {
+  id: number; days: number; isComment: boolean; gated: boolean; mediaById: Map<string, any>;
+  filter: { segment: Segment; media: string | null }; setFilter: (f: { segment: Segment; media: string | null }) => void;
+}) {
+  const [q, setQ] = useState("");
+  const mediaQs = filter.media !== null ? `&media_id=${encodeURIComponent(filter.media)}` : "";
+  const { data, loading, error } = useAsync(() => api<any>(`/api/campaigns/${id}/people?days=${days}${mediaQs}`), [id, days, filter.media]);
+  const segments = SEGMENTS.filter(([k]) => gated || !["new_follower", "already_following", "not_followed", "no_start"].includes(k));
+  const test = segments.find(([k]) => k === filter.segment)?.[2] ?? (() => true);
+  const list = useMemo(() => {
+    const needle = q.trim().toLowerCase().replace(/^@/, "");
+    return (data?.people ?? []).filter((p: any) => test(p) && (!needle || (p.username ?? "").toLowerCase().includes(needle) || p.interactions.some((i: any) => (i.text ?? "").toLowerCase().includes(needle))));
+  }, [data, filter.segment, q]);
+  const counts = useMemo(() => Object.fromEntries(segments.map(([k, , f]) => [k, (data?.people ?? []).filter(f).length])), [data]);
+
+  const exportCsv = () => {
+    const headers = ["الحساب", "رابط الحساب", "ماذا فعل", "النص", "المنشور", "وصلته الرسالة", "متابع جديد", "كان متابعًا", "استلم المحتوى", "الحالة", "آخر تحديث"];
+    const yes = (v: boolean) => (v ? "نعم" : "لا");
+    const rows = list.map((p: any) => ({
+      "الحساب": p.username ?? "غير معروف",
+      "رابط الحساب": p.username ? `https://www.instagram.com/${p.username}` : "",
+      "ماذا فعل": TRIGGER[p.interactions[0]?.type] ?? "",
+      "النص": p.interactions[0]?.text ?? "",
+      "المنشور": mediaById.get(p.interactions[0]?.media_id ?? "")?.caption?.slice(0, 60) ?? p.interactions[0]?.media_id ?? "",
+      "وصلته الرسالة": yes(p.reached),
+      "متابع جديد": yes(p.new_follower),
+      "كان متابعًا": yes(p.already_following),
+      "استلم المحتوى": yes(p.delivered),
+      "الحالة": AR_LABELS[p.state] ?? p.state,
+      "آخر تحديث": fmtTime(p.last_at),
+    }));
+    const blob = new Blob([toCsv(headers, rows)], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `campaign-${id}-${filter.segment}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  return (
+    <Card
+      title="الأشخاص"
+      action={<button className="btn btn-ghost text-sm" disabled={!list.length} onClick={exportCsv}>⬇️ تصدير CSV</button>}
+    >
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {segments.map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setFilter({ ...filter, segment: k })}
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${filter.segment === k ? "bg-brand-600 text-white" : "surface-2"}`}
+          >
+            {label} <span className="tabular-nums opacity-70">{counts[k] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input className="input max-w-xs" placeholder="بحث باسم الحساب أو نص التعليق…" value={q} onChange={(e) => setQ(e.target.value)} />
+        {filter.media !== null && (
+          <span className="surface-2 flex items-center gap-2 rounded-full px-3 py-1 text-xs">
+            {isComment ? "منشور:" : "المصدر:"} {mediaById.get(filter.media)?.caption?.slice(0, 30) || filter.media || "بدون منشور"}
+            <button aria-label="إزالة فلتر المنشور" onClick={() => setFilter({ ...filter, media: null })}>✕</button>
+          </span>
+        )}
+      </div>
+      {loading && !data ? (
+        <Spinner />
+      ) : error ? (
+        <Alert tone="bad">{error}</Alert>
+      ) : !list.length ? (
+        <p className="muted py-6 text-center text-sm">لا يوجد أشخاص في هذا التصنيف.</p>
+      ) : (
+        <div className="divide-y divide-[var(--border)]">
+          {list.slice(0, 500).map((p: any) => {
+            const last = p.interactions[0];
+            const m = last?.media_id ? mediaById.get(last.media_id) : null;
+            return (
+              <div key={p.participant_id} className="flex items-start gap-3 py-2.5">
+                <div className="h-11 w-9 shrink-0 overflow-hidden rounded-md bg-gradient-to-br from-violet-700 via-fuchsia-600 to-orange-500">
+                  {m?.thumbnail_url && <img src={m.thumbnail_url} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    {p.username ? (
+                      <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="font-bold hover:underline" dir="ltr">@{p.username}</a>
+                    ) : (
+                      <span className="muted font-bold">حساب غير معروف</span>
+                    )}
+                    {p.delivered && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">استلم المحتوى</span>}
+                    {p.new_follower && <span className="rounded-full bg-fuchsia-100 px-2 py-0.5 text-[11px] text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-300">متابع جديد</span>}
+                    {p.already_following && <span className="surface-2 rounded-full px-2 py-0.5 text-[11px]">كان متابعًا</span>}
+                    {p.not_followed && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">لم يتابع</span>}
+                    {!p.delivered && <Badge value={p.state} />}
+                  </div>
+                  <div className="mt-0.5 text-sm">
+                    <span className="muted">{TRIGGER[last?.type] ?? last?.type}</span>
+                    {last?.text ? <>: «<span className="break-words">{last.text}</span>»</> : null}
+                    {p.interactions.length > 1 && <span className="muted text-xs"> · تفاعل {p.interactions.length} مرات</span>}
+                  </div>
+                  <div className="muted text-xs">
+                    {m?.caption ? `على: ${m.caption.slice(0, 50)}${m.caption.length > 50 ? "…" : ""} · ` : ""}
+                    {p.delivered_at ? `استلم ${fmtTime(p.delivered_at)}` : `آخر تحديث ${fmtTime(p.last_at)}`}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {list.length > 500 && <p className="muted pt-2 text-center text-xs">يُعرض أول 500 — استخدم البحث أو التصدير للباقي.</p>}
+        </div>
+      )}
+      <p className="muted mt-3 text-xs">الأسماء من بيانات إنستقرام الرسمية (اسم المستخدم المرفق مع التعليق أو من فحص المتابعة). قد يظهر «حساب غير معروف» لمن تفاعل عبر الستوري قبل هذا التحديث.</p>
+    </Card>
   );
 }
 
 export function CampaignStatsPage({ id }: { id: number }) {
   const [days, setDays] = useState(0);
+  const [filter, setFilter] = useState<{ segment: Segment; media: string | null }>({ segment: "all", media: null });
+  const peopleRef = useRef<HTMLDivElement>(null);
+  const show = (segment: Segment, media: string | null = null) => {
+    setFilter({ segment, media });
+    setTimeout(() => peopleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
   const { data: campaign } = useAsync(() => api<any>(`/api/campaigns/${id}`), [id]);
   const { data, loading, error } = useAsync(() => api<any>(`/api/campaigns/${id}/stats?days=${days}`), [id, days]);
   const gated = !!campaign?.require_follow;
   const isComment = campaign?.type === "comment";
   const t = data?.totals;
+  const mediaById = useMemo(() => new Map<string, any>((data?.media ?? []).filter((m: any) => m.media).map((m: any) => [m.media_id, m.media])), [data]);
 
   return (
     <div className="space-y-4">
@@ -78,11 +223,11 @@ export function CampaignStatsPage({ id }: { id: number }) {
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             {isComment && <Stat label="التعليقات المستلمة" value={t.comments_total} hint={`${t.comments_matched} طابقت الكلمات`} />}
-            <Stat label="أشخاص تفاعلوا" value={t.people} hint={`${t.triggers} مرة تشغيل`} />
-            <Stat label="وصلتهم الرسالة" value={t.reached} hint={pct(t.reached, t.people)} tone="good" />
-            {gated && <Stat label="تابعوا بسبب الحملة" value={t.new_followers} hint="متابعون جدد" tone="good" />}
-            {gated && <Stat label="كانوا متابعين أصلًا" value={t.already_following} />}
-            <Stat label="استلموا المحتوى" value={t.delivered} hint={`تحويل ${pct(t.delivered, t.people)}`} tone="good" />
+            <button className="text-right" onClick={() => show("all")}><Stat label="أشخاص تفاعلوا" value={t.people} hint={`${t.triggers} مرة تشغيل · اضغط لعرض الأسماء`} /></button>
+            <button className="text-right" onClick={() => show("reached")}><Stat label="وصلتهم الرسالة" value={t.reached} hint={pct(t.reached, t.people)} tone="good" /></button>
+            {gated && <button className="text-right" onClick={() => show("new_follower")}><Stat label="تابعوا بسبب الحملة" value={t.new_followers} hint="متابعون جدد" tone="good" /></button>}
+            {gated && <button className="text-right" onClick={() => show("already_following")}><Stat label="كانوا متابعين أصلًا" value={t.already_following} /></button>}
+            <button className="text-right" onClick={() => show("delivered")}><Stat label="استلموا المحتوى" value={t.delivered} hint={`تحويل ${pct(t.delivered, t.people)}`} tone="good" /></button>
           </div>
 
           {t.people > 0 && (
@@ -146,18 +291,22 @@ export function CampaignStatsPage({ id }: { id: number }) {
                   <div className="grid grid-cols-3 gap-1.5 border-t border-[var(--border)] p-2">
                     {isComment && <Metric label="تعليقات" value={m.comments_total} />}
                     {isComment && <Metric label="طابقت" value={m.comments_matched} />}
-                    <Metric label="أشخاص" value={m.people} />
-                    <Metric label="وصلتهم الرسالة" value={m.reached} tone="text-sky-600 dark:text-sky-400" />
-                    {gated && <Metric label="متابعون جدد" value={m.new_followers} tone="text-fuchsia-600 dark:text-fuchsia-400" />}
-                    {gated && <Metric label="متابعون أصلًا" value={m.already_following} />}
-                    {gated && <Metric label="لم يتابعوا" value={m.not_followed} tone="text-amber-600 dark:text-amber-400" />}
-                    <Metric label="استلموا المحتوى" value={m.delivered} tone="text-emerald-600 dark:text-emerald-400" />
-                    <Metric label="بالانتظار" value={m.waiting} />
+                    <Metric label="أشخاص" value={m.people} onClick={() => show("all", m.media_id ?? "")} />
+                    <Metric label="وصلتهم الرسالة" value={m.reached} tone="text-sky-600 dark:text-sky-400" onClick={() => show("reached", m.media_id ?? "")} />
+                    {gated && <Metric label="متابعون جدد" value={m.new_followers} tone="text-fuchsia-600 dark:text-fuchsia-400" onClick={() => show("new_follower", m.media_id ?? "")} />}
+                    {gated && <Metric label="متابعون أصلًا" value={m.already_following} onClick={() => show("already_following", m.media_id ?? "")} />}
+                    {gated && <Metric label="لم يتابعوا" value={m.not_followed} tone="text-amber-600 dark:text-amber-400" onClick={() => show("not_followed", m.media_id ?? "")} />}
+                    <Metric label="استلموا المحتوى" value={m.delivered} tone="text-emerald-600 dark:text-emerald-400" onClick={() => show("delivered", m.media_id ?? "")} />
+                    <Metric label="بالانتظار" value={m.waiting} onClick={() => show("waiting", m.media_id ?? "")} />
                   </div>
                 </div>
               ))}
             </div>
           )}
+
+          <div ref={peopleRef} className="scroll-mt-4">
+            <PeopleList id={id} days={days} isComment={isComment} gated={gated} mediaById={mediaById} filter={filter} setFilter={setFilter} />
+          </div>
         </>
       )}
     </div>

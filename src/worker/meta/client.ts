@@ -328,9 +328,11 @@ export class HttpMetaClient implements MetaClient {
 export function interpretFollowResponse(r: MetaResult<Record<string, unknown>>): FollowCheckOutcome {
   if (r.ok) {
     const v = r.data?.is_user_follow_business;
-    if (v === true) return { result: "following", fieldPresent: true, httpStatus: r.httpStatus };
-    if (v === false) return { result: "not_following", fieldPresent: true, httpStatus: r.httpStatus };
-    return { result: "unknown", fieldPresent: false, httpStatus: r.httpStatus };
+    const u = r.data?.username;
+    const username = typeof u === "string" && /^[A-Za-z0-9._]{1,30}$/.test(u) ? u : undefined;
+    if (v === true) return { result: "following", fieldPresent: true, httpStatus: r.httpStatus, username };
+    if (v === false) return { result: "not_following", fieldPresent: true, httpStatus: r.httpStatus, username };
+    return { result: "unknown", fieldPresent: false, httpStatus: r.httpStatus, username };
   }
   const err = r.error;
   const base = { fieldPresent: false, httpStatus: err.httpStatus, errorCode: err.code !== undefined ? String(err.code) : err.kind, error: err };

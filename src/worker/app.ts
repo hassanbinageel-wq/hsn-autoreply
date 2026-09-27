@@ -608,6 +608,64 @@ export function createApp() {
     });
   });
 
+  // Who interacted with a campaign: one row per person (latest interaction), with the same flags as the stats.
+  api.get("/campaigns/:id/people", async (c) => {
+    const id = idParam(c);
+    const campaign = id && (await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
+    if (!campaign) return apiError(c, 404, "not_found", "الحملة غير موجودة");
+    const days = Number(c.req.query("days") ?? 0);
+    const since = days > 0 ? Date.now() - Math.min(days, 3650) * 86_400_000 : 0;
+    const media = c.req.query("media_id");
+    const params: unknown[] = [id, since];
+    let mediaSql = "";
+    if (media !== undefined) {
+      mediaSql = "AND COALESCE(f.source_media_id, '') = ?";
+      params.push(media.slice(0, 64));
+    }
+    const rows = await all<any>(
+      c.env.DB,
+      `SELECT f.id, f.participant_id, p.username, f.trigger_type, COALESCE(f.source_media_id, '') AS media_id, f.state, f.state_reason,
+              f.created_at, f.updated_at, f.content_delivered_at, e.text AS trigger_text, p.last_follow_status,
+              (SELECT fc.result FROM follow_checks fc WHERE fc.flow_id = f.id ORDER BY fc.id LIMIT 1) AS first_follow,
+              EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'not_following') AS saw_not_following,
+              EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'following') AS saw_following,
+              (f.private_reply_status = 'accepted' OR EXISTS (
+                 SELECT 1 FROM action_jobs j WHERE j.flow_id = f.id AND j.kind = 'send_message' AND j.status = 'accepted')) AS reached
+         FROM conversation_flows f
+         JOIN participants p ON p.id = f.participant_id
+         LEFT JOIN webhook_events e ON e.id = f.trigger_event_id
+        WHERE f.campaign_id = ? AND f.is_demo = 0 AND f.created_at >= ? ${mediaSql}
+        ORDER BY f.id DESC LIMIT 3000`,
+      ...params,
+    );
+    const WAITING = ["trigger_received", "awaiting_user_interaction", "checking_follow", "awaiting_follow", "ready_to_deliver", "delivering"];
+    const people = new Map<number, any>();
+    for (const r of rows) {
+      let p = people.get(r.participant_id);
+      if (!p) {
+        // Rows are newest first: the first one seen is the person's latest interaction.
+        p = {
+          participant_id: r.participant_id, username: r.username, state: r.state, state_reason: r.state_reason,
+          last_at: r.updated_at, first_at: r.created_at, follow_status: r.last_follow_status, interactions: [],
+          reached: false, interacted: false, already_following: false, new_follower: false, not_followed: false,
+          delivered: false, waiting: WAITING.includes(r.state), delivered_at: null,
+        };
+        people.set(r.participant_id, p);
+      }
+      p.first_at = Math.min(p.first_at, r.created_at);
+      p.reached ||= !!r.reached;
+      p.interacted ||= r.first_follow != null;
+      p.already_following ||= r.first_follow === "following";
+      p.new_follower ||= !!(r.saw_not_following && r.saw_following);
+      p.delivered ||= r.state === "content_sent";
+      if (r.content_delivered_at) p.delivered_at = Math.max(p.delivered_at ?? 0, r.content_delivered_at);
+      p.not_followed ||= !!(r.saw_not_following && !r.saw_following);
+      if (p.interactions.length < 10) p.interactions.push({ type: r.trigger_type, text: r.trigger_text, media_id: r.media_id || null, at: r.created_at, state: r.state });
+    }
+    for (const p of people.values()) if (p.new_follower || p.delivered) p.not_followed = false;
+    return c.json({ people: [...people.values()], truncated: rows.length >= 3000 });
+  });
+
   async function saveCampaign(c: C, id: number | null) {
     const p = await parseBody(c, campaignInputSchema);
     if (!p.ok) return p.res;
