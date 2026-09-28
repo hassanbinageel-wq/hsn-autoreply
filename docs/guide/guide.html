@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>دليل استخدام HSN AutoReply</title>
+<link rel="stylesheet" href="fonts.css">
+<style>
+:root{
+  --v:#7c3aed; --p:#db2777; --o:#f97316; --ink:#1b1530; --muted:#6b6780; --line:#ece9f5; --soft:#f7f5fc;
+  --ok:#059669; --warn:#b45309; --bad:#b91c1c;
+}
+@page{ size:A4; margin:18mm 16mm 20mm 16mm;
+  @bottom-right{ content: counter(page); font-family:'Cairo'; font-size:10pt; font-weight:700; color:#7c3aed; }
+  @bottom-left{ content:"HSN AutoReply — دليل الاستخدام"; font-family:'Plex'; font-size:8pt; color:#b3aec6; }
+}
+@page cover{ margin:0; @bottom-right{content:none} @bottom-left{content:none} }
+@page back{ margin:0; @bottom-right{content:none} @bottom-left{content:none} }
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family:'Plex',sans-serif;color:var(--ink);font-size:10pt;line-height:1.62;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+h1,h2,h3,h4{font-family:'Cairo',sans-serif;line-height:1.35;margin:0}
+p{margin:0 0 8px}
+b,strong{font-weight:700}
+.ltr{direction:ltr;unicode-bidi:isolate;display:inline-block}
+code{font-family:'Plex';direction:ltr;unicode-bidi:isolate;background:#f1eefb;color:#5b21b6;border-radius:6px;padding:0 6px;font-size:9.5pt}
+
+/* ---------- cover ---------- */
+.cover{page:cover;height:297mm;width:210mm;position:relative;overflow:hidden;color:#fff;
+  background:radial-gradient(circle at 80% 15%,rgba(249,115,22,.55),transparent 45%),radial-gradient(circle at 10% 85%,rgba(219,39,119,.55),transparent 50%),linear-gradient(160deg,#1e0b4b 0%,#4c1d95 45%,#86198f 100%);}
+.cover .grid{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:14mm 14mm}
+.cover .ring{position:absolute;border-radius:50%;border:1.5px solid rgba(255,255,255,.14)}
+.cover .inner{position:absolute;inset:0;padding:30mm 22mm;display:flex;flex-direction:column}
+.logo{width:26mm;height:26mm;border-radius:7mm;background:linear-gradient(135deg,#a855f7,#ec4899 55%,#f97316);display:flex;align-items:center;justify-content:center;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.logo svg{width:15mm;height:15mm}
+.cover .kicker{margin-top:16mm;font-family:'Cairo';font-weight:600;letter-spacing:.5px;color:#fcd9f5;font-size:13pt}
+.cover h1{font-size:40pt;font-weight:800;margin-top:3mm;line-height:1.2}
+.cover h1 .en{display:block;font-size:30pt;direction:ltr;text-align:right;color:#fde68a}
+.cover .sub{margin-top:8mm;font-size:13.5pt;color:#ede9fe;max-width:150mm;line-height:1.8}
+.cover .chips{margin-top:10mm;display:flex;flex-wrap:wrap;gap:3mm}
+.cover .chip{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);border-radius:30px;padding:2mm 5mm;font-size:10.5pt;font-family:'Cairo';font-weight:600}
+.cover .phone{position:absolute;left:18mm;bottom:26mm;width:62mm;border-radius:9mm;padding:2.2mm;background:#0b0620;box-shadow:0 20px 50px rgba(0,0,0,.5);transform:rotate(-6deg)}
+.cover .phone img{width:100%;border-radius:7mm;display:block}
+.cover .foot{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;font-size:10pt;color:#ddd6fe}
+.cover .foot b{color:#fff;font-family:'Cairo';font-size:12pt}
+
+/* ---------- pages & sections ---------- */
+.page{break-before:page}
+.chapter{display:flex;align-items:center;gap:5mm;margin:0 0 4.5mm;padding-bottom:3mm;border-bottom:2px solid var(--line)}
+.chapter .num{flex:none;width:15mm;height:15mm;border-radius:4.5mm;background:linear-gradient(135deg,var(--v),var(--p) 60%,var(--o));color:#fff;font-family:'Cairo';font-weight:800;font-size:17pt;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 14px rgba(124,58,237,.25)}
+.chapter h2{font-size:21pt;font-weight:800}
+.chapter .lead{color:var(--muted);font-size:10.5pt;margin-top:1mm}
+h3{font-size:13pt;font-weight:700;margin:4.5mm 0 2mm;color:#3b1a7a;display:flex;align-items:center;gap:2mm}
+h3::before{content:"";width:2.2mm;height:5mm;border-radius:2mm;background:linear-gradient(var(--v),var(--p))}
+h4{font-size:11pt;font-weight:700;margin:3mm 0 1.5mm}
+ul,ol{margin:0 0 8px;padding-inline-start:6mm}
+li{margin:1mm 0}
+.muted{color:var(--muted)}
+.small{font-size:9pt}
+
+.callout{border-radius:4mm;padding:2.8mm 4mm;margin:3mm 0;display:flex;gap:3mm;align-items:flex-start;break-inside:avoid}
+.callout .ic{flex:none;width:8mm;height:8mm;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11pt}
+.callout p:last-child{margin:0}
+.tip{background:#ecfdf5;border:1px solid #bbf7d0}.tip .ic{background:#d1fae5}
+.info{background:#f5f3ff;border:1px solid #ddd6fe}.info .ic{background:#ede9fe}
+.warn{background:#fffbeb;border:1px solid #fde68a}.warn .ic{background:#fef3c7}
+.danger{background:#fef2f2;border:1px solid #fecaca}.danger .ic{background:#fee2e2}
+.callout b.t{display:block;font-family:'Cairo';font-size:10.5pt;margin-bottom:.5mm}
+
+.steps{counter-reset:s;list-style:none;padding:0;margin:3mm 0}
+.steps>li{counter-increment:s;position:relative;padding:1.5mm 12mm 1.5mm 0;margin:0 0 2mm;break-inside:avoid}
+.steps>li::before{content:counter(s);position:absolute;right:0;top:1.2mm;width:8mm;height:8mm;border-radius:50%;background:linear-gradient(135deg,var(--v),var(--p));color:#fff;font-family:'Cairo';font-weight:700;font-size:10pt;display:flex;align-items:center;justify-content:center}
+.steps>li b.s{font-family:'Cairo';display:block}
+
+table{width:100%;border-collapse:separate;border-spacing:0;margin:3mm 0 5mm;font-size:9.8pt;break-inside:auto}
+th{background:linear-gradient(90deg,#4c1d95,#7c3aed);color:#fff;font-family:'Cairo';font-weight:700;text-align:right;padding:1.8mm 2.6mm}
+th:first-child{border-top-right-radius:3mm} th:last-child{border-top-left-radius:3mm}
+td{padding:1.6mm 2.6mm;border-bottom:1px solid var(--line);vertical-align:top}
+tr:nth-child(even) td{background:var(--soft)}
+tr{break-inside:avoid}
+td.k{font-weight:700;font-family:'Cairo';white-space:nowrap;color:#3b1a7a}
+
+.fig{margin:4mm 0;break-inside:avoid;text-align:center}
+.fig img{max-width:100%;border-radius:3.5mm;border:1px solid var(--line);box-shadow:0 6px 20px rgba(40,20,90,.10)}
+.fig figcaption,.cap{font-size:8.8pt;color:var(--muted);margin-top:1.5mm}
+.row{display:flex;gap:5mm;align-items:flex-start}
+.row>*{flex:1}
+.cards3{display:flex;gap:4mm;margin:4mm 0;break-inside:avoid}
+.cards3 figure{flex:1;margin:0;text-align:center}
+.cards3 img{width:100%;border-radius:3mm;box-shadow:0 6px 16px rgba(40,20,90,.15)}
+
+.flow{display:flex;align-items:stretch;gap:0;margin:3.5mm 0;break-inside:avoid}
+.flow .n{flex:1;background:#fff;border:1.5px solid #e4dcfb;border-radius:4mm;padding:3mm 2.5mm;text-align:center;font-size:9pt;line-height:1.5;position:relative}
+.flow .n .e{font-size:15pt;display:block;margin-bottom:1mm}
+.flow .n b{font-family:'Cairo';font-size:9.8pt;display:block}
+.flow .a{flex:none;width:6mm;display:flex;align-items:center;justify-content:center;color:var(--p);font-size:13pt;font-weight:700}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:3mm;margin:2.5mm 0}
+.tile{border:1px solid var(--line);border-radius:4mm;padding:2.6mm 3.5mm;background:#fff;break-inside:avoid}
+.tile h4{margin:0 0 1mm;display:flex;gap:2mm;align-items:center}
+.tile p{margin:0;font-size:9.8pt;color:#433d5c}
+
+.toc{columns:2;column-gap:10mm;margin-top:4mm}
+.toc .it{display:flex;gap:3mm;align-items:center;padding:2.2mm 0;border-bottom:1px dashed #e6e1f3;break-inside:avoid}
+.toc .it .n{flex:none;width:9mm;height:9mm;border-radius:3mm;background:#f1eefb;color:var(--v);font-family:'Cairo';font-weight:800;display:flex;align-items:center;justify-content:center}
+.toc .it b{font-family:'Cairo';font-size:11pt;display:block}
+.toc .it span{font-size:8.8pt;color:var(--muted)}
+
+.badge{display:inline-block;border-radius:20px;padding:0 3mm;font-size:8.8pt;font-family:'Cairo';font-weight:700}
+.b-ok{background:#d1fae5;color:#065f46}.b-no{background:#fee2e2;color:#991b1b}.b-w{background:#fef3c7;color:#92400e}
+
+.back{page:back;height:297mm;width:210mm;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  background:radial-gradient(circle at 20% 20%,rgba(249,115,22,.45),transparent 45%),linear-gradient(200deg,#1e0b4b,#4c1d95 55%,#86198f)}
+.back h2{font-size:24pt;font-weight:800;margin-top:8mm}
+.back p{color:#ede9fe;max-width:130mm;margin-top:4mm}
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<section class="cover">
+  <div class="grid"></div>
+  <div class="ring" style="width:150mm;height:150mm;left:-50mm;top:-40mm"></div>
+  <div class="ring" style="width:110mm;height:110mm;right:-40mm;bottom:40mm"></div>
+  <div class="inner">
+    <div class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" fill="#fff"/></svg></div>
+    <div class="kicker">دليل الاستخدام الكامل · الإصدار 1.7.0 · سبتمبر 2026</div>
+    <h1>دليل استخدام<span class="en">HSN AutoReply</span></h1>
+    <div class="sub">كل ما تحتاج تعرفه من أول تسجيل دخول إلى آخر فائز:<br>أتمتة الردود على إنستقرام، الحملات، الرسائل، السحوبات وبطاقات التهنئة — بشرح بسيط خطوة بخطوة.</div>
+    <div class="chips">
+      <span class="chip">🎯 حملات تلقائية</span><span class="chip">📥 صندوق رسائل</span><span class="chip">🎁 سحوبات عادلة</span><span class="chip">🎨 بطاقات تهنئة</span><span class="chip">🔒 Meta الرسمي فقط</span>
+    </div>
+    <div class="foot">
+      <div><b>HSN AutoReply</b><br>أتمتة إنستقرام عبر واجهة Meta الرسمية</div>
+    </div>
+  </div>
+  <div class="phone"><img src="shots/stage_reveal.png"></div>
+</section>
+
+<!-- ============ TOC ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">☰</div><div><h2>المحتويات</h2><div class="lead">اقرأ الدليل بالترتيب أول مرة، وبعدها ارجع لأي قسم وقت ما تحتاجه.</div></div></div>
+  <div class="toc">
+    <div class="it"><div class="n">1</div><div><b>ما هو HSN AutoReply؟</b><span>الفكرة وكيف يشتغل النظام</span></div></div>
+    <div class="it"><div class="n">2</div><div><b>البداية</b><span>المتطلبات، التثبيت، تسجيل الدخول</span></div></div>
+    <div class="it"><div class="n">3</div><div><b>ربط حساب إنستقرام</b><span>الربط الرسمي وحالاته</span></div></div>
+    <div class="it"><div class="n">4</div><div><b>الرئيسية (لوحة التحكم)</b><span>الحالة، الاستهلاك، الاسترجاع</span></div></div>
+    <div class="it"><div class="n">5</div><div><b>الحملات</b><span>المعالج خطوة بخطوة والإحصائيات</span></div></div>
+    <div class="it"><div class="n">6</div><div><b>المنشورات والقوالب</b><span>اختيار المحتوى والنصوص الجاهزة</span></div></div>
+    <div class="it"><div class="n">7</div><div><b>الرسائل</b><span>صندوق المحادثات والرد اليدوي</span></div></div>
+    <div class="it"><div class="n">8</div><div><b>السحوبات</b><span>اختيار الفائزين والفيديو والتصدير</span></div></div>
+    <div class="it"><div class="n">9</div><div><b>بطاقات التهنئة</b><span>التصميم، الشعار، الإرسال للفائز</span></div></div>
+    <div class="it"><div class="n">10</div><div><b>المحاكاة والسجل</b><span>التجربة الآمنة ومراجعة ما حدث</span></div></div>
+    <div class="it"><div class="n">11</div><div><b>الإعدادات والإشعارات</b><span>كل خيار وش معناه</span></div></div>
+    <div class="it"><div class="n">12</div><div><b>قواعد Meta والحدود المجانية</b><span>المسموح والممنوع</span></div></div>
+    <div class="it"><div class="n">13</div><div><b>الأمان والخصوصية</b><span>كيف تُحفظ بياناتك</span></div></div>
+    <div class="it"><div class="n">14</div><div><b>أسئلة شائعة وحل المشاكل</b><span>أشهر المواقف وحلها</span></div></div>
+    <div class="it"><div class="n">15</div><div><b>قاموس المصطلحات</b><span>كلمات تمر عليك في التطبيق</span></div></div>
+  </div>
+  <div class="callout info" style="margin-top:8mm"><div class="ic">💡</div><div><b class="t">كيف تقرأ هذا الدليل؟</b><p>المربعات الخضراء <b>نصائح</b>، والصفراء <b>تنبيهات</b> مهمة، والحمراء <b>أشياء لازم تنتبه لها</b> عشان تحمي حسابك. أسماء الأزرار مكتوبة مثل ما تظهر في التطبيق بين «علامتي تنصيص».</p></div></div>
+</section>
+
+<!-- ============ 1 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">1</div><div><h2>ما هو HSN AutoReply؟</h2><div class="lead">مساعد يرد عنك في إنستقرام ٢٤ ساعة — بدون ما تعطيه كلمة المرور.</div></div></div>
+  <p>HSN AutoReply نظام أتمتة لحساب إنستقرام الاحترافي. تكتب «حملة» مرة وحدة (مثلًا: «أي أحد يعلّق بكلمة <b>كورس</b> أرسل له الرابط في الخاص»)، والنظام يتابع التعليقات والرسائل ويرد تلقائيًا حتى وأنت نايم أو جوالك مقفل — لأنه يشتغل على خادم سحابي وليس على جوالك.</p>
+  <h3>وش يقدر يسوي؟</h3>
+  <div class="grid2">
+    <div class="tile"><h4>🎯 الرد على التعليقات</h4><p>رد خاص تلقائي لمن يعلّق بكلمة معيّنة، مع رد عام تحت تعليقه بصيغ متنوعة.</p></div>
+    <div class="tile"><h4>📲 ردود ومنشن الستوري</h4><p>يرد على من يرد على ستوريك أو يسوي لك منشن فيه.</p></div>
+    <div class="tile"><h4>✅ شرط المتابعة (اختياري)</h4><p>يتحقق رسميًا من Meta إذا الشخص يتابعك قبل ما يرسل المحتوى.</p></div>
+    <div class="tile"><h4>🔗 تتبّع الضغط على الرابط</h4><p>تعرف كم شخص فتح الرابط اللي أرسلته فعلًا.</p></div>
+    <div class="tile"><h4>📥 صندوق الرسائل</h4><p>كل المحادثات في مكان واحد مع صور الأشخاص، وترد يدويًا من التطبيق.</p></div>
+    <div class="tile"><h4>🎁 السحوبات</h4><p>اختيار فائزين عشوائي عادل من التعليقات أو ردود الستوري، مع عرض احتفالي وفيديو.</p></div>
+    <div class="tile"><h4>🎨 بطاقات التهنئة</h4><p>تصمم بطاقة فوز بشعارك وجوائزك وترسلها للفائز.</p></div>
+    <div class="tile"><h4>🔔 إشعارات تيليجرام</h4><p>تقرير يومي وتنبيهات لو صار انقطاع أو تفاعل كبير.</p></div>
+  </div>
+  <h3>كيف يشتغل المسار؟ (مثال حملة تعليقات)</h3>
+  <div class="flow">
+    <div class="n"><span class="e">💬</span><b>تعليق</b>شخص يكتب «أبغى الكورس»</div><div class="a">←</div>
+    <div class="n"><span class="e">📩</span><b>رد خاص</b>رسالة ترحيب في الخاص + رد عام تحت التعليق</div><div class="a">←</div>
+    <div class="n"><span class="e">👆</span><b>«ابدأ»</b>الشخص يرد أو يضغط الزر</div><div class="a">←</div>
+    <div class="n"><span class="e">🔍</span><b>تحقق</b>إذا فعّلت شرط المتابعة</div><div class="a">←</div>
+    <div class="n"><span class="e">🎁</span><b>المحتوى</b>يوصله الرابط كزر يُفتح دائمًا</div>
+  </div>
+  <p>ليش خطوة «ابدأ»؟ لأن إنستقرام يسمح للحسابات التجارية برد خاص <b>واحد</b> فقط على التعليق. لما يرد الشخص، تنفتح محادثة رسمية مدتها ٢٤ ساعة ويقدر النظام يكمل معه (يتحقق من المتابعة ويرسل المحتوى).</p>
+  <div class="callout tip"><div class="ic">✅</div><div><b class="t">ما نطلب كلمة مرور إنستقرام أبدًا</b><p>الربط يتم عبر صفحة Meta الرسمية فقط (Instagram API with Instagram Login). النظام لا يسوي «scraping» ولا يستخدم طرق غير رسمية، وهذا يحمي حسابك من الحظر.</p></div></div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">2</div><div><h2>البداية</h2><div class="lead">ثلاث خطوات: جهّز الحساب، ثبّت التطبيق، سجّل دخول.</div></div></div>
+  <h3>المتطلبات</h3>
+  <ul>
+    <li><b>حساب إنستقرام احترافي</b> (Business أو Creator). الحساب الشخصي ما يدعم الأتمتة الرسمية. تقدر تحوله من إعدادات إنستقرام › نوع الحساب.</li>
+    <li>في إعدادات إنستقرام › الرسائل: فعّل <b>«السماح بالوصول إلى الرسائل»</b> للأدوات المتصلة (Connected tools).</li>
+    <li>تطبيق Meta مضبوط على الخادم (يسويه مسؤول النظام مرة وحدة).</li>
+  </ul>
+  <h3>التثبيت — اختر اللي يناسبك</h3>
+  <div class="row">
+    <div class="tile"><h4>🤖 أندرويد (APK)</h4><p>من صفحة «تنزيل التطبيق» نزّل ملف <code>hsn-autoreply-vX.Y.Z.apk</code> وثبّته (اسمح بالتثبيت من هذا المصدر عند الطلب). التحديثات تنثبت فوق النسخة الحالية بدون ما تضيع بياناتك.</p></div>
+    <div class="tile"><h4>🌐 نسخة الويب (PWA)</h4><p>افتح رابط الموقع في المتصفح واختر «إضافة إلى الشاشة الرئيسية». تشتغل على الآيفون والكمبيوتر وأي جوال.</p></div>
+  </div>
+  <h3>تسجيل الدخول</h3>
+  <p>الدخول يكون بحساب <b>إدارة التطبيق</b> (اسم مستخدم وكلمة مرور خاصة بالتطبيق) — وليس حساب إنستقرام.</p>
+  <div class="callout warn"><div class="ic">⚠️</div><div><b class="t">حماية من التخمين</b><p>بعد محاولات دخول خاطئة كثيرة يتقفل الدخول مؤقتًا (حتى ١٥ دقيقة). انتظر وحاول مرة ثانية.</p></div></div>
+  <h3>القائمة الرئيسية</h3>
+  <table>
+    <tr><th>القسم</th><th>وش فيه؟</th></tr>
+    <tr><td class="k">🏠 الرئيسية</td><td>حالة النظام، الاستهلاك اليومي، الاسترجاع، الأرقام العامة.</td></tr>
+    <tr><td class="k">🎯 الحملات</td><td>إنشاء وإدارة الحملات وإحصائيات كل حملة.</td></tr>
+    <tr><td class="k">🎁 السحوبات</td><td>السحب العشوائي وتصاميم بطاقات التهنئة.</td></tr>
+    <tr><td class="k">📥 الرسائل</td><td>كل المحادثات والرد اليدوي.</td></tr>
+    <tr><td class="k">📜 السجل</td><td>كل عملية نفذها النظام ونتيجتها.</td></tr>
+    <tr><td class="k">🧪 المحاكاة</td><td>تجربة الحملات بدون إرسال أي شيء حقيقي.</td></tr>
+    <tr><td class="k">🔗 الربط</td><td>ربط حساب إنستقرام وتشخيصه.</td></tr>
+    <tr><td class="k">🖼️ المنشورات والستوري</td><td>منشوراتك وستورياتك المجلوبة من إنستقرام.</td></tr>
+    <tr><td class="k">🧩 القوالب</td><td>نصوص جاهزة تستخدمها في الحملات.</td></tr>
+    <tr><td class="k">⚙️ الإعدادات</td><td>الإعدادات العامة، الإشعارات، النسخ الاحتياطي.</td></tr>
+  </table>
+</section>
+
+<!-- ============ 3 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">3</div><div><h2>ربط حساب إنستقرام</h2><div class="lead">أول شيء تسويه بعد الدخول — بدونه ما يشتغل شيء.</div></div></div>
+  <ol class="steps">
+    <li><b class="s">افتح «🔗 الربط»</b>واضغط «ربط حساب إنستقرام».</li>
+    <li><b class="s">سجّل دخولك في صفحة Meta الرسمية</b>تنفتح صفحة إنستقرام نفسها — كلمة المرور تكتبها هناك وليس في تطبيقنا.</li>
+    <li><b class="s">وافق على الصلاحيات</b>لا تشيل أي صلاحية؛ كل وحدة لها دور (الجدول تحت).</li>
+    <li><b class="s">ترجع للتطبيق تلقائيًا</b>وتشوف اسم حسابك وحالة «مفوَّض ✅».</li>
+  </ol>
+  <h3>الصلاحيات ولماذا نحتاجها</h3>
+  <table>
+    <tr><th>الصلاحية</th><th>الفائدة</th></tr>
+    <tr><td class="k"><span class="ltr">instagram_business_basic</span></td><td>قراءة ملفك الأساسي ومنشوراتك وستورياتك.</td></tr>
+    <tr><td class="k"><span class="ltr">instagram_business_manage_messages</span></td><td>الرسائل الخاصة والردود الخاصة والتحقق من المتابعة وصور الأشخاص.</td></tr>
+    <tr><td class="k"><span class="ltr">instagram_business_manage_comments</span></td><td>قراءة التعليقات والرد العام عليها وجلب مشاركات السحب.</td></tr>
+  </table>
+  <h3>وش تعني الحالات والأزرار؟</h3>
+  <table>
+    <tr><th>العنصر</th><th>المعنى</th></tr>
+    <tr><td class="k">حالة التفويض</td><td><span class="badge b-ok">فعّال</span> كل شيء تمام. <span class="badge b-no">منتهي</span> اضغط «تجديد التفويض» أو «إعادة الاتصال».</td></tr>
+    <tr><td class="k">Webhooks</td><td>هي «الجرس» اللي تدقه Meta لما يصير تعليق أو رسالة. لو ما وصلت أحداث، اضغط «إعادة اشتراك Webhooks».</td></tr>
+    <tr><td class="k">آخر حدث وصل</td><td>آخر مرة وصل فيها تنبيه من إنستقرام — مفيد للتأكد أن الربط شغال.</td></tr>
+    <tr><td class="k">التحقق من المتابعة</td><td>هل الميزة متاحة لحسابك (تتأكد بعد أول تجربة حقيقية).</td></tr>
+    <tr><td class="k">تشخيص الربط</td><td>فحص شامل يطلع لك وش الناقص بالضبط.</td></tr>
+    <tr><td class="k">فصل الحساب</td><td>يوقف الأتمتة ويحذف التفويض من الخادم.</td></tr>
+  </table>
+  <div class="callout tip"><div class="ic">🔄</div><div><b class="t">التجديد تلقائي</b><p>تفويض إنستقرام يتجدد تلقائيًا قبل انتهائه. وإذا انقطع لأي سبب يوصلك تنبيه (لو فعّلت إشعارات تيليجرام).</p></div></div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">4</div><div><h2>الرئيسية (لوحة التحكم)</h2><div class="lead">نظرة سريعة: هل كل شيء شغال؟ وكم استهلكت اليوم؟</div></div></div>
+  <figure class="fig"><img src="shots/dashboard_main.png" style="width:58%"><figcaption>لوحة التحكم: المفتاح الشامل، حالة الربط، الاستهلاك، واسترجاع التعليقات.</figcaption></figure>
+  <table>
+    <tr><th>الجزء</th><th>الشرح</th></tr>
+    <tr><td class="k">الأتمتة تعمل ✅</td><td>مفتاح <b>إيقاف شامل</b>: لو أطفأته يتوقف النظام عن معالجة أي حدث جديد ويلغي الرسائل المعلّقة. استخدمه في الطوارئ.</td></tr>
+    <tr><td class="k">حالة الربط</td><td>الحساب المتصل وحالة التفويض و Webhooks وآخر حدث.</td></tr>
+    <tr><td class="k">الطلبات</td><td>كل مرة يتواصل فيها أي شيء مع الخادم (تنبيه من إنستقرام، فتح صفحة، ضغط رابط). الحد المجاني ١٠٠ ألف يوميًا.</td></tr>
+    <tr><td class="k">الكتابة في قاعدة البيانات</td><td>كل مرة يحفظ النظام معلومة (تعليق، رسالة، حالة). الحد المجاني ١٠٠ ألف يوميًا.</td></tr>
+    <tr><td class="k">استرجاع التعليقات الفائتة</td><td>لو فات تنبيه تعليق (انقطاع أو بلوغ الحد) يقرأ النظام آخر التعليقات ويرد على المطابق اللي ما انرد عليه. تلقائي كل ساعة، أو اضغط «استرجع الآن». لا يرد على نفس التعليق مرتين.</td></tr>
+    <tr><td class="k">البطاقات الرقمية</td><td>تعليقات مستلمة، ردود ستوري، رسائل قبلت Meta إرسالها، محتوى سُلِّم، بانتظار التفاعل/المتابعة، فشل، معلّقة.</td></tr>
+  </table>
+  <div class="callout info"><div class="ic">ℹ️</div><div><b class="t">«قبلت Meta الإرسال» ≠ «قرأ الرسالة»</b><p>النظام يعرف أن إنستقرام استلم الرسالة، لكن ما يعرف إذا الشخص فتحها. ولو وصل الاستهلاك ١٠٠٪ تتوقف الردود مؤقتًا <b>بدون أي رسوم</b> وتكمل بعد التجديد (الساعة ٣ الفجر بتوقيت السعودية)، والتعليقات الفائتة تُسترجع تلقائيًا خلال ٧ أيام.</p></div></div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">5</div><div><h2>الحملات</h2><div class="lead">قلب النظام: تحدد متى يرد، وعلى مين، وبإيش.</div></div></div>
+  <h3>أنواع الحملات</h3>
+  <div class="grid2" style="grid-template-columns:1fr 1fr 1fr">
+    <div class="tile"><h4>💬 تعليق</h4><p>على منشور أو ريل (محدد أو كل المنشورات).</p></div>
+    <div class="tile"><h4>↩️ رد على ستوري</h4><p>لما أحد يرد على ستوريك في الخاص.</p></div>
+    <div class="tile"><h4>📣 منشن في ستوري</h4><p>لما أحد يذكرك في ستوريه. ما تحتاج كلمات.</p></div>
+  </div>
+  <h3>المعالج — ١٣ خطوة ببساطة</h3>
+  <table>
+    <tr><th style="width:30%">الخطوة</th><th>وش تسوي فيها</th></tr>
+    <tr><td class="k">1. اسم الحملة</td><td>اسم داخلي لك فقط، مثل «ريلز الكورس».</td></tr>
+    <tr><td class="k">2. نوع الحدث</td><td>تعليق / رد ستوري / منشن ستوري.</td></tr>
+    <tr><td class="k">3. نطاق التشغيل</td><td>كل المنشورات أو منشورات محددة (تختارها من الصور). خيار «اربط تلقائيًا كل منشور/ريل جديد» يضم أي منشور تنشره لاحقًا (مع خيار «الريلز فقط»).</td></tr>
+    <tr><td class="k">4. الكلمات والشروط</td><td>كلمات التشغيل: <b>يحتوي</b> (تظهر في أي مكان) أو <b>كلمة كاملة</b>. أو «جميع التعليقات». المطابقة تتجاهل التشكيل والتطويل والإيموجي، وتوحّد أ/إ/آ اختياريًا. وفيه «اختبار المطابقة» تكتب تعليق تجريبي وتشوف هل يطابق.</td></tr>
+    <tr><td class="k">5. استثناءات المطابقة</td><td>كلمات لو وجدت ما يرد (مثل «سعر» لو تبغى ترد عليها يدويًا).</td></tr>
+    <tr><td class="k">6. شرط المتابعة</td><td>اختياري: يتحقق من Meta هل الشخص يتابعك قبل المحتوى (اقرأ التنبيه تحت).</td></tr>
+    <tr><td class="k">7. الرسالة التمهيدية</td><td>الرد الخاص الأول على التعليق — بدون المحتوى، ويطلب من الشخص يرد «ابدأ».</td></tr>
+    <tr><td class="k">8. طلب المتابعة وإعادة التحقق</td><td>رسالة «تابعنا ثم اضغط تحقّق»، تذكير لطيف، رسالة تعذر التحقق، تذكير تلقائي لمن لم يتابع، حد المحاولات والفاصل بينها.</td></tr>
+    <tr><td class="k">9. المحتوى النهائي</td><td>النص + رابط المحتوى. استخدم <code>{{content_url}}</code> مكان الرابط. الرابط يوصل كزر «فتح الرابط 🔗» يُفتح دائمًا. «تتبّع الضغط» يعد كم شخص فتحه.</td></tr>
+    <tr><td class="k">10. الرد العام</td><td>رد تحت التعليق. اكتب كل صيغة في سطر (حتى ٢٠) ويتناوب النظام بينها عشان ما يتكرر نفس الرد.</td></tr>
+    <tr><td class="k">11. الجدول والأولوية والتكرار</td><td>وقت التشغيل، الأولوية (لو طابقت أكثر من حملة تشتغل الأعلى فقط)، الفاصل لكل مستخدم، وأقصى تسليم لكل شخص.</td></tr>
+    <tr><td class="k">12. المعاينة والمحاكاة</td><td>تشوف شكل الرسائل وتجرب الحملة بدون إرسال حقيقي.</td></tr>
+    <tr><td class="k">13. التفعيل</td><td>تبدأ الحملة. تعالج التعليقات <b>الجديدة من لحظة التفعيل</b> فقط.</td></tr>
+  </table>
+</section>
+
+<section class="page">
+  <figure class="fig"><img src="shots/wizard.png" style="width:44%"><figcaption>معالج الحملة: الخطوات يمين، ومعاينة حيّة لشكل الرسائل على الجوال.</figcaption></figure>
+  <h3>المتغيرات داخل الرسائل</h3>
+  <table>
+    <tr><th>المتغير</th><th>يتحول إلى</th></tr>
+    <tr><td class="k"><code>{{content_url}}</code></td><td>رابط المحتوى (يوصل كزر).</td></tr>
+    <tr><td class="k"><code>{{account_link}}</code></td><td>رابط حسابك في إنستقرام (مفيد في طلب المتابعة).</td></tr>
+    <tr><td class="k"><code>{{username}}</code></td><td>اسم مستخدم الشخص.</td></tr>
+  </table>
+  <h3>بطاقة الحملة والإحصائيات</h3>
+  <p>من صفحة «الحملات» كل حملة لها بطاقة فيها زر «📊 إحصائيات» وقائمة ⋮ (تعديل، إيقاف، نسخ، حذف). ومن ⋮ تقدر تسوي <b>«🎬 نسخ الحملة لريل جديد»</b>: نفس الإعدادات على منشور جديد ومفعّلة مباشرة.</p>
+  <table>
+    <tr><th>الرقم في الإحصائيات</th><th>المعنى</th></tr>
+    <tr><td class="k">التعليقات المستلمة</td><td>كل تعليق وصل على منشورات الحملة.</td></tr>
+    <tr><td class="k">أشخاص تفاعلوا</td><td>عدد الأشخاص المختلفين اللي طابقوا.</td></tr>
+    <tr><td class="k">وصلتهم الرسالة</td><td>قبلت Meta إرسال الرسالة لهم.</td></tr>
+    <tr><td class="k">تابعوا بسبب الحملة</td><td>كانوا غير متابعين ثم تابعوا أثناء المسار (متابعون جدد).</td></tr>
+    <tr><td class="k">كانوا متابعين أصلًا</td><td>متابعين قبل التعليق.</td></tr>
+    <tr><td class="k">استلموا المحتوى</td><td>وصلهم الرابط النهائي.</td></tr>
+    <tr><td class="k">ضغطوا الرابط</td><td>فتحوا الرابط فعلًا (إذا فعّلت التتبع).</td></tr>
+    <tr><td class="k">أين توقف الباقون؟</td><td>ينتظرون «ابدأ»، ينتظرون المتابعة، أو تعذر التحقق — مع أسماء الأشخاص.</td></tr>
+  </table>
+  <div class="row" style="gap:3mm">
+  <div class="callout danger" style="margin:0"><div class="ic">🚩</div><div><b class="t">تنبيه مهم عن «شرط المتابعة»</b><p>معايير Meta ضد الرسائل المزعجة (Spam) تمنع <b>إلزام</b> الناس بالمتابعة أو التفاعل مقابل محتوى حصري. الميزة موجودة كخيار، لكن استخدامها على مسؤوليتك، ولازم تعيد النظر فيها قبل تقديم التطبيق لمراجعة Meta أو استخدامه تجاريًا على نطاق واسع. البديل الآمن: اطلب المتابعة كاقتراح لطيف بدون ما توقف المحتوى عليها.</p></div></div>
+  <div class="callout tip" style="margin:0"><div class="ic">💡</div><div><b class="t">نصائح لحملة ناجحة</b><p>• خلك واضح في المنشور: «علّق بكلمة كورس ويوصلك الرابط». • استخدم كلمة قصيرة وسهلة. • فعّل عدة صيغ للرد العام. • جرّب في «المحاكاة» قبل التفعيل. • تابع «أين توقف الباقون؟» لتحسين رسائلك.</p></div></div>
+  </div>
+</section>
+
+<section class="page" style="break-before:auto">
+  <h3>مثال عملي كامل: حملة «ريلز الكورس»</h3>
+  <table>
+    <tr><th style="width:30%">الخطوة</th><th>القيمة</th></tr>
+    <tr><td class="k">الاسم</td><td>ريلز الكورس</td></tr>
+    <tr><td class="k">النوع</td><td>تعليق</td></tr>
+    <tr><td class="k">النطاق</td><td>منشورات محددة → اختر الريل (أو «جميع المنشورات»)</td></tr>
+    <tr><td class="k">الكلمات</td><td><code>كورس</code> (يحتوي) · <code>course</code> (كلمة كاملة)</td></tr>
+    <tr><td class="k">الاستثناءات</td><td><code>سعر</code></td></tr>
+    <tr><td class="k">الرسالة التمهيدية</td><td>«حياك الله 🙌 رد بكلمة ابدأ عشان أرسل لك الرابط.»</td></tr>
+    <tr><td class="k">المحتوى</td><td>«تفضل 🎁 {{content_url}}» + رابط الكورس، مع تتبّع الضغط</td></tr>
+    <tr><td class="k">الرد العام (صيغ متناوبة)</td><td>«شيّك الخاص 🙌» · «أرسلنا لك التفاصيل في الخاص ✨» · «تم، شوف رسائلك 💬»</td></tr>
+    <tr><td class="k">التكرار</td><td>فاصل 24 ساعة، وتسليم واحد لكل شخص</td></tr>
+  </table>
+  <p><b>النتيجة:</b> شخص يكتب «أبغى الكورس» ← يوصله رد خاص تمهيدي + رد عام تحت تعليقه ← يرد «ابدأ» ← يوصله الرابط كزر يُفتح مباشرة، وتشوفه في الإحصائيات ضمن «استلموا المحتوى» و«ضغطوا الرابط».</p>
+  <h3>أمثلة سريعة لأنواع أخرى</h3>
+  <div class="grid2">
+    <div class="tile"><h4>↩️ حملة ردود الستوري</h4><p>النطاق «جميع ردود الستوري»، الكلمة «ابغى» أو «جميع الردود». يوصل المحتوى مباشرة داخل المحادثة لأن الشخص راسلك أصلًا.</p></div>
+    <div class="tile"><h4>📣 حملة منشن الستوري</h4><p>بدون كلمات. رسالة شكر مثل «تسلم على المنشن 🙌 هذه هديتنا لك: {{content_url}}» مع فاصل 24–72 ساعة لكل شخص.</p></div>
+  </div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">6</div><div><h2>المنشورات والقوالب</h2><div class="lead">المواد اللي تستخدمها الحملات.</div></div></div>
+  <h3>🖼️ المنشورات والستوري</h3>
+  <p>النظام يجلب قائمة منشوراتك وريلزك وستورياتك الحالية من إنستقرام عشان تختار منها في الحملات والسحوبات. يُحفظ فقط المعاينة والبيانات الوصفية — <b>الفيديوهات لا تُخزَّن</b>. إذا نشرت شيء جديد ومو ظاهر، اضغط زر التحديث.</p>
+  <div class="callout info"><div class="ic">ℹ️</div><div><p>الستوري يختفي من إنستقرام بعد ٢٤ ساعة؛ لذلك حملات «رد على ستوري» الأفضل تكون على «جميع ردود الستوري».</p></div></div>
+  <h3>🧩 القوالب</h3>
+  <p>نصوص جاهزة تكتبها مرة وحدة (ترحيب، طلب متابعة، محتوى، رد عام…) وتدرجها في أي حملة بضغطة من زر «إدراج قالب». وفيه «إضافة قالب كصيغة» للردود العامة المتناوبة.</p>
+  <figure class="fig"><img src="shots/templates.png" style="width:55%"><figcaption>صفحة القوالب.</figcaption></figure>
+
+  <div class="chapter" style="margin-top:8mm"><div class="num">7</div><div><h2>الرسائل</h2><div class="lead">كل محادثات الخاص في مكان واحد.</div></div></div>
+  <ul>
+    <li>تظهر كل المحادثات: الرسائل الواردة، الردود التلقائية 🤖، ردودك من تطبيق إنستقرام 📱، وردودك من هنا ✍️.</li>
+    <li><b>صور الأشخاص</b> تنجاب من Meta الرسمي للأشخاص اللي راسلوك، وتتحدث كل يومين. لو ما توفرت يظهر أول حرف من الاسم.</li>
+    <li>عداد غير المقروء بجانب كل محادثة، وبحث باسم الحساب.</li>
+    <li>داخل المحادثة تشوف الحملات اللي مر فيها الشخص وحالة متابعته.</li>
+  </ul>
+  <div class="callout warn"><div class="ic">⏱️</div><div><b class="t">قاعدة الـ ٢٤ ساعة</b><p>الرد اليدوي متاح فقط خلال ٢٤ ساعة من <b>آخر رسالة أرسلها الشخص</b>. التطبيق يعرض الوقت المتبقي، وبعده يتعطل الإرسال حتى يراسلك الشخص من جديد. (هذه قاعدة إنستقرام لكل الأنظمة الخارجية.)</p></div></div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">8</div><div><h2>السحوبات</h2><div class="lead">اختيار فائزين عادل وشفاف — مع عرض احتفالي تقدر تسجله فيديو.</div></div></div>
+  <ol class="steps">
+    <li><b class="s">«+ سحب جديد»</b>اختر الحملة (للتنظيم)، والمصدر: «منشور أو ريلز» أو «ردود ستوري»، واسم السحب وعدد الفائزين.</li>
+    <li><b class="s">«جلب المشاركات»</b>يجلب التعليقات (والردود عليها إذا فعّلت) من Meta على دفعات. تقدر توقف وتكمل.</li>
+    <li><b class="s">الإعدادات</b>فترة المشاركات، كلمة لازم تكون موجودة، حسابات مستبعدة، استبعاد حسابك، استبعاد فائزين سابقين، وطريقة الاحتساب.</li>
+    <li><b class="s">المعاينة</b>تشوف كل المشاركات: المؤهلة والمستبعدة وسبب الاستبعاد، وتقدر تستبعد أي حساب بضغطة.</li>
+    <li><b class="s">«🎲 اختر الفائز الأول»</b>ثم الثاني، الثالث… كل فائز بضغطة مستقلة.</li>
+  </ol>
+  <table>
+    <tr><th>طريقة الاحتساب</th><th>المعنى</th></tr>
+    <tr><td class="k">فرصة واحدة لكل شخص</td><td>مهما علّق، كل حساب له فرصة وحدة — الأعدل غالبًا.</td></tr>
+    <tr><td class="k">كل تعليق فرصة</td><td>اللي يعلّق أكثر تزيد فرصه بعدد تعليقاته المؤهلة.</td></tr>
+  </table>
+  <div class="row">
+    <figure class="fig" style="flex:.9"><img src="shots/stage_reel.png" style="width:100%"><figcaption>قائمة الأسماء تطلع وتنزل وتثبت على الفائز عند السهمين.</figcaption></figure>
+    <figure class="fig" style="flex:.9"><img src="shots/stage_reveal.png" style="width:100%"><figcaption>كشف الفائز مع ألعاب نارية وأصوات.</figcaption></figure>
+    <div style="flex:1.2">
+      <h4>🎬 شاشة الاختيار</h4>
+      <p class="small">عد تنازلي ٣-٢-١، ثم كل أسماء المؤهلين في قائمة تتحرك للأعلى والأسفل والوسط، وتثبت على الفائز. <b>كل مركز بحركة مختلفة</b>: اكتساح، دوران سلوت، قفزات، بندول.</p>
+      <h4>🔴 تسجيل الفيديو</h4>
+      <p class="small">فعّل «🎥 تسجيل فيديو لحظة الاختيار» (بمقاس الستوري 9:16). أثناء العرض يظهر مؤشر التسجيل على الجنب، وبعد الكشف زر 🎥 لحفظ الفيديو مع الصوت — جاهز تنشره ستوري. بعد الإغلاق يبقى زر «حفظ فيديو آخر اختيار».</p>
+      <h4>🔊 الصوت</h4>
+      <p class="small">زر كتم/تشغيل على جنب الشاشة.</p>
+    </div>
+  </div>
+</section>
+
+<section class="page">
+  <div class="callout tip"><div class="ic">🔐</div><div><b class="t">لماذا السحب عادل؟</b><p>الاختيار يتم على الخادم بمولّد أرقام عشوائية آمن، والفائز يُحفظ <b>قبل</b> بداية الحركة — الحركة للعرض فقط. الضغط المتكرر ما يختار فائز إضافي، وبعد أول فائز تتجمد الإعدادات والمشاركات فما يقدر أحد يغيرها.</p></div></div>
+  <h3>بعد الاختيار</h3>
+  <table>
+    <tr><th>الأداة</th><th>الشرح</th></tr>
+    <tr><td class="k">🔁 استبدال</td><td>لو الفائز مخالف (حساب وهمي مثلًا) تستبدله بفائز جديد مع كتابة السبب. النتيجة القديمة تبقى محفوظة في «سجل الاستبدال».</td></tr>
+    <tr><td class="k">🖼️ البطاقة</td><td>تفتح بطاقة التهنئة للفائز (القسم التالي).</td></tr>
+    <tr><td class="k">⬇️ CSV / PDF</td><td>تصدير النتائج: ملف جدول أو PDF عربي فيه الفائزين والإعدادات وسجل الاستبدال.</td></tr>
+    <tr><td class="k">🗑️ حذف / مسح السجل</td><td>في «سجل السحوبات» زر 🗑️ جنب كل سحب، و«مسح السجل» يحذف الكل بعد كتابة كلمة «مسح». المحذوف ما يُحسب في «استبعاد الفائزين السابقين».</td></tr>
+  </table>
+  <figure class="fig"><img src="shots/draw_page.png" style="width:58%"><figcaption>صفحة السحب: الجلب، الإعدادات، المعاينة.</figcaption></figure>
+  <div class="callout info"><div class="ic">ℹ️</div><div><b class="t">حدود جلب التعليقات</b><p>الجلب رسمي من Meta ويشتغل بدفعات. للمنشورات الكبيرة جدًا خذ وقتك في «جلب المشاركات» حتى تظهر «مكتمل ✅». تعليقات الستوري العامة غير متاحة في واجهة Meta — لذلك سحب الستوري يكون على <b>الردود</b> اللي وصلتك في الخاص.</p></div></div>
+</section>
+
+<!-- ============ 9 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">9</div><div><h2>بطاقات التهنئة</h2><div class="lead">صمّم بطاقة الفوز مرة وحدة، واستخدمها في أي سحب.</div></div></div>
+  <div class="cards3">
+    <figure><img src="shots/card_royal_gold_portrait.jpg"><figcaption class="cap">فاخر · ذهبي</figcaption></figure>
+    <figure><img src="shots/card_modern_night_portrait.jpg"><figcaption class="cap">عصري · ليلي</figcaption></figure>
+    <figure><img src="shots/card_festive_violet_portrait.jpg"><figcaption class="cap">احتفالي · بنفسجي</figcaption></figure>
+  </div>
+  <p>من «السحوبات» › تبويب <b>«🎨 تصاميم التهنئة»</b> › «+ تصميم جديد». المعاينة تتحدث مباشرة مع كل تعديل، وتقدر تغيّر «المركز» فوقها (١ إلى ١٠) عشان تشوف جائزة كل مركز.</p>
+  <table>
+    <tr><th style="width:28%">الخيار</th><th>الشرح</th></tr>
+    <tr><td class="k">الشكل</td><td>فاخر (إطار وزخارف) · عصري (رقم كبير وكتل ملونة) · احتفالي (قصاصات وأشعة).</td></tr>
+    <tr><td class="k">الخط</td><td>Cairo · Reem Kufi · Lalezar · IBM Plex — خطوط مدمجة تطلع نفسها على كل الأجهزة.</td></tr>
+    <tr><td class="k">المقاس</td><td>منشور طولي 4:5 · مربع 1:1 · ستوري 9:16.</td></tr>
+    <tr><td class="k">الألوان والخلفية</td><td>٧ ثيمات جاهزة أو ألوانك، وصورة خلفية اختيارية مع التعتيم.</td></tr>
+    <tr><td class="k">🏷️ الشعار</td><td>ارفع شعارك (PNG شفاف أفضل) ثم <b>اسحبه بإصبعك على المعاينة</b> للمكان اللي تبيه، أو اختر من ٩ أماكن جاهزة. تتحكم بالحجم والشفافية والشكل (كما هو/دائري/حواف دائرية).</td></tr>
+    <tr><td class="k">النصوص</td><td>عنوان المسابقة، العنوان الرئيسي، نص التهنئة، عنوان الجائزة.</td></tr>
+    <tr><td class="k">الجوائز حسب المركز</td><td>سطر لكل مركز: الأول في السطر الأول، الثاني في الثاني… المراكز الزائدة تأخذ آخر سطر.</td></tr>
+    <tr><td class="k">التاريخ</td><td>تاريخ السحب تلقائيًا، أو نص تكتبه، أو بدون — مع خيار إظهار اليوم.</td></tr>
+    <tr><td class="k">نص الرسالة / الرد العام</td><td>النص اللي ينرسل مع البطاقة، ونص الرد العام تحت تعليق الفائز (يُستخدم بعد ٧ أيام).</td></tr>
+  </table>
+  <p class="small"><b>المتغيرات:</b> <code>{{username}}</code> اسم الفائز · <code>{{position}}</code> المركز (الأول، الثاني…) · <code>{{position_number}}</code> رقم المركز · <code>{{prize}}</code> الجائزة · <code>{{contest}}</code> اسم المسابقة · <code>{{date}}</code> التاريخ · <code>{{day}}</code> اليوم · <code>{{account}}</code> اسم حسابك.</p>
+</section>
+
+<section class="page">
+  <h3>إرسال البطاقة للفائز</h3>
+  <div class="row">
+    <figure class="fig" style="flex:1"><img src="shots/h_modal2.png" style="width:100%;object-fit:cover;object-position:50% 0;aspect-ratio:672/820"><figcaption>نافذة بطاقة الفائز: الحفظ، النسخ، الإرسال، والطرق الأخرى.</figcaption></figure>
+    <div style="flex:1.15">
+      <p>في صفحة السحب اختر التصميم في «🎨 بطاقة التهنئة»، ثم اضغط <b>«🖼️ البطاقة»</b> عند أي فائز. النظام يحدد تلقائيًا الطريقة اللي يسمح فيها إنستقرام:</p>
+      <table>
+        <tr><th>حالة الفائز</th><th>المتاح</th></tr>
+        <tr><td class="k">راسلك خلال ٢٤ ساعة</td><td><span class="badge b-ok">مباشر</span> صورة البطاقة + نص التهنئة في الخاص.</td></tr>
+        <tr><td class="k">تعليقه أقل من ٧ أيام</td><td><span class="badge b-ok">مباشر</span> رد خاص واحد: النص + زر «🎁 بطاقة الفوز» يفتح الصورة.</td></tr>
+        <tr><td class="k">أكثر من ٧ أيام</td><td><span class="badge b-w">بديل</span> رد عام تحت تعليقه («راسلنا على الخاص») — وأول ما يراسلك يصير الإرسال المباشر متاحًا.</td></tr>
+        <tr><td class="k">دائمًا</td><td><span class="badge b-w">يدوي</span> «حفظ / مشاركة الصورة» + «نسخ نص التهنئة» + «افتح محادثته» وترسلها من تطبيق إنستقرام.</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="callout warn"><div class="ic">⚠️</div><div><b class="t">كل شيء بعد تأكيدك فقط</b><p>ما ينرسل ولا ينشر شيء إلا بضغطك وتأكيدك. كل فائز تنرسل له البطاقة مرة وحدة، ولو انقطع الاتصال أثناء الإرسال تنعلّم «غير مؤكد» وما يعيد المحاولة تلقائيًا (عشان ما تتكرر). تحقق من المحادثة في إنستقرام.</p></div></div>
+  <div class="callout tip"><div class="ic">💡</div><div><b class="t">أفضل وقت للسحب</b><p>سوِّ السحب خلال ٧ أيام من نشر المنشور، عشان تقدر ترسل البطاقة لكل الفائزين مباشرة من النظام.</p></div></div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">10</div><div><h2>المحاكاة والسجل</h2><div class="lead">جرّب بأمان، وراجع كل اللي صار.</div></div></div>
+  <h3>🧪 المحاكاة (وضع التجربة)</h3>
+  <p>عالم تجريبي منفصل تمامًا: حساب تجريبي وسجلات موسومة «تجريبي»، و<b>لا يُرسل أي شيء لإنستقرام</b>. تختار حملة (حتى لو مسودة) ونوع الحدث والنص، وتشوف المسار كامل: الردود، أزرار «ابدأ» و«تحقّق»، وتختار «السيناريو» اللي تبي تجربه، مثل: متابع · غير متابع ثم يتابع · يضغط «تابعت» دون متابعة · فشل التحقق · انتهاء نافذة المراسلة · فشل الرد الخاص · انقطاع بعد الإرسال.</p>
+  <figure class="fig"><img src="shots/simulator_main.png" style="width:55%"><figcaption>المحاكاة: جرّب أي حملة بدون إرسال حقيقي.</figcaption></figure>
+  <h3>📜 السجل</h3>
+  <p>كل عملية نفذها النظام: وش الحدث، أي حملة، وش أرسل، هل قبلت Meta، والمدة. تقدر تفلتر حسب <b>الحالة</b> و<b>المصدر</b> (الإنتاج أو التجربة) و<b>المدة</b> (24 ساعة، 7 أيام، 30 يومًا). مفيد جدًا لما تبغى تعرف «ليش ما رد على فلان؟».</p>
+  <table>
+    <tr><th>الحالة</th><th>المعنى</th></tr>
+    <tr><td class="k">قبلته Meta</td><td>الإرسال نجح.</td></tr>
+    <tr><td class="k">بانتظار تفاعل المستخدم</td><td>أرسلنا الرسالة التمهيدية وننتظر الشخص يرد «ابدأ».</td></tr>
+    <tr><td class="k">بانتظار المتابعة</td><td>طلبنا منه المتابعة وننتظر يضغط «تحقّق».</td></tr>
+    <tr><td class="k">أُرسل المحتوى</td><td>وصله المحتوى النهائي (قبلته Meta).</td></tr>
+    <tr><td class="k">إعادة مجدولة</td><td>خطأ مؤقت أو ضغط على Meta — يعيد المحاولة تلقائيًا.</td></tr>
+    <tr><td class="k">فشل</td><td>رفضت Meta (السبب مكتوب) — مثل انتهاء النافذة أو صلاحية ناقصة.</td></tr>
+    <tr><td class="k">نتيجة غير مؤكدة</td><td>انقطع الاتصال بعد الإرسال؛ ما يُعاد تلقائيًا عشان ما يتكرر. راجع المحادثة يدويًا.</td></tr>
+    <tr><td class="k">منتهي / ملغى</td><td>انتهت مدة المسار، أو أوقفت الحملة.</td></tr>
+  </table>
+</section>
+
+<!-- ============ 11 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">11</div><div><h2>الإعدادات والإشعارات</h2><div class="lead">كل خيار ووش معناه ببساطة.</div></div></div>
+  <table>
+    <tr><th style="width:32%">الإعداد</th><th>الشرح</th></tr>
+    <tr><td class="k">المظهر</td><td>فاتح / داكن / تلقائي حسب الجهاز.</td></tr>
+    <tr><td class="k">المنطقة الزمنية</td><td>الأوقات تُخزَّن بتوقيت عالمي (UTC) وتُعرض بمنطقتك (مثل <span class="ltr">Asia/Riyadh</span>).</td></tr>
+    <tr><td class="k">حد المسارات الجديدة لكل مستخدم في الساعة</td><td>كم مرة بالساعة نفس الشخص يقدر يشغّل الرد الآلي عبر كل الحملات. الافتراضي <b>١٠</b> (مقترح). يحمي حسابك من كثرة الرسائل لنفس الشخص ويحمي الحد المجاني. <b>0 = بلا حد</b> (غير مقترح).</td></tr>
+    <tr><td class="k">أي رد من الشخص يُعد «ابدأ»</td><td>لو مفعّل: أي رد من الشخص في الخاص يكمل المسار حتى لو ما كتب «ابدأ» بالضبط.</td></tr>
+    <tr><td class="k">مدة الاحتفاظ بالسجلات</td><td>بعدها تُمسح النصوص والبيانات الشخصية تلقائيًا.</td></tr>
+    <tr><td class="k">مفاتيح منع التكرار</td><td>لا تقل عن ٨ أيام — عشان لو أعادت Meta إرسال نفس التنبيه ما يتكرر الرد.</td></tr>
+    <tr><td class="k">النسخ الاحتياطي</td><td>تصدير الحملات والإعدادات <b>بدون أي أسرار</b> (بدون توكنات).</td></tr>
+    <tr><td class="k">حذف البيانات</td><td>حذف بيانات التجربة · مسح نصوص السجلات · حذف كل البيانات الشخصية — كل خيار بتأكيد.</td></tr>
+  </table>
+  <h3>🔔 إشعارات تيليجرام</h3>
+  <ol class="steps">
+    <li><b class="s">أنشئ بوت</b>في تيليجرام ابحث عن <span class="ltr">@BotFather</span> وأرسل <span class="ltr">/newbot</span> وخذ «التوكن».</li>
+    <li><b class="s">الصق التوكن</b>في «توكن البوت» (يُحفظ مشفّرًا ولا يظهر مرة ثانية).</li>
+    <li><b class="s">افتح البوت واضغط Start</b>ثم «🔎 اكتشاف المحادثة» و«📨 رسالة تجريبية».</li>
+  </ol>
+  <p>بعدها اختر: التقرير اليومي وساعته، تنبيه انقطاع الربط، فشل عدة رسائل، الاقتراب من الحد المجاني (٨٠٪)، التفاعل الكبير، إشعار لكل متابع جديد أو تسليم محتوى.</p>
+</section>
+
+<!-- ============ 12 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">12</div><div><h2>قواعد Meta والحدود المجانية</h2><div class="lead">فهم هذه القواعد يوفر عليك ٩٠٪ من الأسئلة.</div></div></div>
+  <table>
+    <tr><th>القاعدة</th><th>ببساطة</th></tr>
+    <tr><td class="k">رد خاص واحد على التعليق</td><td>لكل تعليق رسالة خاصة وحدة فقط، وخلال ٧ أيام من التعليق.</td></tr>
+    <tr><td class="k">نافذة ٢٤ ساعة</td><td>بعد ما يراسلك الشخص، تقدر ترسل له لمدة ٢٤ ساعة. كل رسالة جديدة منه تفتح ٢٤ ساعة جديدة.</td></tr>
+    <tr><td class="k">لا رسالة أولى</td><td>ما تقدر تبدأ محادثة مع شخص ما تفاعل معك.</td></tr>
+    <tr><td class="k">الرد العام</td><td>رد تحت التعليق — بدون حد زمني.</td></tr>
+    <tr><td class="k">التحقق من المتابعة</td><td>يحتاج موافقة الشخص (يعني يكون راسلك أو ضغط زر). التعليق وحده ما يكفي.</td></tr>
+    <tr><td class="k">الروابط</td><td>الرابط المكتوب في أول رسالة ما يُفتح غالبًا، لذلك النظام يرسله كزر يُفتح دائمًا.</td></tr>
+    <tr><td class="k">تعليقات الستوري</td><td>غير متاحة في الواجهة الرسمية؛ المتاح هو الردود في الخاص والمنشن.</td></tr>
+    <tr><td class="k">منع السبام</td><td>لا تستخدم الأداة لإرسال رسائل مزعجة أو إلزام الناس بالمتابعة مقابل محتوى.</td></tr>
+  </table>
+  <h3>الحدود المجانية (Cloudflare)</h3>
+  <div class="grid2">
+    <div class="tile"><h4>📨 ١٠٠ ألف طلب يوميًا</h4><p>يكفي لآلاف التعليقات والرسائل يوميًا.</p></div>
+    <div class="tile"><h4>💾 ١٠٠ ألف كتابة يوميًا</h4><p>حفظ التعليقات والرسائل والحالات.</p></div>
+    <div class="tile"><h4>🕒 التجديد</h4><p>يوميًا الساعة ٣ الفجر بتوقيت السعودية.</p></div>
+    <div class="tile"><h4>💸 بدون رسوم</h4><p>لو وصلت الحد يتوقف مؤقتًا فقط، ولا تُسحب أي فلوس.</p></div>
+  </div>
+  <div class="callout tip"><div class="ic">📈</div><div><p>تابع «استهلاك اليوم» في الرئيسية، وفعّل تنبيه ٨٠٪ في تيليجرام. التعليقات اللي فاتت وقت التوقف تُسترجع تلقائيًا (خلال ٧ أيام).</p></div></div>
+
+  <div class="chapter" style="margin-top:8mm"><div class="num">13</div><div><h2>الأمان والخصوصية</h2><div class="lead">بياناتك وبيانات متابعينك محمية.</div></div></div>
+  <ul>
+    <li>لا نطلب ولا نخزن كلمة مرور إنستقرام أبدًا — الربط عبر Meta الرسمي فقط.</li>
+    <li>تفويض إنستقرام وتوكن تيليجرام محفوظة <b>مشفّرة</b> على الخادم، ولا تظهر في التطبيق ولا في النسخ الاحتياطي.</li>
+    <li>في تطبيق أندرويد، جلسة الدخول محفوظة في التخزين الآمن للجهاز.</li>
+    <li>روابط بطاقات الفوز عشوائية لا يمكن تخمينها، وفيديو السحب يبقى في جهازك فقط.</li>
+    <li>البيانات الشخصية تُمسح تلقائيًا بعد مدة الاحتفاظ اللي تحددها، وكل عملية حساسة (حذف، إرسال بطاقة) تُسجَّل في سجل التدقيق.</li>
+  </ul>
+</section>
+
+<!-- ============ 14 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">14</div><div><h2>أسئلة شائعة وحل المشاكل</h2><div class="lead">أشهر المواقف وكيف تتصرف.</div></div></div>
+  <table>
+    <tr><th style="width:36%">المشكلة / السؤال</th><th>الحل</th></tr>
+    <tr><td class="k">علّق أحد وما رد النظام</td><td>1) تأكد أن الحملة «نشطة» والمنشور ضمن نطاقها. 2) جرّب تعليقه في «اختبار المطابقة». 3) راجع «السجل» — السبب مكتوب (مثلًا: تعليق قبل التفعيل، كلمة مستثناة، حد الساعة). 4) تأكد من «آخر حدث وصل» في الربط.</td></tr>
+    <tr><td class="k">الرابط وصل بس ما ينفتح</td><td>النظام يرسله كزر «فتح الرابط 🔗» — اضغط الزر. تأكد أن الرابط يبدأ بـ <code>https</code>.</td></tr>
+    <tr><td class="k">«مر أكثر من ٧ أيام… لا يسمح بمراسلته»</td><td>قاعدة إنستقرام. استخدم «رد عام تحت تعليقه» واطلب منه يراسلك، أو أرسل البطاقة يدويًا من تطبيق إنستقرام.</td></tr>
+    <tr><td class="k">ما أقدر أرد يدويًا في الرسائل</td><td>مرت ٢٤ ساعة على آخر رسالة من الشخص. انتظر يراسلك.</td></tr>
+    <tr><td class="k">«تعذر التحقق من المتابعة»</td><td>Meta ما رجعت النتيجة (مؤقت أو صلاحية). النظام ما يعتبره «غير متابع» — يطلب من الشخص يحاول بعد قليل.</td></tr>
+    <tr><td class="k">«لم يكتمل الربط»</td><td>اضغط «إعادة الاتصال» ووافق على كل الصلاحيات، ثم «تشخيص الربط». تأكد أن الحساب احترافي وأن «السماح بالوصول إلى الرسائل» مفعّل.</td></tr>
+    <tr><td class="k">ما تظهر صورة شخص في الرسائل</td><td>الصور تنجاب تدريجيًا لمن راسلك فقط؛ افتح «الرسائل» مرة ثانية بعد دقيقة. بعض الحسابات ما تسمح.</td></tr>
+    <tr><td class="k">وصل الاستهلاك ١٠٠٪</td><td>لا تسوي شيء — يكمل تلقائيًا بعد التجديد، والتعليقات الفائتة تُسترجع.</td></tr>
+    <tr><td class="k">الحفظ في تطبيق أندرويد</td><td>عند «حفظ» تنفتح قائمة المشاركة: اختر «حفظ في الملفات» أو شاركها مباشرة لإنستقرام/واتساب.</td></tr>
+    <tr><td class="k">فيديو السحب ما ينحفظ</td><td>تأكد أن خيار التسجيل مفعّل قبل الاختيار، وانتظر ظهور زر 🎥 بعد الكشف. بعض المتصفحات القديمة ما تدعم التسجيل (تظهر رسالة بذلك).</td></tr>
+    <tr><td class="k">سويت شيء بالغلط</td><td>المفتاح الشامل في الرئيسية يوقف كل شيء فورًا.</td></tr>
+  </table>
+</section>
+
+<!-- ============ 15 ============ -->
+<section class="page">
+  <div class="chapter"><div class="num">15</div><div><h2>قاموس المصطلحات</h2><div class="lead">كلمات تمر عليك داخل التطبيق.</div></div></div>
+  <table>
+    <tr><th style="width:28%">المصطلح</th><th>المعنى</th></tr>
+    <tr><td class="k">حملة</td><td>قاعدة أتمتة: متى يرد النظام وعلى مين وبإيش.</td></tr>
+    <tr><td class="k">مسار</td><td>رحلة شخص واحد داخل حملة: من التعليق حتى استلام المحتوى.</td></tr>
+    <tr><td class="k">رد خاص (Private Reply)</td><td>رسالة في الخاص مرتبطة بتعليق — وحدة فقط لكل تعليق.</td></tr>
+    <tr><td class="k">رد عام</td><td>رد مكتوب تحت التعليق يشوفه الجميع.</td></tr>
+    <tr><td class="k">نافذة ٢٤ ساعة</td><td>المدة اللي تقدر ترسل فيها بعد آخر رسالة من الشخص.</td></tr>
+    <tr><td class="k">Webhooks</td><td>تنبيهات فورية ترسلها Meta للنظام عند كل تعليق أو رسالة.</td></tr>
+    <tr><td class="k">التفويض (Token)</td><td>إذن رسمي من إنستقرام للنظام، يتجدد تلقائيًا.</td></tr>
+    <tr><td class="k">IGSID</td><td>رقم تعريف الشخص الخاص بحسابك في إنستقرام (يستخدمه النظام بدل الاسم).</td></tr>
+    <tr><td class="k">مطابقة</td><td>هل التعليق فيه كلمة التشغيل حسب الشروط.</td></tr>
+    <tr><td class="k">غير مؤكد</td><td>ما نعرف هل وصلت الرسالة (انقطع الاتصال) — ما يُعاد تلقائيًا.</td></tr>
+    <tr><td class="k">PWA</td><td>نسخة الويب اللي تنثبت على الشاشة الرئيسية مثل التطبيق.</td></tr>
+    <tr><td class="k">APK</td><td>ملف تثبيت تطبيق أندرويد.</td></tr>
+  </table>
+  <div class="callout info" style="margin-top:8mm"><div class="ic">📌</div><div><b class="t">ملخص في ٥ نقاط</b><p>1) اربط حسابك من «الربط». 2) أنشئ حملة وجربها في «المحاكاة». 3) فعّلها وتابع «الرئيسية» و«السجل». 4) رد يدويًا من «الرسائل» خلال ٢٤ ساعة. 5) سوِّ سحوباتك وأرسل بطاقات التهنئة خلال ٧ أيام من المنشور.</p></div></div>
+</section>
+
+<!-- ============ BACK ============ -->
+<section class="back page">
+  <div class="logo" style="width:30mm;height:30mm"><svg viewBox="0 0 24 24" fill="none" style="width:17mm;height:17mm"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" fill="#fff"/></svg></div>
+  <h2>HSN AutoReply</h2>
+  <p>أتمتة إنستقرام بالطريقة الرسمية — ردود أسرع، تفاعل أكبر، وحساب آمن.</p>
+  <p class="small" style="opacity:.75;margin-top:12mm">دليل الاستخدام · الإصدار 1.7.0 · سبتمبر 2026</p>
+</section>
+
+</body>
+</html>
