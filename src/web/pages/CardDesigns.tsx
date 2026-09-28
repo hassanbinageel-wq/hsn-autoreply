@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Link } from "../App";
 import { Alert, Card, Field, PageHeader, Spinner, Toggle, toast, useAsync } from "../components/ui";
 import { CARD_FONTS, CARD_LAYOUTS, CARD_SIZES, CARD_THEMES, CARD_VARIABLES, DEFAULT_CARD, type CardDesign } from "../../shared/card";
-import { compressBackground, renderCard } from "../lib/card";
+import { compressBackground, compressLogo, renderCard } from "../lib/card";
 
 export function DrawsTabs({ active }: { active: "draws" | "designs" }) {
   return (
@@ -28,7 +28,60 @@ export function CardPreview({ design, username = "winner_name", position = 1, ac
       clearTimeout(t);
     };
   }, [design, username, position, account]);
-  return src ? <img src={src} alt="معاينة البطاقة" className="w-full rounded-xl shadow-lg" /> : <Spinner />;
+  return src ? <img src={src} alt="معاينة البطاقة" draggable={false} className="w-full rounded-xl shadow-lg" /> : <Spinner />;
+}
+
+/** Lets the owner drag the logo on the preview; a live outline follows the finger while the card re-renders. */
+function LogoDragArea({ design, onMove, children }: { design: CardDesign; onMove: (x: number, y: number) => void; children: React.ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState(false);
+  const dragging = useRef(false);
+  const [aspect, setAspect] = useState(1);
+  useEffect(() => {
+    if (!design.logo_image) return;
+    const img = new Image();
+    img.onload = () => setAspect(img.height / img.width || 1);
+    img.src = design.logo_image;
+  }, [design.logo_image]);
+  if (!design.logo_image) return <>{children}</>;
+  const size = CARD_SIZES[design.size];
+  const move = (e: React.PointerEvent) => {
+    const r = box.current!.getBoundingClientRect();
+    const clamp = (v: number) => Math.min(1, Math.max(0, v));
+    onMove(Math.round(clamp((e.clientX - r.left) / r.width) * 1000) / 1000, Math.round(clamp((e.clientY - r.top) / r.height) * 1000) / 1000);
+  };
+  const wPct = design.logo_size * 100;
+  const hPct = ((design.logo_size * size.w * aspect) / size.h) * 100;
+  return (
+    <div
+      ref={box}
+      className="relative touch-none select-none"
+      style={{ aspectRatio: `${size.w} / ${size.h}` }}
+      onDragStart={(e) => e.preventDefault()}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        box.current?.setPointerCapture?.(e.pointerId);
+        dragging.current = true;
+        setDrag(true);
+        move(e);
+      }}
+      onPointerMove={(e) => dragging.current && move(e)}
+      onPointerUp={() => {
+        dragging.current = false;
+        setDrag(false);
+      }}
+      onPointerCancel={() => {
+        dragging.current = false;
+        setDrag(false);
+      }}
+    >
+      {children}
+      <div
+        className={`pointer-events-none absolute rounded-md border-2 border-dashed ${drag ? "border-white bg-white/20" : "border-white/70"}`}
+        style={{ left: `${design.logo_x * 100 - wPct / 2}%`, top: `${design.logo_y * 100 - hPct / 2}%`, width: `${wPct}%`, height: `${hPct}%`, cursor: "grab", boxShadow: "0 0 0 1px rgba(0,0,0,.4)" }}
+      />
+    </div>
+  );
 }
 
 function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: number; name: string; design: CardDesign }; onSaved: () => void; onCancel: () => void; account?: string | null }) {
@@ -52,6 +105,15 @@ function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: numbe
       toast(e.message, "bad");
     } finally {
       setBusy(false);
+    }
+  };
+  const uploadLogo = async (f: File | undefined) => {
+    if (!f) return;
+    try {
+      set({ logo_image: await compressLogo(f) });
+      toast("اسحب الشعار على المعاينة لتحديد مكانه");
+    } catch {
+      toast("تعذر قراءة الشعار", "bad");
     }
   };
   const upload = async (f: File | undefined) => {
@@ -114,6 +176,52 @@ function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: numbe
             )}
           </div>
         </Card>
+        <Card title="الشعار">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="btn btn-ghost cursor-pointer text-sm">
+              🏷️ {d.logo_image ? "تغيير الشعار" : "رفع شعار (PNG شفاف أفضل)"}
+              <input type="file" accept="image/png,image/webp,image/jpeg" className="hidden" onChange={(e) => uploadLogo(e.target.files?.[0])} />
+            </label>
+            {d.logo_image && <button className="btn btn-ghost text-sm text-red-600" onClick={() => set({ logo_image: null })}>إزالة الشعار</button>}
+          </div>
+          {d.logo_image && (
+            <div className="mt-3 space-y-3">
+              <p className="muted text-xs">✋ اسحب الشعار مباشرة على المعاينة لوضعه في المكان اللي تبيه، أو اختر مكانًا جاهزًا:</p>
+              <div className="grid w-40 grid-cols-3 gap-1">
+                {[0.1, 0.5, 0.9].flatMap((y) =>
+                  [0.88, 0.5, 0.12].map((x) => (
+                    <button
+                      key={`${x}-${y}`}
+                      type="button"
+                      title="ضع الشعار هنا"
+                      onClick={() => set({ logo_x: x, logo_y: y })}
+                      className={`h-8 rounded-md border ${Math.abs(d.logo_x - x) < 0.02 && Math.abs(d.logo_y - y) < 0.02 ? "border-[var(--color-brand-500)] bg-[var(--color-brand-500)]/20" : "surface-2 border-transparent"}`}
+                    >
+                      •
+                    </button>
+                  )),
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="text-sm">
+                  الحجم
+                  <input type="range" className="w-full" min={0.05} max={0.6} step={0.01} value={d.logo_size} onChange={(e) => set({ logo_size: Number(e.target.value) })} />
+                </label>
+                <label className="text-sm">
+                  الشفافية
+                  <input type="range" className="w-full" min={0.2} max={1} step={0.05} value={d.logo_opacity} onChange={(e) => set({ logo_opacity: Number(e.target.value) })} />
+                </label>
+                <Field label="الشكل">
+                  <select className="input" value={d.logo_shape} onChange={(e) => set({ logo_shape: e.target.value as CardDesign["logo_shape"] })}>
+                    <option value="original">كما هو</option>
+                    <option value="circle">دائري</option>
+                    <option value="rounded">مربع بحواف دائرية</option>
+                  </select>
+                </Field>
+              </div>
+            </div>
+          )}
+        </Card>
         <Card title="النصوص">
           <div className="space-y-3">
             <Field label="عنوان المسابقة"><input className="input" value={d.title} maxLength={80} onChange={(e) => set({ title: e.target.value })} /></Field>
@@ -157,11 +265,13 @@ function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: numbe
           <label className="flex items-center gap-1">
             المركز
             <select className="input w-auto py-1" value={previewPos} onChange={(e) => setPreviewPos(Number(e.target.value))}>
-              {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
           </label>
         </div>
-        <CardPreview design={d} position={previewPos} account={account} />
+        <LogoDragArea design={d} onMove={(x, y) => set({ logo_x: x, logo_y: y })}>
+          <CardPreview design={d} position={previewPos} account={account} />
+        </LogoDragArea>
         <p className="muted text-xs">المعاينة ببيانات تجريبية؛ عند الإرسال يوضع اسم الفائز الحقيقي وجائزة مركزه وتاريخ السحب.</p>
       </div>
     </div>

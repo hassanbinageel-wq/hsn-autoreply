@@ -56,6 +56,16 @@ function seeded(seed: number) {
   };
 }
 
+/** Reads a picked file as a data: URL (the app's CSP allows data: images, not blob:). */
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result));
+    r.onerror = () => rej(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((res, rej) => {
     const img = new Image();
@@ -654,6 +664,34 @@ export async function renderCard(d: CardDesign, v: CardVars): Promise<HTMLCanvas
     y += b.h;
   });
 
+  // logo on top of everything, where the owner placed it
+  if (d.logo_image) {
+    try {
+      const img = await loadImage(d.logo_image);
+      const lw = W * d.logo_size;
+      const lh = (img.height / img.width) * lw;
+      const x = d.logo_x * W - lw / 2;
+      const y = d.logo_y * H - lh / 2;
+      ctx.save();
+      ctx.globalAlpha = d.logo_opacity;
+      if (d.logo_shape !== "original") {
+        const side = Math.min(lw, lh);
+        const cxl = d.logo_x * W;
+        const cyl = d.logo_y * H;
+        ctx.beginPath();
+        if (d.logo_shape === "circle") ctx.arc(cxl, cyl, side / 2, 0, Math.PI * 2);
+        else ctx.roundRect(cxl - lw / 2, cyl - lh / 2, lw, lh, side * 0.18);
+        ctx.clip();
+        const s = d.logo_shape === "circle" ? Math.max(side / img.width, side / img.height) : 1;
+        if (d.logo_shape === "circle") ctx.drawImage(img, cxl - (img.width * s) / 2, cyl - (img.height * s) / 2, img.width * s, img.height * s);
+        else ctx.drawImage(img, x, y, lw, lh);
+      } else ctx.drawImage(img, x, y, lw, lh);
+      ctx.restore();
+    } catch {
+      /* ignore a broken logo */
+    }
+  }
+
   // bottom: date + account
   ctx.textAlign = "center";
   const dateY = H - (footer ? 170 : 120);
@@ -699,11 +737,31 @@ export function canvasToJpegDataUrl(c: HTMLCanvasElement, quality = 0.9): string
   return c.toDataURL("image/jpeg", quality);
 }
 
+/** Re-encodes an uploaded logo (max 600px, keeps transparency as PNG; falls back to WebP/JPEG when too large). */
+export async function compressLogo(file: File): Promise<string> {
+  {
+    const img = await loadImage(await fileToDataUrl(file));
+    let max = 600;
+    for (;;) {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.width * scale));
+      c.height = Math.max(1, Math.round(img.height * scale));
+      c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+      const png = c.toDataURL("image/png");
+      if (png.length <= 650_000) return png;
+      const webp = c.toDataURL("image/webp", 0.85);
+      if (webp.startsWith("data:image/webp") && webp.length <= 650_000) return webp;
+      if (max <= 250) return c.toDataURL("image/jpeg", 0.8);
+      max -= 120;
+    }
+  }
+}
+
 /** Re-encodes an uploaded background to a bounded JPEG data URL (max 1080px wide). */
 export async function compressBackground(file: File): Promise<string> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await loadImage(url);
+  {
+    const img = await loadImage(await fileToDataUrl(file));
     const scale = Math.min(1, 1080 / img.width);
     const c = document.createElement("canvas");
     c.width = Math.round(img.width * scale);
@@ -711,12 +769,10 @@ export async function compressBackground(file: File): Promise<string> {
     c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
     let q = 0.82;
     let out = c.toDataURL("image/jpeg", q);
-    while (out.length > 1_300_000 && q > 0.4) {
+    while (out.length > 1_100_000 && q > 0.3) {
       q -= 0.1;
       out = c.toDataURL("image/jpeg", q);
     }
     return out;
-  } finally {
-    URL.revokeObjectURL(url);
   }
 }

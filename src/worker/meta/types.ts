@@ -113,6 +113,8 @@ export interface MetaClient {
   listComments?(token: string, mediaId: string): Promise<MetaResult<Paged<CommentItem>>>;
   /** One page of top-level comments (with the first page of replies expanded), for the random picker. */
   listCommentsPage?(token: string, mediaId: string, after?: string): Promise<MetaResult<Paged<CommentItem>>>;
+  /** User Profile API (needs the person's consent, i.e. they messaged the account). profile_pic is an expiring CDN URL. */
+  getUserProfile?(token: string, igsid: string): Promise<MetaResult<{ username?: string; name?: string; profile_pic?: string }>>;
   /** One page of replies to a comment. */
   listReplies?(token: string, commentId: string, after?: string): Promise<MetaResult<Paged<CommentItem>>>;
 }

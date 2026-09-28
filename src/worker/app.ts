@@ -47,14 +47,14 @@ import {
 } from "../shared/schemas";
 import { claimsDelivery, publicReplyVariants } from "../shared/template";
 import { cacheMediaStmt } from "./services/media";
-import { markRead, recordMessage } from "./services/inbox";
+import { markRead, recordMessage, refreshAvatars } from "./services/inbox";
 import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage } from "./services/usage";
 import { recoverMissedComments } from "./services/recover";
-import { DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
+import { deleteDraws, DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
 import { instagramShortcode } from "../shared/draw";
-import { cardDesignSchema } from "../shared/card";
+import { cardDesignInputSchema } from "../shared/card";
 import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "./services/cards";
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
@@ -1181,14 +1181,23 @@ export function createApp() {
     const id = idParam(c);
     const d = id && (await loadDraw(c.env.DB, id));
     if (!d) return apiError(c, 404, "not_found", "السحب غير موجود");
-    if (d.status !== "draft") return apiError(c, 409, "locked", "السحوبات المنفّذة تبقى في السجل ولا تُحذف");
-    await run(c.env.DB, "DELETE FROM draws WHERE id = ? AND status = 'draft'", id);
+    await deleteDraws(c.env.DB, [d.id]);
+    await audit(c.env.DB, c.get("session").username, "draw.deleted", String(d.id), { name: d.name, status: d.status });
     return c.json({ ok: true });
+  });
+  // Clears the whole draws log (explicit confirmation word required).
+  api.post("/draws/clear", async (c) => {
+    const p = await parseBody(c, z.object({ confirm: z.literal("مسح") }));
+    if (!p.ok) return p.res;
+    const ids = (await all<{ id: number }>(c.env.DB, "SELECT id FROM draws")).map((r) => r.id);
+    await deleteDraws(c.env.DB, ids);
+    await audit(c.env.DB, c.get("session").username, "draw.cleared", undefined, { count: ids.length });
+    return c.json({ ok: true, deleted: ids.length });
   });
 
   // ---- Congratulation cards (designs, generated images, sending to winners)
   api.get("/card-designs", async (c) => c.json(await all(c.env.DB, "SELECT id, name, design, updated_at FROM card_designs ORDER BY id DESC")));
-  const designBody = z.object({ name: z.string().trim().min(1, "اكتب اسم التصميم").max(80), design: cardDesignSchema });
+  const designBody = z.object({ name: z.string().trim().min(1, "اكتب اسم التصميم").max(80), design: cardDesignInputSchema });
   api.post("/card-designs", async (c) => {
     const p = await parseBody(c, designBody);
     if (!p.ok) return p.res;
@@ -1330,7 +1339,7 @@ export function createApp() {
     }
     const rows = await all<any>(
       c.env.DB,
-      `SELECT p.id, p.username, p.last_message_at, p.last_user_message_at, p.inbox_read_at, p.last_follow_status,
+      `SELECT p.id, p.username, p.profile_pic_url, p.last_message_at, p.last_user_message_at, p.inbox_read_at, p.last_follow_status,
               (SELECT m.text FROM messages m WHERE m.participant_id = p.id ORDER BY m.id DESC LIMIT 1) AS last_text,
               (SELECT m.direction FROM messages m WHERE m.participant_id = p.id ORDER BY m.id DESC LIMIT 1) AS last_direction,
               (SELECT COUNT(*) FROM messages m WHERE m.participant_id = p.id AND m.direction = 'in' AND m.created_at > COALESCE(p.inbox_read_at, 0)) AS unread
@@ -1340,9 +1349,14 @@ export function createApp() {
     const now = Date.now();
     return c.json(rows.map((r) => ({ ...r, window_open: !!r.last_user_message_at && now - r.last_user_message_at < MESSAGING_WINDOW_MS })));
   });
+  // Fills missing / expired profile pictures (bounded batch; the client calls it when the inbox opens).
+  api.post("/inbox/avatars", async (c) => {
+    if (!(await rateLimit(c.env.DB, `avatars:${c.get("session").username}`, 30, 3_600_000))) return c.json({ checked: 0, updated: 0 });
+    return c.json(await refreshAvatars(engineContext(c.env)));
+  });
   api.get("/inbox/:id", async (c) => {
     const id = idParam(c);
-    const p = id && (await first<any>(c.env.DB, "SELECT id, username, last_user_message_at, last_follow_status, is_demo FROM participants WHERE id = ? AND is_demo = 0", id));
+    const p = id && (await first<any>(c.env.DB, "SELECT id, username, profile_pic_url, last_user_message_at, last_follow_status, is_demo FROM participants WHERE id = ? AND is_demo = 0", id));
     if (!p) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
     const [messages, flows] = await Promise.all([
       all<any>(c.env.DB, "SELECT id, direction, source, kind, text, created_at FROM messages WHERE participant_id = ? ORDER BY id DESC LIMIT 200", id),

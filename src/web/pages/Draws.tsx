@@ -255,7 +255,30 @@ function SettingsFields({ form, set }: { form: DrawForm; set: (p: Partial<DrawFo
 // ---------------------------------------------------------------------------------------------------------------
 
 export function DrawsHomePage() {
-  const { data: draws } = useAsync(() => api<any[]>("/api/draws"), []);
+  const { data: draws, reload: reloadDraws } = useAsync(() => api<any[]>("/api/draws"), []);
+  const removeDraw = async (d: any) => {
+    const done = d.status !== "draft";
+    if (!confirm(`حذف «${d.name}» من السجل؟${done ? "\nسيُحذف مع فائزيه وبطاقاتهم ولن يُحسب في «استبعاد الفائزين السابقين»." : ""}\nلا يمكن التراجع.`)) return;
+    try {
+      await api(`/api/draws/${d.id}`, { method: "DELETE" });
+      toast("تم الحذف");
+      reloadDraws();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    }
+  };
+  const clearAll = async () => {
+    const word = prompt("مسح سجل السحوبات بالكامل (كل السحوبات وفائزيها وبطاقاتهم)؟ لا يمكن التراجع.\nاكتب: مسح");
+    if (word === null) return;
+    if (word.trim() !== "مسح") return toast("لم يُمسح شيء — اكتب «مسح» للتأكيد", "bad");
+    try {
+      const r = await api<{ deleted: number }>("/api/draws/clear", { body: { confirm: "مسح" } });
+      toast(`تم مسح ${r.deleted} سحب`);
+      reloadDraws();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    }
+  };
   const { data: campaigns } = useAsync(() => api<any[]>("/api/campaigns"), []);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<DrawForm>(EMPTY);
@@ -310,7 +333,7 @@ export function DrawsHomePage() {
           </div>
         </Modal>
       )}
-      <Card title="سجل السحوبات">
+      <Card title="سجل السحوبات" action={draws?.length ? <button className="btn btn-ghost text-sm text-red-600" onClick={clearAll}>🗑️ مسح السجل</button> : undefined}>
         {!draws ? (
           <Spinner />
         ) : !draws.length ? (
@@ -318,7 +341,8 @@ export function DrawsHomePage() {
         ) : (
           <div className="divide-y divide-[var(--border)]">
             {draws.map((d) => (
-              <Link key={d.id} to={`/draws/${d.id}`} className="flex items-center gap-3 py-2.5 hover:bg-[var(--surface-2)]">
+              <div key={d.id} className="flex items-center gap-1">
+              <Link to={`/draws/${d.id}`} className="flex min-w-0 flex-1 items-center gap-3 py-2.5 hover:bg-[var(--surface-2)]">
                 <div className="h-14 w-11 shrink-0 overflow-hidden rounded-md bg-gradient-to-br from-violet-700 to-orange-500">
                   {d.media_thumb && <img src={d.media_thumb} alt="" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover" />}
                 </div>
@@ -332,6 +356,8 @@ export function DrawsHomePage() {
                 </div>
                 <span className={`rounded-full px-2 py-0.5 text-xs ${d.status === "drawn" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "surface-2"}`}>{STATUS[d.status]}</span>
               </Link>
+              <button className="btn btn-ghost shrink-0 px-2.5 text-red-600" title="حذف من السجل" aria-label={`حذف ${d.name}`} onClick={() => removeDraw(d)}>🗑️</button>
+              </div>
             ))}
           </div>
         )}

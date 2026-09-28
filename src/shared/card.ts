@@ -42,6 +42,13 @@ export const cardDesignSchema = z.object({
   // Optional uploaded background (re-encoded JPEG data URL, bounded in size).
   background_image: z.string().max(1_400_000).regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/).nullable().optional(),
   background_dim: z.number().min(0).max(0.9).default(0.45),
+  // Optional logo placed by the owner: centre position as a fraction of the card, width as a fraction of the card width.
+  logo_image: z.string().max(700_000).regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/).nullable().optional(),
+  logo_x: z.number().min(0).max(1).default(0.5),
+  logo_y: z.number().min(0).max(1).default(0.1),
+  logo_size: z.number().min(0.05).max(0.6).default(0.18),
+  logo_shape: z.enum(["original", "circle", "rounded"]).default("original"),
+  logo_opacity: z.number().min(0.2).max(1).default(1),
   title: z.string().trim().max(80).default("مسابقة الحساب"),
   headline: z.string().trim().max(60).default("مبروك الفوز! 🎉"),
   body: z.string().trim().max(300).default("تهانينا {{username}}\nأنت الفائز {{position}} في {{contest}}"),
@@ -57,6 +64,12 @@ export const cardDesignSchema = z.object({
   public_reply_text: z.string().trim().max(600).default("مبروك {{username}} 🎉 فزت بالمركز {{position}} في {{contest}}! راسلنا على الخاص لاستلام جائزتك 🎁"),
 });
 export type CardDesign = z.infer<typeof cardDesignSchema>;
+/** One D1 row holds the whole design (max 2 MB): background + logo together must stay below this. */
+export const CARD_IMAGES_MAX = 1_800_000;
+export const cardDesignInputSchema = cardDesignSchema.refine(
+  (d) => (d.background_image?.length ?? 0) + (d.logo_image?.length ?? 0) <= CARD_IMAGES_MAX,
+  { message: "حجم صورة الخلفية مع الشعار كبير — استخدم صورًا أصغر", path: ["logo_image"] },
+);
 export const DEFAULT_CARD: CardDesign = cardDesignSchema.parse({});
 
 export const CARD_VARIABLES: Record<string, string> = {

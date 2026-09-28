@@ -354,6 +354,14 @@ export class HttpMetaClient implements MetaClient {
     );
   }
 
+  getUserProfile(token: string, igsid: string) {
+    return this.request<{ username?: string; name?: string; profile_pic?: string }>(
+      `${this.graphBase}/${encodeURIComponent(igsid)}?fields=username,name,profile_pic`,
+      this.authGet(token),
+      false,
+    );
+  }
+
   async checkFollow(token: string, igsid: string): Promise<FollowCheckOutcome> {
     const r = await this.request<Record<string, unknown>>(
       `${this.graphBase}/${encodeURIComponent(igsid)}?fields=username,is_user_follow_business`,

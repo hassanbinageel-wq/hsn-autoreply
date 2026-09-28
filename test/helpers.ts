@@ -91,6 +91,14 @@ export class MockMeta implements MetaClient {
     this.calls.push({ kind: "list_comments", target: `replies:${commentId}@${after ?? ""}` });
     return this.pageOf(this.replyPages[commentId], after);
   }
+  /** User Profile API answers per IGSID ("no_consent" simulates a person who never messaged). */
+  profiles: Record<string, { username?: string; profile_pic?: string } | "no_consent"> = {};
+  async getUserProfile(_t: string, igsid: string): Promise<MetaResult<{ username?: string; profile_pic?: string }>> {
+    this.calls.push({ kind: "get_media", target: `profile:${igsid}` });
+    const p = this.profiles[igsid];
+    if (!p || p === "no_consent") return { ok: false, error: { kind: "no_consent", httpStatus: 400, code: 230, message: "no consent" } };
+    return { ok: true, httpStatus: 200, data: p };
+  }
   /** Posts/reels returned by getMedia (auto-attach of new posts). */
   media: Record<string, MediaItem> = {};
   async getMedia(_t: string, mediaId: string): Promise<MetaResult<MediaItem>> {

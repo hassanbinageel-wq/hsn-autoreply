@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Alert, Badge, PageHeader, Spinner, fmtTime, toast } from "../components/ui";
+import { UserAvatar } from "../components/UserAvatar";
 
 const SOURCE: Record<string, string> = { bot: "🤖 تلقائي", manual: "✍️ ردك من هنا", app: "📱 من تطبيق إنستقرام" };
 
@@ -50,6 +51,7 @@ function Thread({ id, onSent }: { id: number; onSent: () => void }) {
   return (
     <div className="flex flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] pb-3">
+        <UserAvatar url={p.profile_pic_url} name={p.username} size={44} />
         {p.username ? (
           <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="text-lg font-bold hover:underline" dir="ltr">@{p.username}</a>
         ) : (
@@ -105,6 +107,21 @@ export function InboxPage() {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<number | null>(null);
   const load = () => api<any[]>(`/api/inbox?q=${encodeURIComponent(q)}`).then(setList).catch((e) => toast(e.message, "bad"));
+  // Fill missing / expired profile pictures once per visit (small batches, official User Profile API).
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      for (let i = 0; i < 4 && !stop; i++) {
+        const r = await api<{ checked: number; updated: number }>("/api/inbox/avatars", { body: {} }).catch(() => null);
+        if (!r || !r.checked) break;
+        if (r.updated) load();
+      }
+    })();
+    return () => {
+      stop = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     load();
     const t = setInterval(load, 20_000);
@@ -126,7 +143,7 @@ export function InboxPage() {
             <div className="divide-y divide-[var(--border)]">
               {list.map((c) => (
                 <button key={c.id} onClick={() => setOpen(c.id)} className={`flex w-full items-start gap-2 py-2.5 text-right ${open === c.id ? "bg-[var(--surface-2)]" : ""}`}>
-                  <div className="h-9 w-9 shrink-0 rounded-full bg-gradient-to-br from-violet-600 via-fuchsia-600 to-orange-500" />
+                  <UserAvatar url={c.profile_pic_url} name={c.username} size={40} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-bold" dir="ltr">{c.username ? `@${c.username}` : "حساب غير معروف"}</span>

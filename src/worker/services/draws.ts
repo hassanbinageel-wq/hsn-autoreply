@@ -547,3 +547,17 @@ export async function winnersOf(db: D1Database, drawId: number) {
 }
 
 export { EXCLUDE_LABELS };
+
+/** Deletes draws with everything that belongs to them (card images → winners → entries → draw), in FK order. */
+export async function deleteDraws(db: D1Database, ids: number[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += 20) {
+    const chunk = ids.slice(i, i + 20);
+    const q = chunk.map(() => "?").join(",");
+    await db.batch([
+      db.prepare(`DELETE FROM draw_cards WHERE winner_id IN (SELECT id FROM draw_winners WHERE draw_id IN (${q}))`).bind(...chunk),
+      db.prepare(`DELETE FROM draw_winners WHERE draw_id IN (${q})`).bind(...chunk),
+      db.prepare(`DELETE FROM draw_entries WHERE draw_id IN (${q})`).bind(...chunk),
+      db.prepare(`DELETE FROM draws WHERE id IN (${q})`).bind(...chunk),
+    ]);
+  }
+}
