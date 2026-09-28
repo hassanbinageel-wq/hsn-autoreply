@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Link } from "../App";
 import { Alert, Card, Field, PageHeader, Spinner, Toggle, toast, useAsync } from "../components/ui";
-import { CARD_SIZES, CARD_THEMES, CARD_VARIABLES, DEFAULT_CARD, type CardDesign } from "../../shared/card";
+import { CARD_FONTS, CARD_LAYOUTS, CARD_SIZES, CARD_THEMES, CARD_VARIABLES, DEFAULT_CARD, type CardDesign } from "../../shared/card";
 import { compressBackground, renderCard } from "../lib/card";
 
 export function DrawsTabs({ active }: { active: "draws" | "designs" }) {
@@ -68,6 +68,16 @@ function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: numbe
       <div className="space-y-4">
         <Card title="الأساسيات">
           <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="الشكل">
+              <select className="input" value={d.layout} onChange={(e) => set({ layout: e.target.value as CardDesign["layout"] })}>
+                {Object.entries(CARD_LAYOUTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </Field>
+            <Field label="الخط">
+              <select className="input" value={d.font} onChange={(e) => set({ font: e.target.value as CardDesign["font"] })}>
+                {Object.entries(CARD_FONTS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
+            </Field>
             <Field label="اسم التصميم (داخلي)"><input className="input" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} /></Field>
             <Field label="المقاس">
               <select className="input" value={d.size} onChange={(e) => set({ size: e.target.value as CardDesign["size"] })}>
@@ -129,6 +139,9 @@ function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: numbe
             <Field label="التذييل"><input className="input" value={d.footer} maxLength={60} onChange={(e) => set({ footer: e.target.value })} /></Field>
             <Field label="نص الرسالة المرسلة مع البطاقة" hint="يُرسل مع الصورة في الخاص، أو كرد خاص على تعليق الفائز مع زر يفتح البطاقة.">
               <textarea className="input min-h-[90px]" value={d.message_text} maxLength={600} onChange={(e) => set({ message_text: e.target.value })} />
+            </Field>
+            <Field label="نص الرد العام تحت تعليق الفائز" hint="يُستخدم فقط إذا لم يعد مسموحًا مراسلته في الخاص (بعد 7 أيام من تعليقه) وتختار نشره يدويًا.">
+              <textarea className="input min-h-[70px]" value={d.public_reply_text} maxLength={600} onChange={(e) => set({ public_reply_text: e.target.value })} />
             </Field>
             <p className="muted text-xs">المتغيرات: {Object.entries(CARD_VARIABLES).map(([k, v]) => `{{${k}}} ${v}`).join(" · ")}</p>
           </div>

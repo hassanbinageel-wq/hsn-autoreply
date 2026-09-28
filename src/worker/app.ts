@@ -55,7 +55,7 @@ import { recoverMissedComments } from "./services/recover";
 import { DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
 import { instagramShortcode } from "../shared/draw";
 import { cardDesignSchema } from "../shared/card";
-import { cardByToken, planFor, sendCard, storeCard } from "./services/cards";
+import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "./services/cards";
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 const PUBLIC_SETTINGS_SQL = "key NOT LIKE 'telegram%' AND key NOT LIKE 'notify%'";
@@ -1240,6 +1240,20 @@ export function createApp() {
       const r = await sendCard(engineContext(c.env), c.env.PUBLIC_BASE_URL, id, wid);
       await audit(c.env.DB, c.get("session").username, "draw.card_sent", String(id), { winner: wid, channel: r.channel });
       return c.json({ ok: true, ...r, winners: await winnersOf(c.env.DB, id) });
+    } catch (e) {
+      return drawError(c, e);
+    }
+  });
+
+  api.post("/draws/:id/winners/:wid/public-reply", async (c) => {
+    const p = await parseBody(c, z.object({ text: z.string().trim().min(1, "اكتب نص الرد").max(1000) }));
+    if (!p.ok) return p.res;
+    const id = idParam(c)!;
+    const wid = Number(c.req.param("wid"));
+    try {
+      await publicReplyToWinner(engineContext(c.env), id, wid, p.data.text);
+      await audit(c.env.DB, c.get("session").username, "draw.public_reply", String(id), { winner: wid });
+      return c.json({ ok: true, winners: await winnersOf(c.env.DB, id) });
     } catch (e) {
       return drawError(c, e);
     }

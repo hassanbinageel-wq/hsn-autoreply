@@ -3,6 +3,7 @@ import { api } from "../api";
 import { Link } from "../App";
 import { Alert, Badge, Card, Empty, PageHeader, Spinner, Stat, fmtTime, useAsync } from "../components/ui";
 import { toCsv } from "../../shared/csv";
+import { saveFile } from "../lib/save";
 import { AR_LABELS } from "../../shared/states";
 
 const PERIODS: Array<[number, string]> = [
@@ -100,11 +101,7 @@ function PeopleList({ id, days, isComment, gated, mediaById, filter, setFilter }
       "آخر تحديث": fmtTime(p.last_at),
     }));
     const blob = new Blob([toCsv(headers, rows)], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `campaign-${id}-${filter.segment}.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    saveFile(blob, `campaign-${id}-${filter.segment}.csv`).catch(() => undefined);
   };
 
   return (

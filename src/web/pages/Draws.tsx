@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { api } from "../api";
 import { Link, navigate } from "../App";
 import { Alert, Card, Field, Modal, PageHeader, Spinner, Toggle, fmtTime, toast, useAsync } from "../components/ui";
 import { toCsv } from "../../shared/csv";
 import { canvasesToPdf, renderPages, saveBlob, type PdfLine } from "../lib/pdf";
-import { Celebration } from "../components/Celebration";
+import { DrawStage } from "../components/DrawStage";
+import { styleFor } from "../lib/reel";
+import { saveFile } from "../lib/save";
+import { openExternal } from "../platform";
 import { DrawsTabs } from "./CardDesigns";
-import { DEFAULT_CARD, cardDesignSchema, type CardDesign } from "../../shared/card";
+import { DEFAULT_CARD, cardDesignSchema, fillCard, type CardDesign } from "../../shared/card";
 import { canvasToJpegDataUrl, renderCard } from "../lib/card";
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -356,53 +358,6 @@ const newRequestId = () => {
   return "req_" + Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
-function Countdown({ title, names, winner, onDone }: { title: string; names: string[]; winner: any; onDone: () => void }) {
-  const [n, setN] = useState(3);
-  const [spin, setSpin] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState(false);
-  useEffect(() => {
-    if (n > 0) {
-      const t = setTimeout(() => setN(n - 1), 850);
-      return () => clearTimeout(t);
-    }
-    // Purely visual shuffle over participant names; the winner was already chosen and saved on the server.
-    let i = 0;
-    const iv = setInterval(() => {
-      setSpin(names.length ? names[Math.floor(Math.random() * names.length)] : "…");
-      if (++i > 24) {
-        clearInterval(iv);
-        setRevealed(true);
-      }
-    }, 85);
-    return () => clearInterval(iv);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [n]);
-  return createPortal(
-    <div
-      className={`fixed inset-0 z-[70] flex min-h-[100dvh] flex-col items-center justify-center p-6 text-center text-white transition-colors duration-700 ${revealed ? "bg-gradient-to-b from-[#05030f] via-[#0b0a24] to-[#1a0b2e]" : "bg-gradient-to-br from-violet-900 via-fuchsia-800 to-orange-700"}`}
-      onClick={() => revealed && onDone()}
-    >
-      <div className="mb-6 text-2xl font-bold opacity-90">🎁 {title}</div>
-      {n > 0 ? (
-        <div key={n} className="count-pop text-[9rem] font-black leading-none drop-shadow-lg">{n}</div>
-      ) : !revealed ? (
-        <div>
-          <div className="mb-3 text-lg opacity-80">جارٍ الاختيار…</div>
-          <div className="text-4xl font-black" dir="ltr">@{spin}</div>
-        </div>
-      ) : (
-        <div className="count-pop">
-          <div className="mb-2 text-xl opacity-90">🎉 مبروك</div>
-          <div className="text-5xl font-black drop-shadow-lg" dir="ltr">{winner?.author_username ? `@${winner.author_username}` : "فائز"}</div>
-          {winner?.text && <div className="mx-auto mt-4 max-w-xl text-lg opacity-90">«{winner.text}»</div>}
-          <div className="mt-8 text-sm opacity-70">اضغط في أي مكان للمتابعة</div>
-        </div>
-      )}
-      {revealed && <Celebration />}
-    </div>
-  , document.body);
-}
-
 const SEND_LABEL: Record<string, [string, string]> = {
   sent: ["✅ أُرسلت البطاقة", "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"],
   failed: ["⚠️ فشل الإرسال", "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"],
@@ -430,6 +385,8 @@ function WinnerCard({ w, onReplace, onCard }: { w: any; onReplace?: () => void; 
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1.5">
         {w.send_status && SEND_LABEL[w.send_status] && <span className={`rounded-full px-2 py-0.5 text-[11px] ${SEND_LABEL[w.send_status][1]}`}>{SEND_LABEL[w.send_status][0]}</span>}
+        {w.public_reply_status === "sent" && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">💬 تم الرد العام</span>}
+        {(w.public_reply_status === "uncertain" || w.public_reply_status === "failed") && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">💬 الرد العام {w.public_reply_status === "failed" ? "فشل" : "غير مؤكد"}</span>}
         {onCard && <button className="btn btn-primary text-xs" onClick={onCard}>🖼️ البطاقة</button>}
         {onReplace && <button className="btn btn-ghost text-xs" onClick={onReplace}>🔁 استبدال</button>}
       </div>
@@ -441,23 +398,39 @@ function WinnerCardModal({ draw, winner, design, account, onClose, onSent }: { d
   const [src, setSrc] = useState<string | null>(null);
   const [plan, setPlan] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const vars = {
+    username: winner.author_username,
+    position: winner.position,
+    contest: design.title || draw.name,
+    account,
+    drawnAt: draw.drawn_at ?? winner.created_at ?? Date.now(),
+    timezone: draw.timezone,
+  };
+  const [replyText, setReplyText] = useState(() => fillCard(design.public_reply_text, design, vars));
+  const message = fillCard(design.message_text, design, vars);
+  const loadPlan = () => api(`/api/draws/${draw.id}/winners/${winner.id}/plan`).then(setPlan).catch((e) => setPlan({ can: false, reason: e.message }));
   useEffect(() => {
-    renderCard(design, {
-      username: winner.author_username,
-      position: winner.position,
-      contest: design.title || draw.name,
-      account,
-      drawnAt: draw.drawn_at ?? winner.created_at ?? Date.now(),
-      timezone: draw.timezone,
-    }).then((c) => setSrc(canvasToJpegDataUrl(c)));
-    api(`/api/draws/${draw.id}/winners/${winner.id}/plan`).then(setPlan).catch((e) => setPlan({ can: false, reason: e.message }));
+    renderCard(design, vars).then((c) => setSrc(canvasToJpegDataUrl(c)));
+    loadPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [design, winner.id]);
-  const download = () => {
+  const fileName = `winner-${winner.position}-${winner.author_username ?? winner.id}.jpg`;
+  const download = async () => {
     if (!src) return;
-    const a = document.createElement("a");
-    a.href = src;
-    a.download = `winner-${winner.position}-${winner.author_username ?? winner.id}.jpg`;
-    a.click();
+    const [head, b64] = src.split(",", 2);
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: head.slice(5).split(";")[0] });
+    await saveFile(blob, fileName, "بطاقة الفوز").catch(() => undefined);
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(message);
+      toast("تم نسخ نص التهنئة");
+    } catch {
+      toast("تعذر النسخ", "bad");
+    }
   };
   const send = async () => {
     if (!src || !plan?.can) return;
@@ -477,28 +450,78 @@ function WinnerCardModal({ draw, winner, design, account, onClose, onSent }: { d
       setBusy(false);
     }
   };
+  const publicReply = async () => {
+    if (!replyText.trim()) return;
+    if (!confirm(`نشر هذا الرد العام تحت تعليق ${winner.author_username ? "@" + winner.author_username : "الفائز"}؟\n\n${replyText}\n\nسيظهر للجميع ولا يمكن التراجع عنه من هنا.`)) return;
+    setBusy(true);
+    try {
+      await api(`/api/draws/${draw.id}/winners/${winner.id}/public-reply`, { body: { text: replyText } });
+      toast("تم نشر الرد تحت تعليقه ✅");
+      onSent();
+      loadPlan();
+    } catch (e: any) {
+      toast(e.message, "bad");
+      onSent();
+      loadPlan();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pr = plan?.public_reply;
   return (
     <Modal open onClose={onClose} title={`بطاقة الفائز ${winner.position} — ${winner.author_username ? "@" + winner.author_username : ""}`}>
-      <div className="space-y-3">
-        {src ? <img src={src} alt="بطاقة الفوز" className="mx-auto max-h-[60vh] rounded-xl shadow-lg" /> : <Spinner />}
-        <div className="flex flex-wrap gap-2">
-          <button className="btn btn-ghost" disabled={!src} onClick={download}>⬇️ تنزيل الصورة</button>
+      <div className="space-y-4">
+        {src ? <img src={src} alt="بطاقة الفوز" className="mx-auto max-h-[55vh] rounded-2xl shadow-xl" /> : <Spinner />}
+        <div className="flex flex-wrap justify-center gap-2">
+          <button className="btn btn-ghost" disabled={!src} onClick={download}>⬇️ حفظ / مشاركة الصورة</button>
+          <button className="btn btn-ghost" onClick={copy}>📋 نسخ نص التهنئة</button>
         </div>
-        {!plan ? (
-          <Spinner />
-        ) : plan.can ? (
-          <Alert tone="info">
-            <b>طريقة الإرسال المتاحة:</b> {plan.reason}
-            {plan.window_expires_at ? <span className="block text-xs">متاح حتى {fmtTime(plan.window_expires_at)}</span> : null}
-          </Alert>
-        ) : (
-          <Alert tone="warn">
-            <b>لا يمكن الإرسال الآن:</b> {plan.reason}
-            <span className="block text-xs">يمكنك تنزيل الصورة ونشرها أو إرسالها بنفسك، أو اطلب من الفائز أن يراسلك ثم أعد المحاولة خلال 24 ساعة.</span>
-          </Alert>
+
+        <section className="space-y-2 rounded-2xl border border-[var(--border)] p-3">
+          <div className="font-bold">📨 إرسال مباشر من النظام</div>
+          {!plan ? (
+            <Spinner />
+          ) : plan.can ? (
+            <Alert tone="info">
+              {plan.reason}
+              {plan.window_expires_at ? <span className="block text-xs">متاح حتى {fmtTime(plan.window_expires_at)}</span> : null}
+            </Alert>
+          ) : (
+            <Alert tone="warn">{plan.reason}</Alert>
+          )}
+          <button className="btn btn-primary w-full" disabled={!plan?.can || !src || busy} onClick={send}>{busy ? "جارٍ الإرسال…" : "📨 إرسال البطاقة للفائز"}</button>
+        </section>
+
+        {plan && !plan.can && (
+          <section className="space-y-3 rounded-2xl border border-[var(--border)] p-3">
+            <div className="font-bold">طرق أخرى للوصول للفائز</div>
+            {pr && (
+              <div className="space-y-2">
+                <div className="text-sm font-semibold">1) 💬 رد عام تحت تعليقه</div>
+                {pr.can ? (
+                  <>
+                    <textarea className="input min-h-[70px] text-sm" value={replyText} maxLength={1000} onChange={(e) => setReplyText(e.target.value)} />
+                    <button className="btn btn-ghost w-full" disabled={busy || !replyText.trim()} onClick={publicReply}>💬 نشر الرد تحت تعليقه</button>
+                    <p className="muted text-xs">يصله تنبيه بالرد. لما يراسلك على الخاص تنفتح نافذة 24 ساعة ويصير زر «إرسال البطاقة» متاحًا هنا.</p>
+                  </>
+                ) : (
+                  <p className="muted text-sm">{pr.reason}</p>
+                )}
+              </div>
+            )}
+            {winner.author_username && (
+              <div className="space-y-2">
+                <div className="text-sm font-semibold">2) 📲 أرسلها بنفسك من تطبيق إنستقرام</div>
+                <p className="muted text-xs">احفظ الصورة وانسخ النص، ثم افتح محادثته وأرسلها يدويًا (قد تصله كطلب رسالة إذا لم يكن يتابعك).</p>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn btn-ghost text-sm" onClick={() => openExternal(`https://ig.me/m/${encodeURIComponent(winner.author_username)}`)}>📲 افتح محادثته</button>
+                  <button className="btn btn-ghost text-sm" onClick={() => openExternal(`https://www.instagram.com/${encodeURIComponent(winner.author_username)}/`)}>👤 ملفه الشخصي</button>
+                </div>
+              </div>
+            )}
+          </section>
         )}
-        <button className="btn btn-primary w-full" disabled={!plan?.can || !src || busy} onClick={send}>{busy ? "جارٍ الإرسال…" : "📨 إرسال للفائز"}</button>
-        <p className="muted text-xs">لا يُرسل شيء إلا بضغطك وتأكيدك. الرسالة المرسلة تظهر في «الرسائل».</p>
+        <p className="muted text-xs">لا يُرسل ولا يُنشر شيء إلا بضغطك وتأكيدك. الرسائل المرسلة تظهر في «الرسائل».</p>
       </div>
     </Modal>
   );
@@ -510,6 +533,14 @@ export function DrawPage({ id }: { id: number }) {
   const [fetching, setFetching] = useState(false);
   const [running, setRunning] = useState(false);
   const [anim, setAnim] = useState<{ title: string; winner: any } | null>(null);
+  const [recordVideo, setRecordVideo] = useState(() => {
+    try {
+      return localStorage.getItem("hsn_draw_record") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const [lastVideo, setLastVideo] = useState<{ blob: Blob; name: string } | null>(null);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | "eligible" | "excluded">("all");
   const [replaceFor, setReplaceFor] = useState<any>(null);
@@ -688,7 +719,23 @@ export function DrawPage({ id }: { id: number }) {
 
   return (
     <div className="space-y-4">
-      {anim && <Countdown title={anim.title} winner={anim.winner} names={entries.filter((e) => e.eligible && e.author_username).map((e) => e.author_username)} onDone={animDone} />}
+      {anim && (() => {
+        const names = Array.from(new Set(entries.filter((e) => e.eligible && e.author_username).map((e) => e.author_username as string)));
+        return (
+          <DrawStage
+            title={anim.title}
+            drawName={d.name}
+            account={account?.username ?? null}
+            names={names}
+            total={Math.max(names.length, 1)}
+            winner={anim.winner}
+            style={styleFor(anim.winner.position, d.id)}
+            record={recordVideo}
+            onVideo={(blob, name) => setLastVideo({ blob, name })}
+            onClose={animDone}
+          />
+        );
+      })()}
       <PageHeader
         title={`🎁 ${d.name}`}
         subtitle={`حملة «${data.campaign?.name ?? ""}» · ${d.source_type === "story" ? "ردود ستوري" : "تعليقات منشور"}`}
@@ -865,6 +912,25 @@ export function DrawPage({ id }: { id: number }) {
                 </div>
               );
             })}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Toggle
+              checked={recordVideo}
+              onChange={(v) => {
+                setRecordVideo(v);
+                try {
+                  localStorage.setItem("hsn_draw_record", v ? "1" : "0");
+                } catch {
+                  /* ignore */
+                }
+              }}
+              label="🎥 تسجيل فيديو لحظة الاختيار (بمقاس الستوري)"
+            />
+            {lastVideo && (
+              <button className="btn btn-ghost text-sm" onClick={() => saveFile(lastVideo.blob, lastVideo.name, "فيديو السحب").catch(() => undefined)}>
+                ⬇️ حفظ فيديو آخر اختيار
+              </button>
+            )}
           </div>
           <p className="muted text-xs">
             كل فائز يُختار على الخادم عند ضغطك ويُحفظ فورًا؛ الحركة للعرض فقط ولا تؤثر على النتيجة. الضغط المتكرر لا يختار فائزًا إضافيًا. بعد اختيار الفائز الأول تُجمَّد

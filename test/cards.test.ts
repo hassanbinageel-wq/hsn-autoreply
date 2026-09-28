@@ -2,7 +2,7 @@ import { exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DB, IG_ID, makeCtx, MockMeta, resetDb, seedAccount, seedCampaign } from "./helpers";
 import { fetchBatch, pickNext, winnersOf } from "../src/worker/services/draws";
-import { planFor, sendCard, storeCard } from "../src/worker/services/cards";
+import { planFor, publicReplyToWinner, sendCard, storeCard } from "../src/worker/services/cards";
 import { DEFAULT_CARD, cardDateLine, fillCard, prizeFor } from "../src/shared/card";
 import type { CommentItem } from "../src/worker/meta/types";
 
@@ -144,5 +144,28 @@ describe("what Instagram allows for each winner", () => {
     expect((await r.arrayBuffer()).byteLength).toBe(1_200_000);
     const huge = "A".repeat(Math.ceil((1_600_000 * 4) / 3));
     await expect(storeCard(DB, drawId, winnerId, `data:image/jpeg;base64,${huge}`)).rejects.toMatchObject({ code: "too_large" });
+  });
+
+  it("after 7 days: no private message, but ONE public reply under the comment is allowed", async () => {
+    const { drawId, winnerId, meta } = await drawWith([cm("c8", "W8", 20 * 86_400_000)]);
+    const plan = await planFor(DB, drawId, winnerId);
+    expect(plan.can).toBe(false);
+    expect(plan.public_reply).toMatchObject({ can: true });
+    await publicReplyToWinner(makeCtx(meta), drawId, winnerId, "مبروك @u_W8 راسلنا على الخاص");
+    expect(meta.sends()).toEqual([{ kind: "public_reply", target: "c8", text: "مبروك @u_W8 راسلنا على الخاص" }]);
+    expect((await winnersOf(DB, drawId))[0]).toMatchObject({ public_reply_status: "sent" });
+    expect((await planFor(DB, drawId, winnerId)).public_reply).toMatchObject({ can: false });
+    await expect(publicReplyToWinner(makeCtx(meta), drawId, winnerId, "مرة ثانية")).rejects.toMatchObject({ code: "cannot_reply" });
+    expect(meta.sends()).toHaveLength(1);
+  });
+
+  it("a rejected public reply can be retried; an interrupted one is not", async () => {
+    const { drawId, winnerId, meta } = await drawWith([cm("c9", "W9")]);
+    meta.publicReply = "fail";
+    await expect(publicReplyToWinner(makeCtx(meta), drawId, winnerId, "مبروك")).rejects.toMatchObject({ code: "reply_failed" });
+    meta.publicReply = "uncertain";
+    await expect(publicReplyToWinner(makeCtx(meta), drawId, winnerId, "مبروك")).rejects.toMatchObject({ code: "reply_failed" });
+    await expect(publicReplyToWinner(makeCtx(meta), drawId, winnerId, "مبروك")).rejects.toMatchObject({ code: "cannot_reply" });
+    expect(meta.sends()).toHaveLength(2);
   });
 });

@@ -13,11 +13,28 @@ export const CARD_THEMES = {
   night: { label: "ليلي", bg1: "#020617", bg2: "#1e3a8a", accent: "#38bdf8", text: "#f8fafc" },
   sunset: { label: "غروب", bg1: "#7c2d12", bg2: "#db2777", accent: "#fde047", text: "#fff7ed" },
   emerald: { label: "زمردي", bg1: "#022c22", bg2: "#047857", accent: "#fcd34d", text: "#ecfdf5" },
+  ivory: { label: "عاجي فاتح", bg1: "#fffaf0", bg2: "#efe2c2", accent: "#b7862c", text: "#2b2111" },
+  rose: { label: "وردي ذهبي", bg1: "#3b0a1e", bg2: "#9d174d", accent: "#fbcfe8", text: "#fff1f2" },
+} as const;
+
+export const CARD_LAYOUTS = {
+  royal: "فاخر (إطار وزخارف)",
+  modern: "عصري (رقم كبير وكتل ملونة)",
+  festive: "احتفالي (قصاصات وأشعة)",
+} as const;
+
+export const CARD_FONTS = {
+  cairo: { label: "Cairo — عصري عريض", display: "Cairo", body: "Cairo", weight: 800 },
+  kufi: { label: "Reem Kufi — كوفي أنيق", display: "Reem Kufi", body: "IBM Plex Sans Arabic", weight: 700 },
+  lalezar: { label: "Lalezar — احتفالي", display: "Lalezar", body: "IBM Plex Sans Arabic", weight: 400 },
+  plex: { label: "IBM Plex — رسمي هادئ", display: "IBM Plex Sans Arabic", body: "IBM Plex Sans Arabic", weight: 700 },
 } as const;
 
 export const cardDesignSchema = z.object({
   size: z.enum(["portrait", "square", "story"]).default("portrait"),
-  theme: z.enum(["gold", "violet", "night", "sunset", "emerald", "custom"]).default("gold"),
+  layout: z.enum(["royal", "modern", "festive"]).default("royal"),
+  font: z.enum(["cairo", "kufi", "lalezar", "plex"]).default("cairo"),
+  theme: z.enum(["gold", "violet", "night", "sunset", "emerald", "ivory", "rose", "custom"]).default("gold"),
   bg1: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#1a1206"),
   bg2: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#3b2a0a"),
   accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#f5c542"),
@@ -36,6 +53,8 @@ export const cardDesignSchema = z.object({
   footer: z.string().trim().max(60).default("@{{account}}"),
   // Text of the message sent with the card (DM, or the private reply with a button to the card).
   message_text: z.string().trim().max(600).default("مبروك {{username}} 🎉 فزت بالمركز {{position}} في {{contest}}!\nالجائزة: {{prize}}\nتواصل معنا هنا لاستلامها."),
+  // Public reply under the winner's comment (used when a private message is no longer allowed).
+  public_reply_text: z.string().trim().max(600).default("مبروك {{username}} 🎉 فزت بالمركز {{position}} في {{contest}}! راسلنا على الخاص لاستلام جائزتك 🎁"),
 });
 export type CardDesign = z.infer<typeof cardDesignSchema>;
 export const DEFAULT_CARD: CardDesign = cardDesignSchema.parse({});

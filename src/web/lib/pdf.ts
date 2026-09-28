@@ -1,3 +1,4 @@
+import { saveFile } from "./save";
 /**
  * Arabic-friendly PDF export without external libraries: each page is drawn on a canvas (the browser shapes Arabic
  * text correctly), encoded as JPEG, and wrapped in a minimal PDF (one full-page image per A4 page).
@@ -138,12 +139,5 @@ export function canvasesToPdf(pages: HTMLCanvasElement[]): Blob {
 }
 
 export function saveBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return saveFile(blob, filename);
 }

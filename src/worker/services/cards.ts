@@ -13,6 +13,8 @@ export interface SendPlan {
   channel?: "dm" | "private_reply";
   reason: string;
   window_expires_at?: number | null;
+  /** A public reply under the winner's comment has no time window (the only API route left after 7 days). */
+  public_reply?: { can: boolean; reason: string; status?: string | null };
 }
 
 interface WinnerRow {
@@ -21,6 +23,7 @@ interface WinnerRow {
   position: number;
   status: string;
   send_status: string | null;
+  public_reply_status: string | null;
   comment_id: string;
   author_id: string | null;
   author_username: string | null;
@@ -31,7 +34,7 @@ interface WinnerRow {
 async function loadWinner(db: D1Database, drawId: number, winnerId: number): Promise<WinnerRow | null> {
   return first<WinnerRow>(
     db,
-    `SELECT w.id, w.draw_id, w.position, w.status, w.send_status, e.comment_id, e.author_id, e.author_username, e.created_time, e.source
+    `SELECT w.id, w.draw_id, w.position, w.status, w.send_status, w.public_reply_status, e.comment_id, e.author_id, e.author_username, e.created_time, e.source
        FROM draw_winners w JOIN draw_entries e ON e.id = w.entry_id WHERE w.id = ? AND w.draw_id = ?`,
     winnerId,
     drawId,
@@ -90,10 +93,46 @@ export async function sendPlan(db: D1Database, w: WinnerRow, now = Date.now()): 
   return { can: false, reason: "لم يراسلك خلال آخر 24 ساعة — إنستقرام لا يسمح بمراسلته حتى يراسلك مجددًا" };
 }
 
+export function publicReplyPlan(w: WinnerRow): NonNullable<SendPlan["public_reply"]> {
+  const status = w.public_reply_status;
+  if (w.status !== "active") return { can: false, reason: "هذا الفائز مستبدَل", status };
+  if (w.source === "story_reply") return { can: false, reason: "ردود الستوري رسائل خاصة وليست تعليقات — لا يوجد تعليق عام للرد عليه", status };
+  if (status === "sent") return { can: false, reason: "تم الرد على تعليقه مسبقًا", status };
+  if (status === "sending" || status === "uncertain") return { can: false, reason: "الرد السابق غير مؤكد — تحقق من التعليق في إنستقرام", status };
+  return { can: true, reason: "رد عام يظهر تحت تعليقه ويصله تنبيه به (بدون حد زمني)", status };
+}
+
 export async function planFor(db: D1Database, drawId: number, winnerId: number) {
   const w = await loadWinner(db, drawId, winnerId);
   if (!w) throw new DrawFailure(404, "not_found", "الفائز غير موجود");
-  return sendPlan(db, w);
+  return { ...(await sendPlan(db, w)), public_reply: publicReplyPlan(w) };
+}
+
+/**
+ * Posts ONE public reply under the winner's comment (manual, confirmed by the owner). Instagram allows replying to
+ * comments on your own media without the 7-day private-reply window, so this is the way to reach an older winner:
+ * e.g. «مبروك @name! راسلنا على الخاص لاستلام جائزتك» — once they message, the 24h window opens and the card can be sent.
+ */
+export async function publicReplyToWinner(ctx: EngineContext, drawId: number, winnerId: number, text: string): Promise<void> {
+  const db = ctx.db;
+  const w = await loadWinner(db, drawId, winnerId);
+  if (!w) throw new DrawFailure(404, "not_found", "الفائز غير موجود");
+  const plan = publicReplyPlan(w);
+  if (!plan.can) throw new DrawFailure(409, "cannot_reply", plan.reason);
+  const account = await first<AccountRow>(db, "SELECT * FROM instagram_accounts WHERE is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1");
+  if (!account) throw new DrawFailure(409, "no_account", "اربط حساب إنستقرام أولًا");
+  const token = await ctx.getAccessToken(account);
+  if (!token) throw new DrawFailure(409, "no_token", "التفويض غير متاح — أعد الربط");
+  const lock = await run(db, "UPDATE draw_winners SET public_reply_status = 'sending', public_reply_error = NULL WHERE id = ? AND (public_reply_status IS NULL OR public_reply_status = 'failed')", winnerId);
+  if (!(lock.meta?.changes ?? 0)) throw new DrawFailure(409, "already", "تم الرد أو هو قيد التنفيذ");
+  const r = await ctx.meta(false).replyToComment(token, w.comment_id, text);
+  if (!r.ok) {
+    if (r.error.kind === "auth") await ctx.onAuthError?.(account, r.error.message);
+    const uncertain = r.error.kind === "uncertain";
+    await run(db, "UPDATE draw_winners SET public_reply_status = ?, public_reply_error = ? WHERE id = ?", uncertain ? "uncertain" : "failed", r.error.message, winnerId);
+    throw new DrawFailure(502, "reply_failed", uncertain ? "انقطع الاتصال — قد يكون الرد نُشر، تحقق من التعليق قبل إعادة المحاولة" : `رفضت Meta الرد: ${r.error.message}`);
+  }
+  await run(db, "UPDATE draw_winners SET public_reply_status = 'sent', public_reply_at = ?, public_reply_error = NULL WHERE id = ?", ctx.now(), winnerId);
 }
 
 /** Stores a rendered card image (JPEG/PNG) for a winner and returns its public token. */

@@ -64,13 +64,6 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 /** Downloads a file from the API (CSV / backup) respecting the auth mode. */
 export async function download(path: string, filename: string) {
   const res = await api<Response>(path, { raw: true });
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const { saveFile } = await import("./lib/save");
+  await saveFile(await res.blob(), filename);
 }
