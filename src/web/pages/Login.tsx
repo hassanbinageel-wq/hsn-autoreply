@@ -1,3 +1,4 @@
+import { Icon } from "../components/Icon";
 import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, setCsrf } from "../api";
 import { API_BASE, deviceToken, isNative } from "../platform";
@@ -5,6 +6,7 @@ import { Alert, Field } from "../components/ui";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
   const [status, setStatus] = useState<{ needs_setup: boolean; setup_enabled: boolean; missing_secrets: string[] } | null>(null);
+  const [show, setShow] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [setupToken, setSetupToken] = useState("");
@@ -39,35 +41,65 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <form onSubmit={submit} className="card w-full max-w-md space-y-4 p-6">
-        <div className="text-center">
-          <img src="./favicon.svg" alt="" className="mx-auto h-14 w-14" />
-          <h1 className="mt-2 text-2xl font-bold">HSN AutoReply</h1>
-          <p className="muted text-sm">{status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : "تسجيل الدخول للوحة التحكم"}</p>
-        </div>
-        {isNative && !API_BASE && <Alert tone="bad">لم يُحدَّد عنوان الخادم في هذا الإصدار (VITE_API_BASE).</Alert>}
-        {status?.missing_secrets?.length ? <Alert tone="warn">أسرار الخادم غير مكتملة: {status.missing_secrets.join(", ")}</Alert> : null}
-        {status?.needs_setup && !status.setup_enabled && (
-          <Alert tone="warn">الإعداد الأولي معطّل. أضف السر SETUP_TOKEN و PASSWORD_PEPPER إلى Worker ثم أعد المحاولة (انظر docs/DEPLOY.md).</Alert>
-        )}
-        {status?.needs_setup && (
-          <Field label="رمز الإعداد (SETUP_TOKEN)" hint="القيمة التي وضعتها كسر في Cloudflare. لا تشاركها مع أحد.">
-            <input className="input" type="password" autoComplete="off" value={setupToken} onChange={(e) => setSetupToken(e.target.value)} required />
+    <div className="flex min-h-screen">
+      <div className="flex flex-1 items-center justify-center p-5">
+        <form onSubmit={submit} className="w-full max-w-[400px] space-y-4">
+          <div className="mb-6 flex items-center gap-3">
+            <span className="grad flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-lg shadow-violet-500/30"><Icon name="zap" size={22} /></span>
+            <span className="leading-tight"><b className="font-display block text-lg font-extrabold">HSN AutoReply</b><span className="muted text-xs">لوحة الإدارة</span></span>
+          </div>
+          <div>
+            <h1 className="text-[28px] font-extrabold leading-tight">{status?.needs_setup ? "إعداد حساب الإدارة" : "أهلًا بعودتك 👋"}</h1>
+            <p className="muted mt-1.5 text-sm">{status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : "سجّل دخولك لإدارة حملاتك ورسائلك وسحوباتك."}</p>
+          </div>
+          {isNative && !API_BASE && <Alert tone="bad">لم يُحدَّد عنوان الخادم في هذا الإصدار (VITE_API_BASE).</Alert>}
+          {status?.missing_secrets?.length ? <Alert tone="warn">أسرار الخادم غير مكتملة: {status.missing_secrets.join(", ")}</Alert> : null}
+          {status?.needs_setup && !status.setup_enabled && (
+            <Alert tone="warn">الإعداد الأولي معطّل. أضف السر SETUP_TOKEN و PASSWORD_PEPPER إلى Worker ثم أعد المحاولة (انظر docs/DEPLOY.md).</Alert>
+          )}
+          {status?.needs_setup && (
+            <Field label="رمز الإعداد (SETUP_TOKEN)" hint="القيمة التي وضعتها كسر في Cloudflare. لا تشاركها مع أحد.">
+              <input className="input" type="password" autoComplete="off" value={setupToken} onChange={(e) => setSetupToken(e.target.value)} required />
+            </Field>
+          )}
+          <Field label="اسم المستخدم">
+            <input className="input" dir="ltr" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
           </Field>
-        )}
-        <Field label="اسم المستخدم">
-          <input className="input" dir="ltr" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
-        </Field>
-        <Field label="كلمة المرور" hint={status?.needs_setup ? "12 حرفًا على الأقل" : undefined}>
-          <input className="input" dir="ltr" type="password" autoComplete={status?.needs_setup ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required />
-        </Field>
-        {error && <Alert tone="bad">{error}</Alert>}
-        <button className="btn btn-primary w-full" disabled={busy || !status}>
-          {busy ? "…" : status?.needs_setup ? "إنشاء حساب الإدارة والدخول" : "دخول"}
-        </button>
-        <p className="muted text-center text-xs">هذا حساب إدارة التطبيق فقط — لا نطلب كلمة مرور إنستقرام أبدًا.</p>
-      </form>
+          <Field label="كلمة المرور" hint={status?.needs_setup ? "12 حرفًا على الأقل" : undefined}>
+            <div className="relative">
+              <input className="input pl-11" dir="ltr" type={show ? "text" : "password"} autoComplete={status?.needs_setup ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <button type="button" onClick={() => setShow((v) => !v)} className="muted absolute left-3 top-1/2 -translate-y-1/2" aria-label={show ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}><Icon name="eye" size={18} /></button>
+            </div>
+          </Field>
+          {error && <Alert tone="bad">{error}</Alert>}
+          <button type="submit" className="btn btn-primary min-h-12 w-full text-[15px]" disabled={busy || !status}>
+            {busy ? "…" : status?.needs_setup ? "إنشاء حساب الإدارة والدخول" : "تسجيل الدخول"}
+          </button>
+          <div className="flex items-start gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3.5 py-3 text-xs text-[var(--text-2)]">
+            <Icon name="shield" size={18} className="text-emerald-500" />
+            <span>هذا حساب إدارة التطبيق فقط — لا نطلب كلمة مرور إنستقرام أبدًا. الربط يتم عبر Meta الرسمي.</span>
+          </div>
+        </form>
+      </div>
+      <div className="relative hidden w-[44%] max-w-[640px] flex-col overflow-hidden p-12 text-white lg:flex" style={{ background: "radial-gradient(circle at 80% 15%,rgba(249,115,22,.55),transparent 45%),radial-gradient(circle at 15% 85%,rgba(219,39,119,.5),transparent 50%),linear-gradient(160deg,#1e0b4b,#4c1d95 50%,#86198f)" }}>
+        <div className="absolute inset-0" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px)", backgroundSize: "48px 48px" }} />
+        <div className="relative">
+          <h2 className="text-[36px] font-extrabold leading-snug">ردود تلقائية أذكى<br />وتفاعل أكبر على إنستقرام</h2>
+          <p className="mt-3 max-w-md leading-loose text-violet-100">حملات تعليقات وستوري، صندوق رسائل موحّد، سحوبات عادلة وبطاقات تهنئة — كلها عبر واجهة Meta الرسمية.</p>
+        </div>
+        <div className="relative mt-auto grid gap-3">
+          {[
+            ["target", "حملات تعليقات وستوري", "ترد تلقائيًا وتوصل المحتوى كزر يُفتح دائمًا"],
+            ["gift", "سحوبات عادلة", "اختيار آمن على الخادم مع عرض احتفالي وفيديو"],
+            ["shield", "Meta الرسمي فقط", "بدون كلمة مرور، وبدون أي طرق غير رسمية"],
+          ].map(([i, t, d]) => (
+            <div key={t} className="flex items-center gap-3 rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15"><Icon name={i} size={20} /></span>
+              <span><b className="block text-sm">{t}</b><span className="text-xs text-violet-100">{d}</span></span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

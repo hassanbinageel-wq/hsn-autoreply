@@ -2,11 +2,16 @@
 @import "@fontsource/ibm-plex-sans-arabic/400.css";
 @import "@fontsource/ibm-plex-sans-arabic/600.css";
 @import "@fontsource/ibm-plex-sans-arabic/700.css";
+@import "@fontsource/cairo/arabic-700.css";
+@import "@fontsource/cairo/latin-700.css";
+@import "@fontsource/cairo/arabic-800.css";
+@import "@fontsource/cairo/latin-800.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
   --font-sans: "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif;
+  --font-display: "Cairo", "IBM Plex Sans Arabic", system-ui, sans-serif;
   --color-brand-50: #f5f3ff;
   --color-brand-100: #ede9fe;
   --color-brand-500: #8b5cf6;
@@ -16,21 +21,30 @@
 }
 
 :root {
-  --bg: #f6f7fb;
+  --bg: #f6f5fb;
   --surface: #ffffff;
-  --surface-2: #f1f3f8;
-  --border: #e3e6ee;
-  --text: #0f172a;
-  --muted: #5b6477;
+  --surface-2: #f3f1fa;
+  --border: #ebe8f4;
+  --text: #16122b;
+  --text-2: #4a4562;
+  --muted: #7d7896;
+  --grad: linear-gradient(135deg, #7c3aed 0%, #c026d3 55%, #f97316 100%);
+  --shadow: 0 1px 2px rgba(22, 18, 43, 0.04), 0 8px 24px rgba(22, 18, 43, 0.06);
+  --active-bg: linear-gradient(90deg, rgba(124, 58, 237, 0.08), rgba(124, 58, 237, 0.16));
+  --active-text: #6d28d9;
   color-scheme: light;
 }
 .dark {
-  --bg: #0b0f14;
-  --surface: #121821;
-  --surface-2: #1a222e;
-  --border: #263041;
-  --text: #e8edf4;
-  --muted: #9aa6b8;
+  --bg: #0d0b18;
+  --surface: #15121f;
+  --surface-2: #1d1a2b;
+  --border: #2a2640;
+  --text: #f3f1fb;
+  --text-2: #c9c4dd;
+  --muted: #8d88a6;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.35);
+  --active-bg: linear-gradient(90deg, rgba(167, 139, 250, 0.1), rgba(167, 139, 250, 0.2));
+  --active-text: #c4b5fd;
   color-scheme: dark;
 }
 
@@ -47,10 +61,73 @@ body {
   line-height: 1.7;
 }
 
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-display);
+}
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 1rem;
+  box-shadow: var(--shadow);
+}
+.grad {
+  background: var(--grad);
+}
+.grad-text {
+  background: var(--grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-family: var(--font-display);
+}
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 0.7rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--text-2);
+}
+.nav-link:hover {
+  background: var(--surface-2);
+}
+.nav-link.on {
+  background: var(--active-bg);
+  color: var(--active-text);
+  box-shadow: inset -3px 0 0 #7c3aed;
+}
+.seg {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 3px;
+}
+.seg > * {
+  padding: 0.3rem 0.85rem;
+  border-radius: 0.55rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--muted);
+  font-family: var(--font-display);
+  white-space: nowrap;
+}
+.seg > .on {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
 }
 .muted {
   color: var(--muted);
@@ -64,7 +141,7 @@ body {
 
 .input {
   width: 100%;
-  min-height: 48px;
+  min-height: 44px;
   border-radius: 0.75rem;
   border: 1px solid var(--border);
   background: var(--surface);
@@ -86,27 +163,36 @@ textarea.input {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  min-height: 48px;
-  padding: 0 1.1rem;
-  border-radius: 0.8rem;
-  font-weight: 600;
-  transition: background 0.15s, opacity 0.15s;
+  min-height: 44px;
+  padding: 0 1.05rem;
+  border-radius: 0.75rem;
+  font-weight: 700;
+  font-family: var(--font-display);
+  white-space: nowrap;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s, box-shadow 0.15s;
 }
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
 .btn-primary {
-  background: var(--color-brand-700);
+  background: var(--grad);
   color: white;
+  box-shadow: 0 6px 16px rgba(124, 58, 237, 0.28);
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--color-brand-800);
+  box-shadow: 0 8px 22px rgba(124, 58, 237, 0.4);
 }
 .btn-ghost {
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-2);
 }
 .btn-danger {
   background: #b91c1c;

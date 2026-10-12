@@ -3,8 +3,14 @@ import { api } from "../api";
 import { Link, navigate } from "../App";
 import { AR_LABELS } from "../../shared/states";
 import { Alert, Badge, Empty, Modal, PageHeader, Spinner, toast, useAsync } from "../components/ui";
+import { Icon } from "../components/Icon";
 
-const TYPE_ICON: Record<string, string> = { comment: "💬", story_reply: "↩️", story_mention: "📣" };
+const TYPE_ICON: Record<string, string> = { comment: "msg", story_reply: "play", story_mention: "sparkle" };
+const TYPE_GRAD: Record<string, string> = {
+  comment: "linear-gradient(135deg,#7c3aed,#c026d3 60%,#f97316)",
+  story_reply: "linear-gradient(135deg,#0ea5e9,#6366f1)",
+  story_mention: "linear-gradient(135deg,#f97316,#e11d48)",
+};
 
 /** "Copy to a new reel": same messages and settings, attached to the posts/reels picked here, active right away. */
 function CopyToReelModal({ c, onClose, onDone }: { c: any; onClose: () => void; onDone: () => void }) {
@@ -100,7 +106,7 @@ function CardMenu({ c, act, onCopy }: { c: any; act: (fn: () => Promise<unknown>
   const item = "block w-full px-4 py-2.5 text-right text-sm hover:bg-[var(--surface-2)]";
   return (
     <div className="relative" ref={ref}>
-      <button className="muted rounded-lg px-2 py-1 text-lg" aria-label="خيارات" aria-haspopup="menu" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>⋮</button>
+      <button className="btn btn-ghost min-h-9 px-2.5" aria-label="خيارات" aria-haspopup="menu" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}><Icon name="more" size={18} /></button>
       {open && (
         <div role="menu" className="card absolute bottom-9 left-0 z-20 w-44 overflow-hidden p-0 shadow-xl" onClick={(e) => e.stopPropagation()}>
           <button role="menuitem" className={item} onClick={() => navigate(`/campaigns/${c.id}/stats`)}>📊 الإحصائيات</button>
@@ -142,21 +148,26 @@ export function CampaignsPage() {
   return (
     <div className="space-y-4">
       {copyFor && <CopyToReelModal c={copyFor} onClose={() => setCopyFor(null)} onDone={() => { setCopyFor(null); reload(); }} />}
-      <PageHeader title="الحملات" actions={<Link to="/campaigns/new" className="btn btn-primary">+ حملة جديدة</Link>} />
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <input className="input" placeholder="بحث بالاسم…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="بحث" />
-        <select className="input" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="الحالة">
-          <option value="">كل الحالات</option>
-          <option value="active">نشطة</option>
-          <option value="paused">متوقفة</option>
-          <option value="draft">مسودة</option>
-        </select>
-        <select className="input" value={type} onChange={(e) => setType(e.target.value)} aria-label="النوع">
-          <option value="">كل الأنواع</option>
-          <option value="comment">تعليقات</option>
-          <option value="story_reply">ردود الستوري</option>
-          <option value="story_mention">منشن الستوري</option>
-        </select>
+      <PageHeader
+        title="الحملات"
+        subtitle={data ? `${data.length} حملة · ${data.filter((c) => c.status === "active").length} نشطة` : undefined}
+        actions={<Link to="/campaigns/new" className="btn btn-primary"><Icon name="plus" size={18} />حملة جديدة</Link>}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+          <Icon name="search" size={17} className="muted absolute right-3 top-1/2 -translate-y-1/2" />
+          <input className="input pr-10" placeholder="بحث بالاسم…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="بحث" />
+        </div>
+        <div className="seg overflow-x-auto" role="tablist" aria-label="الحالة">
+          {[["", "الكل"], ["active", "نشطة"], ["paused", "متوقفة"], ["draft", "مسودة"]].map(([v, l]) => (
+            <button key={v} className={status === v ? "on" : ""} onClick={() => setStatus(v)}>{l}</button>
+          ))}
+        </div>
+        <div className="seg overflow-x-auto" role="tablist" aria-label="النوع">
+          {[["", "كل الأنواع"], ["comment", "تعليقات"], ["story_reply", "ردود ستوري"], ["story_mention", "منشن"]].map(([v, l]) => (
+            <button key={v} className={type === v ? "on" : ""} onClick={() => setType(v)}>{l}</button>
+          ))}
+        </div>
       </div>
       {loading && !data ? (
         <Spinner />
@@ -165,48 +176,53 @@ export function CampaignsPage() {
       ) : !data!.length ? (
         <Empty title="لا توجد حملات">أنشئ أول حملة، ثم جرّبها في المعاينة قبل التفعيل.</Empty>
       ) : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-          <Link to="/campaigns/new" className="card flex min-h-[220px] flex-col items-center justify-center gap-2 border-dashed text-center hover:border-[var(--color-brand-500)]">
-            <span className="text-4xl text-brand-600">+</span>
-            <span className="font-bold">حملة جديدة</span>
-          </Link>
-          {data!.map((c) => (
-            <div
-              key={c.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => navigate(`/campaigns/${c.id}`)}
-              onKeyDown={(e) => e.key === "Enter" && navigate(`/campaigns/${c.id}`)}
-              className="card group flex cursor-pointer flex-col overflow-hidden p-0 transition hover:shadow-lg"
-            >
-              <div className="relative aspect-[4/3] w-full overflow-hidden bg-gradient-to-br from-violet-700 via-fuchsia-600 to-orange-500">
-                {c.cover_url ? (
-                  <img src={c.cover_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={`h-full w-full object-cover transition group-hover:scale-105 ${c.status !== "active" ? "opacity-60 grayscale-[40%]" : ""}`} />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-5xl opacity-90">{TYPE_ICON[c.type]}</div>
-                )}
-                <div className="absolute right-2 top-2">
-                  <Badge value={c.status} label={{ active: "نشطة", paused: "متوقفة", draft: "مسودة", archived: "مؤرشفة" }[c.status as string]} />
-                </div>
-                {c.require_follow ? <span className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-xs text-white">🔒 متابعة</span> : null}
-                {c.media_count > 1 && <span className="absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-xs text-white">+{c.media_count - 1}</span>}
-              </div>
-              <div className="flex items-center gap-2 p-3">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-bold">{c.name}</div>
-                  <div className="muted truncate text-xs">
-                    👥 {c.people_count} شخص · ✅ {c.delivered_count} سُلّم
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {data!.map((c) => {
+            const rate = c.people_count ? Math.round((c.delivered_count / c.people_count) * 100) : null;
+            return (
+              <div
+                key={c.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(`/campaigns/${c.id}`)}
+                onKeyDown={(e) => e.key === "Enter" && navigate(`/campaigns/${c.id}`)}
+                className="card group flex cursor-pointer flex-col overflow-hidden transition hover:-translate-y-0.5 hover:shadow-xl"
+              >
+                <div className="relative h-36 w-full overflow-hidden" style={{ background: TYPE_GRAD[c.type] }}>
+                  {c.cover_url && <img src={c.cover_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={`h-full w-full object-cover transition group-hover:scale-105 ${c.status !== "active" ? "opacity-60 grayscale-[40%]" : ""}`} />}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent" />
+                  <div className="absolute right-3 top-3">
+                    <span className="rounded-full bg-white/95 px-0.5 py-0.5 dark:bg-black/60"><Badge value={c.status} label={{ active: "نشطة", paused: "متوقفة", draft: "مسودة", archived: "مؤرشفة" }[c.status as string]} /></span>
+                  </div>
+                  <span className="absolute left-3 top-3 flex h-9 w-9 items-center justify-center rounded-xl bg-white/20 text-white backdrop-blur"><Icon name={TYPE_ICON[c.type]} size={18} /></span>
+                  <div className="absolute bottom-3 right-3 flex flex-wrap gap-1.5">
+                    {c.require_follow ? <span className="chip bg-black/40 text-white"><Icon name="lock" size={12} />شرط المتابعة</span> : null}
+                    {c.media_count > 1 && <span className="chip bg-black/40 text-white">{c.media_count} منشورات</span>}
                   </div>
                 </div>
-                <button
-                  className="surface-2 shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold hover:ring-1 hover:ring-[var(--color-brand-500)]"
-                  title="الإحصائيات"
-                  onClick={(e) => { e.stopPropagation(); navigate(`/campaigns/${c.id}/stats`); }}
-                >📊 إحصائيات</button>
-                <CardMenu c={c} act={act} onCopy={() => setCopyFor(c)} />
+                <div className="flex flex-1 flex-col p-4">
+                  <b className="font-display truncate text-[15px] font-extrabold">{c.name}</b>
+                  <span className="muted text-xs">{AR_LABELS[c.type] ?? c.type}</span>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                    <div><b className="font-display block text-base">{c.people_count}</b><span className="muted">شخص</span></div>
+                    <div><b className="font-display block text-base">{c.delivered_count}</b><span className="muted">سُلِّم</span></div>
+                    <div><b className="font-display block text-base">{rate == null ? "—" : `${rate}%`}</b><span className="muted">نسبة التسليم</span></div>
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <button className="btn btn-ghost min-h-9 flex-1 text-xs" onClick={(e) => { e.stopPropagation(); navigate(`/campaigns/${c.id}/stats`); }}>
+                      <Icon name="eye" size={16} />الإحصائيات
+                    </button>
+                    <CardMenu c={c} act={act} onCopy={() => setCopyFor(c)} />
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
+          <Link to="/campaigns/new" className="flex min-h-[300px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--border)] text-center transition hover:border-violet-400">
+            <span className="grad flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/30"><Icon name="plus" size={26} /></span>
+            <b className="font-display mt-2 text-base">حملة جديدة</b>
+            <span className="muted text-xs">ابدأ واختبرها في المحاكاة قبل التفعيل</span>
+          </Link>
         </div>
       )}
     </div>

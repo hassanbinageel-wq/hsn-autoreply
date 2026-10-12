@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Link } from "../App";
+import { Icon } from "../components/Icon";
 import { Alert, Badge, Card, Empty, PageHeader, Spinner, Stat, fmtTime, useAsync } from "../components/ui";
 import { toCsv } from "../../shared/csv";
 import { saveFile } from "../lib/save";
@@ -17,21 +18,31 @@ const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` :
 
 /** Horizontal funnel bar: how many of the people who triggered the campaign reached each step. */
 function Funnel({ steps, base }: { steps: Array<[string, number, string]>; base: number }) {
+  const GRADS = [
+    "linear-gradient(90deg,#7c3aed,#8b5cf6)",
+    "linear-gradient(90deg,#9333ea,#c026d3)",
+    "linear-gradient(90deg,#c026d3,#db2777)",
+    "linear-gradient(90deg,#db2777,#f43f5e)",
+    "linear-gradient(90deg,#f43f5e,#f97316)",
+    "linear-gradient(90deg,#f97316,#fb923c)",
+  ];
   return (
-    <div className="space-y-2">
-      {steps.map(([label, n, color]) => (
-        <div key={label}>
-          <div className="mb-1 flex justify-between text-sm">
-            <span>{label}</span>
-            <span className="tabular-nums">
-              <b>{n}</b> <span className="muted">({pct(n, base)})</span>
-            </span>
+    <div className="space-y-2.5">
+      {steps.map(([label, n], i) => {
+        const w = base > 0 ? Math.max(n > 0 ? 8 : 0, Math.min(100, (n / base) * 100)) : 0;
+        return (
+          <div key={label} className="flex items-center gap-3">
+            <span className="w-36 shrink-0 text-[13px] font-bold sm:w-40">{label}</span>
+            <div className="h-9 flex-1">
+              <div className="font-display flex h-full items-center rounded-xl px-3 text-sm font-extrabold text-white transition-all" style={{ width: `${w}%`, minWidth: n > 0 ? 44 : 0, background: GRADS[i % GRADS.length] }}>
+                {n > 0 ? n.toLocaleString("en-US") : ""}
+              </div>
+              {n === 0 && <span className="muted -mt-7 block px-1 text-sm">0</span>}
+            </div>
+            <span className="muted w-11 shrink-0 text-left text-xs font-bold">{pct(n, base)}</span>
           </div>
-          <div className="surface-2 h-2.5 overflow-hidden rounded-full">
-            <div className={`h-full rounded-full ${color}`} style={{ width: base > 0 ? `${Math.min(100, (n / base) * 100)}%` : "0%" }} />
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -221,14 +232,14 @@ export function CampaignStatsPage({ id }: { id: number }) {
         <Alert tone="bad">{error}</Alert>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
-            {isComment && <Stat label="التعليقات المستلمة" value={t.comments_total} hint={`${t.comments_matched} طابقت الكلمات`} />}
-            <button className="text-right" onClick={() => show("all")}><Stat label="أشخاص تفاعلوا" value={t.people} hint={`${t.triggers} مرة تشغيل · اضغط لعرض الأسماء`} /></button>
-            <button className="text-right" onClick={() => show("reached")}><Stat label="وصلتهم الرسالة" value={t.reached} hint={pct(t.reached, t.people)} tone="good" /></button>
-            {gated && <button className="text-right" onClick={() => show("new_follower")}><Stat label="تابعوا بسبب الحملة" value={t.new_followers} hint="متابعون جدد" tone="good" /></button>}
-            {gated && <button className="text-right" onClick={() => show("already_following")}><Stat label="كانوا متابعين أصلًا" value={t.already_following} /></button>}
-            <button className="text-right" onClick={() => show("delivered")}><Stat label="استلموا المحتوى" value={t.delivered} hint={`تحويل ${pct(t.delivered, t.people)}`} tone="good" /></button>
-            <button className="text-right" onClick={() => show("clicked")}><Stat label="ضغطوا الرابط" value={t.clicked} hint={`${pct(t.clicked, t.delivered)} ممن استلموا · ${t.clicks_total} ضغطة`} tone="good" /></button>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 [&>button>div]:h-full [&>button]:h-full">
+            {isComment && <Stat icon={<Icon name="msg" size={18} />} accent="sky" label="التعليقات المستلمة" value={t.comments_total} hint={`${t.comments_matched} طابقت الكلمات`} />}
+            <button className="text-right" onClick={() => show("all")}><Stat icon={<Icon name="users" size={18} />} label="أشخاص تفاعلوا" value={t.people} hint={`${t.triggers} مرة تشغيل · اضغط لعرض الأسماء`} /></button>
+            <button className="text-right" onClick={() => show("reached")}><Stat icon={<Icon name="send" size={18} />} accent="pink" label="وصلتهم الرسالة" value={t.reached} hint={pct(t.reached, t.people)} tone="good" /></button>
+            {gated && <button className="text-right" onClick={() => show("new_follower")}><Stat icon={<Icon name="userplus" size={18} />} accent="green" label="تابعوا بسبب الحملة" value={t.new_followers} hint="متابعون جدد" tone="good" /></button>}
+            {gated && <button className="text-right" onClick={() => show("already_following")}><Stat icon={<Icon name="heart" size={18} />} accent="orange" label="كانوا متابعين أصلًا" value={t.already_following} /></button>}
+            <button className="text-right" onClick={() => show("delivered")}><Stat icon={<Icon name="check" size={18} />} accent="green" label="استلموا المحتوى" value={t.delivered} hint={`تحويل ${pct(t.delivered, t.people)}`} tone="good" /></button>
+            <button className="text-right" onClick={() => show("clicked")}><Stat icon={<Icon name="click" size={18} />} accent="sky" label="ضغطوا الرابط" value={t.clicked} hint={`${pct(t.clicked, t.delivered)} ممن استلموا · ${t.clicks_total} ضغطة`} tone="good" /></button>
           </div>
 
           {t.people > 0 && (

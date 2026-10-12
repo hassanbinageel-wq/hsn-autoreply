@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Alert, Badge, PageHeader, Spinner, fmtTime, toast } from "../components/ui";
 import { UserAvatar } from "../components/UserAvatar";
+import { Icon } from "../components/Icon";
 
 const SOURCE: Record<string, string> = { bot: "🤖 تلقائي", manual: "✍️ ردك من هنا", app: "📱 من تطبيق إنستقرام" };
 
@@ -50,53 +51,61 @@ function Thread({ id, onSent }: { id: number; onSent: () => void }) {
   const remaining = data.window_expires_at ? data.window_expires_at - Date.now() : 0;
   return (
     <div className="flex flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] pb-3">
-        <UserAvatar url={p.profile_pic_url} name={p.username} size={44} />
-        {p.username ? (
-          <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="text-lg font-bold hover:underline" dir="ltr">@{p.username}</a>
-        ) : (
-          <span className="muted text-lg font-bold">حساب غير معروف</span>
-        )}
-        {p.last_follow_status && <Badge value={p.last_follow_status} />}
-        {data.flows.map((f: any) => (
-          <span key={f.id} className="surface-2 rounded-full px-2 py-0.5 text-xs">
-            {f.campaign_name} · {f.state === "content_sent" ? "استلم ✅" : "لم يكتمل"}{f.link_clicks ? " · 🔗 ضغط الرابط" : ""}
-          </span>
-        ))}
+      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] pb-3">
+        <UserAvatar url={p.profile_pic_url} name={p.username} size={46} />
+        <div className="min-w-0 flex-1">
+          {p.username ? (
+            <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="block truncate text-base font-bold hover:underline" dir="ltr" style={{ textAlign: "right" }}>@{p.username}</a>
+          ) : (
+            <span className="muted text-base font-bold">حساب غير معروف</span>
+          )}
+          <div className="muted truncate text-xs">
+            {data.flows.length ? data.flows.map((f: any) => `${f.campaign_name} · ${f.state === "content_sent" ? "استلم المحتوى" : "لم يكتمل"}${f.link_clicks ? " · ضغط الرابط" : ""}`).join(" | ") : "بدون حملات"}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {p.last_follow_status && <Badge value={p.last_follow_status} />}
+          {data.window_open ? (
+            <span className="chip bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"><Icon name="clock" size={13} />النافذة مفتوحة · {left(remaining)}</span>
+          ) : (
+            <span className="chip surface-2 muted"><Icon name="clock" size={13} />النافذة مغلقة</span>
+          )}
+          {p.username && (
+            <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="btn btn-ghost min-h-9 px-3 text-xs"><Icon name="instagram" size={16} />إنستقرام</a>
+          )}
+        </div>
       </div>
-      <div ref={boxRef} className="h-[55vh] min-h-[280px] space-y-2 overflow-y-auto overscroll-contain py-3">
+      <div ref={boxRef} className="-mx-4 h-[56vh] min-h-[280px] space-y-2.5 overflow-y-auto overscroll-contain bg-[var(--surface-2)] px-4 py-4">
         {data.messages.map((m: any) => (
           <div key={m.id} className={`flex ${m.direction === "in" ? "justify-start" : "justify-end"}`}>
-            <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${m.direction === "in" ? "surface-2 rounded-br-md" : "rounded-bl-md bg-gradient-to-l from-violet-600 to-indigo-500 text-white"}`}>
+            <div className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm ${m.direction === "in" ? "rounded-br-md border border-[var(--border)] bg-[var(--surface)]" : "rounded-bl-md bg-gradient-to-br from-violet-600 to-indigo-500 text-white"}`}>
+              {m.direction === "out" && SOURCE[m.source] && <div className="mb-0.5 text-[10.5px] opacity-75">{SOURCE[m.source]}</div>}
               <div className="whitespace-pre-wrap break-words">{m.text || <span className="opacity-60">(مرفق أو رسالة بدون نص)</span>}</div>
-              <div className={`mt-1 text-[10px] ${m.direction === "in" ? "muted" : "opacity-70"}`}>
-                {m.direction === "out" ? `${SOURCE[m.source] ?? ""} · ` : ""}
-                {fmtTime(m.created_at)}
-              </div>
+              <div className={`mt-1 text-[10px] ${m.direction === "in" ? "muted" : "opacity-70"}`}>{fmtTime(m.created_at)}</div>
             </div>
           </div>
         ))}
       </div>
       {data.window_open ? (
         <div className="border-t border-[var(--border)] pt-3">
-          <div className="muted mb-1 text-xs">يمكنك الرد خلال {left(remaining)} (نافذة 24 ساعة من آخر رسالة من الشخص).</div>
           <div className="flex items-end gap-2">
             <textarea
-              className="input min-h-[44px] min-w-0 flex-1"
-              rows={2}
+              className="input min-h-[46px] min-w-0 flex-1 rounded-2xl"
+              rows={1}
               maxLength={1000}
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send();
               }}
-              placeholder="اكتب ردك…"
+              placeholder="اكتب ردك… (يُرسل من حسابك)"
             />
-            <button className="btn btn-primary shrink-0" disabled={busy || !text.trim()} onClick={send}>{busy ? "…" : "إرسال"}</button>
+            <button className="btn btn-primary shrink-0" disabled={busy || !text.trim()} onClick={send}><Icon name="send" size={17} />{busy ? "…" : "إرسال"}</button>
           </div>
+          <div className="muted mt-1.5 text-[11px]">يمكنك الرد خلال {left(remaining)} — نافذة 24 ساعة من آخر رسالة من الشخص.</div>
         </div>
       ) : (
-        <Alert tone="info">مرّت 24 ساعة على آخر رسالة من هذا الشخص — إنستقرام لا يسمح بالرد حتى يراسلك مرة أخرى.</Alert>
+        <div className="pt-3"><Alert tone="info">مرّت 24 ساعة على آخر رسالة من هذا الشخص — إنستقرام لا يسمح بالرد حتى يراسلك مرة أخرى.</Alert></div>
       )}
     </div>
   );
@@ -142,12 +151,12 @@ export function InboxPage() {
           ) : (
             <div className="divide-y divide-[var(--border)]">
               {list.map((c) => (
-                <button key={c.id} onClick={() => setOpen(c.id)} className={`flex w-full items-start gap-2 py-2.5 text-right ${open === c.id ? "bg-[var(--surface-2)]" : ""}`}>
+                <button key={c.id} onClick={() => setOpen(c.id)} className={`flex w-full items-start gap-2.5 rounded-xl px-2 py-2.5 text-right transition hover:bg-[var(--surface-2)] ${open === c.id ? "bg-violet-500/10 shadow-[inset_-3px_0_0_#7c3aed]" : ""}`}>
                   <UserAvatar url={c.profile_pic_url} name={c.username} size={40} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-bold" dir="ltr">{c.username ? `@${c.username}` : "حساب غير معروف"}</span>
-                      {c.unread > 0 && <span className="rounded-full bg-brand-600 px-1.5 text-[11px] text-white">{c.unread}</span>}
+                      {c.unread > 0 && <span className="rounded-full bg-pink-600 px-1.5 text-[11px] text-white">{c.unread}</span>}
                       <span className="muted mr-auto shrink-0 text-[11px]">{fmtTime(c.last_message_at)}</span>
                     </div>
                     <div className="muted truncate text-xs">

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { api, setCsrf, setUnauthorizedHandler } from "./api";
 import { deviceToken, initNative, isNative, watchNetwork } from "./platform";
 import { Alert, Spinner, ToastHost, setTz } from "./components/ui";
+import { Icon } from "./components/Icon";
+import { AccountAvatar } from "./components/UserAvatar";
 import { LoginPage } from "./pages/Login";
 import { DashboardPage } from "./pages/Dashboard";
 import { ConnectionPage } from "./pages/Connection";
@@ -70,19 +72,27 @@ export function useTheme(): [Theme, (t: Theme) => void] {
   return [theme, setTheme];
 }
 
-const NAV = [
-  { to: "/", label: "الرئيسية", icon: "🏠", main: true },
-  { to: "/campaigns", label: "الحملات", icon: "🎯", main: true },
-  { to: "/draws", label: "السحوبات", icon: "🎁" },
-  { to: "/inbox", label: "الرسائل", icon: "📥", main: true },
-  { to: "/logs", label: "السجل", icon: "📜", main: true },
-  { to: "/simulator", label: "المحاكاة", icon: "🧪" },
-  { to: "/connection", label: "الربط", icon: "🔗" },
-  { to: "/media", label: "المنشورات والستوري", icon: "🖼️" },
-  { to: "/templates", label: "القوالب", icon: "🧩" },
-  { to: "/settings", label: "الإعدادات", icon: "⚙️" },
-  { to: "/download", label: "تنزيل التطبيق", icon: "📲" },
+const NAV_GROUPS: Array<{ title: string; items: Array<{ to: string; label: string; icon: string }> }> = [
+  { title: "عام", items: [
+    { to: "/", label: "الرئيسية", icon: "home" },
+    { to: "/campaigns", label: "الحملات", icon: "target" },
+    { to: "/inbox", label: "الرسائل", icon: "inbox" },
+    { to: "/draws", label: "السحوبات", icon: "gift" },
+  ] },
+  { title: "الأدوات", items: [
+    { to: "/media", label: "المنشورات والستوري", icon: "image" },
+    { to: "/templates", label: "القوالب", icon: "puzzle" },
+    { to: "/simulator", label: "المحاكاة", icon: "flask" },
+    { to: "/logs", label: "السجل", icon: "list" },
+  ] },
+  { title: "الحساب", items: [
+    { to: "/connection", label: "الربط", icon: "link" },
+    { to: "/settings", label: "الإعدادات", icon: "settings" },
+    { to: "/download", label: "تنزيل التطبيق", icon: "smartphone" },
+  ] },
 ];
+const NAV = NAV_GROUPS.flatMap((g) => g.items);
+const MOBILE_TABS = ["/", "/campaigns", "/inbox"];
 
 export function App() {
   const route = useRoute();
@@ -136,6 +146,24 @@ export function App() {
   }, []);
 
   useEffect(() => setMenuOpen(false), [route]);
+  const [shell, setShell] = useState<{ account?: any; unread: number; usagePct?: number; usageUsed?: number }>({ unread: 0 });
+  useEffect(() => {
+    if (auth !== "in") return;
+    let alive = true;
+    const load = () => {
+      Promise.all([
+        api<any>("/api/account").then((r) => r.account).catch(() => null),
+        api<any[]>("/api/inbox").then((l) => l.reduce((a, c) => a + (c.unread || 0), 0)).catch(() => 0),
+        api<any>("/api/usage").then((r) => r.usage?.requests).catch(() => null),
+      ]).then(([account, unread, req]) => alive && setShell({ account, unread, usagePct: req?.pct, usageUsed: req?.used }));
+    };
+    load();
+    const t = setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [auth, route === "/inbox"]);
 
   if (auth === "loading") return <div className="p-6"><Spinner /></div>;
   if (auth === "out") return <LoginPage onDone={checkAuth} />;
@@ -175,53 +203,130 @@ export function App() {
 
   const isActive = (to: string) => (to === "/" ? route === "/" : route.startsWith(to));
 
+  const current = NAV.find((n) => isActive(n.to));
+  const nextTheme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
+  const themeIcon = theme === "light" ? "sun" : theme === "dark" ? "moon" : "grid";
+  const acc = shell.account;
   return (
     <div className="min-h-screen lg:flex">
-      <aside className="card sticky top-0 hidden h-screen w-64 shrink-0 flex-col rounded-none border-y-0 border-r-0 p-4 lg:flex">
-        <div className="mb-6 flex items-center gap-2 text-xl font-bold">
-          <img src="./favicon.svg" alt="" className="h-8 w-8" /> HSN AutoReply
-        </div>
-        <nav className="flex flex-col gap-1">
-          {NAV.map((n) => (
-            <Link key={n.to} to={n.to} className={`rounded-xl px-3 py-2.5 font-semibold ${isActive(n.to) ? "bg-brand-700 text-white" : "hover:bg-[var(--surface-2)]"}`}>
-              <span className="ml-2">{n.icon}</span>
-              {n.label}
-            </Link>
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface)] px-4 py-5 lg:flex">
+        <Link to="/" className="mb-5 flex items-center gap-3 px-2">
+          <span className="grad flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-lg shadow-violet-500/30"><Icon name="zap" size={22} /></span>
+          <span className="leading-tight">
+            <b className="font-display block text-[17px] font-extrabold">HSN AutoReply</b>
+            <span className="muted text-xs">أتمتة إنستقرام الرسمية</span>
+          </span>
+        </Link>
+        <Link to="/connection" className="mb-3 flex items-center gap-2.5 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5">
+          <span className="rounded-full p-[2px]" style={{ background: "conic-gradient(from 200deg,#f97316,#db2777,#7c3aed,#f97316)" }}>
+            <span className="block rounded-full border-2 border-[var(--surface)]"><AccountAvatar url={acc?.profile_picture_url} name={acc?.username} size={32} /></span>
+          </span>
+          <span className="min-w-0 flex-1 leading-tight">
+            <b className="block truncate text-sm" dir="ltr" style={{ textAlign: "right" }}>{acc?.username ? `@${acc.username}` : "لا يوجد حساب"}</b>
+            <span className={`flex items-center gap-1 text-[11px] ${acc?.status === "active" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600"}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${acc?.status === "active" ? "bg-emerald-500" : "bg-amber-500"}`} />
+              {acc?.status === "active" ? "متصل" : "غير مربوط"}
+            </span>
+          </span>
+        </Link>
+        <nav className="flex-1 overflow-y-auto">
+          {NAV_GROUPS.map((g) => (
+            <div key={g.title}>
+              <div className="muted px-2.5 pb-1.5 pt-3 text-[11px] font-semibold">{g.title}</div>
+              {g.items.map((n) => (
+                <Link key={n.to} to={n.to} className={`nav-link mb-0.5 ${isActive(n.to) ? "on" : ""}`}>
+                  <Icon name={n.icon} size={19} />
+                  <span>{n.label}</span>
+                  {n.to === "/inbox" && shell.unread > 0 && <span className="mr-auto rounded-full bg-pink-600 px-1.5 text-[11px] leading-[18px] text-white">{shell.unread}</span>}
+                </Link>
+              ))}
+            </div>
           ))}
         </nav>
-        <div className="muted mt-auto text-sm">{username}</div>
+        {shell.usagePct != null && (
+          <Link to="/" className="mt-3 block rounded-2xl border border-[var(--border)] p-3" >
+            <b className="block text-xs">استهلاك اليوم</b>
+            <span className="muted text-[11px]">{(shell.usageUsed ?? 0).toLocaleString("en-US")} من 100,000 طلب · مجاني</span>
+            <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]"><span className="grad block h-full rounded-full" style={{ width: `${Math.max(2, Math.min(100, shell.usagePct))}%` }} /></span>
+          </Link>
+        )}
       </aside>
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 pb-28 pt-4 lg:px-8 lg:pb-10">
-        {!online && (
-          <div className="mb-3">
-            <Alert tone="warn">لا يوجد اتصال بالإنترنت. الأتمتة مستمرة على الخادم؛ ستتحدث البيانات عند عودة الاتصال.</Alert>
-          </div>
-        )}
-        {page}
-      </main>
-
-      <nav className="card safe-bottom fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 rounded-none border-x-0 border-b-0 lg:hidden" aria-label="التنقل">
-        {NAV.filter((n) => n.main).map((n) => (
-          <Link key={n.to} to={n.to} className={`flex flex-col items-center gap-0.5 py-2 text-xs font-semibold ${isActive(n.to) ? "text-brand-700 dark:text-brand-500" : "muted"}`}>
-            <span className="text-xl" aria-hidden>{n.icon}</span>
-            {n.label}
+      <div className="min-w-0 flex-1">
+        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)]/90 px-4 backdrop-blur lg:h-[68px] lg:px-8">
+          <Link to="/" className="flex items-center gap-2 lg:hidden">
+            <span className="grad flex h-9 w-9 items-center justify-center rounded-xl text-white"><Icon name="zap" size={19} /></span>
           </Link>
-        ))}
-        <button onClick={() => setMenuOpen(true)} className="muted flex flex-col items-center gap-0.5 py-2 text-xs font-semibold" aria-haspopup="menu">
-          <span className="text-xl" aria-hidden>☰</span>المزيد
+          <div className="min-w-0">
+            <div className="font-display truncate text-[15px] font-bold lg:text-base">{current?.label ?? "HSN AutoReply"}</div>
+          </div>
+          <div className="mr-auto flex items-center gap-2">
+            <button className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)]" title="المظهر" aria-label="تبديل المظهر" onClick={() => setTheme(nextTheme)}>
+              <Icon name={themeIcon} size={18} />
+            </button>
+            <Link to="/inbox" className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)]" aria-label="الرسائل">
+              <Icon name="bell" size={18} />
+              {shell.unread > 0 && <span className="absolute left-2 top-2 h-2 w-2 rounded-full border-2 border-[var(--surface)] bg-pink-600" />}
+            </Link>
+            <button className="hidden items-center gap-2 rounded-xl px-1.5 py-1 hover:bg-[var(--surface-2)] sm:flex" onClick={logout} title="تسجيل الخروج">
+              <span className="grad font-display flex h-9 w-9 items-center justify-center rounded-xl font-extrabold text-white">{(username || "?")[0]?.toUpperCase()}</span>
+              <span className="text-right leading-tight"><b className="block text-[13px]">{username}</b><span className="muted flex items-center gap-1 text-[11px]"><Icon name="logout" size={12} />خروج</span></span>
+            </button>
+          </div>
+        </header>
+        <main className="mx-auto w-full max-w-6xl px-4 pb-28 pt-5 lg:px-8 lg:pb-10">
+          {!online && (
+            <div className="mb-3">
+              <Alert tone="warn">لا يوجد اتصال بالإنترنت. الأتمتة مستمرة على الخادم؛ ستتحدث البيانات عند عودة الاتصال.</Alert>
+            </div>
+          )}
+          {page}
+        </main>
+      </div>
+
+      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 items-start border-t border-[var(--border)] bg-[var(--surface)] lg:hidden" aria-label="التنقل">
+        {MOBILE_TABS.slice(0, 2).map((to) => {
+          const n = NAV.find((x) => x.to === to)!;
+          return (
+            <Link key={to} to={to} className={`font-display flex flex-col items-center gap-0.5 pb-2 pt-2.5 text-[11px] font-bold ${isActive(to) ? "text-violet-600 dark:text-violet-400" : "muted"}`}>
+              <Icon name={n.icon} size={22} />
+              {n.label}
+            </Link>
+          );
+        })}
+        <div className="flex justify-center">
+          <Link to="/campaigns/new" className="grad -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/40" aria-label="حملة جديدة">
+            <Icon name="plus" size={26} />
+          </Link>
+        </div>
+        {(() => {
+          const n = NAV.find((x) => x.to === "/inbox")!;
+          return (
+            <Link to="/inbox" className={`font-display relative flex flex-col items-center gap-0.5 pb-2 pt-2.5 text-[11px] font-bold ${isActive("/inbox") ? "text-violet-600 dark:text-violet-400" : "muted"}`}>
+              <Icon name={n.icon} size={22} />
+              {n.label}
+              {shell.unread > 0 && <span className="absolute right-[calc(50%-20px)] top-1.5 rounded-full bg-pink-600 px-1 text-[10px] leading-4 text-white">{shell.unread}</span>}
+            </Link>
+          );
+        })()}
+        <button onClick={() => setMenuOpen(true)} className="font-display muted flex flex-col items-center gap-0.5 pb-2 pt-2.5 text-[11px] font-bold" aria-haspopup="menu">
+          <Icon name="menu" size={22} />المزيد
         </button>
       </nav>
 
       {menuOpen && (
         <div className="fixed inset-0 z-50 bg-black/40 lg:hidden" onClick={() => setMenuOpen(false)}>
-          <div className="card safe-bottom absolute inset-x-0 bottom-0 rounded-b-none p-4" onClick={(e) => e.stopPropagation()} role="menu">
-            {NAV.filter((n) => !n.main).map((n) => (
-              <Link key={n.to} to={n.to} className="flex items-center gap-3 rounded-xl px-3 py-3.5 text-lg font-semibold hover:bg-[var(--surface-2)]">
-                <span>{n.icon}</span>
-                {n.label}
-              </Link>
-            ))}
+          <div className="card safe-bottom absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-b-none p-4" onClick={(e) => e.stopPropagation()} role="menu">
+            <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-[var(--border)]" />
+            <div className="grid grid-cols-3 gap-2">
+              {NAV.filter((n) => !MOBILE_TABS.includes(n.to)).map((n) => (
+                <Link key={n.to} to={n.to} className={`flex flex-col items-center gap-1.5 rounded-2xl border border-[var(--border)] px-2 py-3.5 text-center text-xs font-bold ${isActive(n.to) ? "border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300" : ""}`}>
+                  <Icon name={n.icon} size={22} />
+                  {n.label}
+                </Link>
+              ))}
+            </div>
+            <button onClick={logout} className="btn btn-ghost mt-3 w-full text-red-600"><Icon name="logout" size={18} />تسجيل الخروج ({username})</button>
           </div>
         </div>
       )}

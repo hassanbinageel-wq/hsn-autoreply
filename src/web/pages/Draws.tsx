@@ -5,6 +5,8 @@ import { Alert, Card, Field, Modal, PageHeader, Spinner, Toggle, fmtTime, toast,
 import { toCsv } from "../../shared/csv";
 import { canvasesToPdf, renderPages, saveBlob, type PdfLine } from "../lib/pdf";
 import { DrawStage } from "../components/DrawStage";
+import { UserAvatar } from "../components/UserAvatar";
+import { Icon } from "../components/Icon";
 import { styleFor } from "../lib/reel";
 import { saveFile } from "../lib/save";
 import { openExternal } from "../platform";
@@ -394,7 +396,13 @@ const SEND_LABEL: Record<string, [string, string]> = {
 function WinnerCard({ w, onReplace, onCard }: { w: any; onReplace?: () => void; onCard?: () => void }) {
   return (
     <div className="card count-pop flex items-start gap-3 p-4">
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-orange-600 text-xl font-black text-white">{w.position}</div>
+      <div
+        className="font-display flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-lg font-extrabold text-[#3b2a00] shadow-md"
+        style={{ background: w.position === 1 ? "radial-gradient(circle at 30% 30%,#fff3c4,#f5c542 50%,#b7862c)" : w.position === 2 ? "radial-gradient(circle at 30% 30%,#fff,#d1d5db 50%,#8b8f99)" : w.position === 3 ? "radial-gradient(circle at 30% 30%,#ffe2c4,#e0975b 50%,#9a5a28)" : "radial-gradient(circle at 30% 30%,#ede9fe,#a78bfa 55%,#6d28d9)" }}
+      >
+        {w.position}
+      </div>
+      <UserAvatar name={w.author_username} size={44} />
       <div className="min-w-0 flex-1">
         {w.author_username ? (
           <a href={`https://www.instagram.com/${w.author_username}`} target="_blank" rel="noreferrer" className="text-lg font-bold hover:underline" dir="ltr">
@@ -413,8 +421,8 @@ function WinnerCard({ w, onReplace, onCard }: { w: any; onReplace?: () => void; 
         {w.send_status && SEND_LABEL[w.send_status] && <span className={`rounded-full px-2 py-0.5 text-[11px] ${SEND_LABEL[w.send_status][1]}`}>{SEND_LABEL[w.send_status][0]}</span>}
         {w.public_reply_status === "sent" && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">💬 تم الرد العام</span>}
         {(w.public_reply_status === "uncertain" || w.public_reply_status === "failed") && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">💬 الرد العام {w.public_reply_status === "failed" ? "فشل" : "غير مؤكد"}</span>}
-        {onCard && <button className="btn btn-primary text-xs" onClick={onCard}>🖼️ البطاقة</button>}
-        {onReplace && <button className="btn btn-ghost text-xs" onClick={onReplace}>🔁 استبدال</button>}
+        {onCard && <button className="btn btn-primary min-h-9 px-3 text-xs" onClick={onCard}><Icon name="image" size={15} />البطاقة</button>}
+        {onReplace && <button className="btn btn-ghost min-h-9 px-3 text-xs" onClick={onReplace}><Icon name="refresh" size={15} />استبدال</button>}
       </div>
     </div>
   );

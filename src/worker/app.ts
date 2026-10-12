@@ -389,7 +389,25 @@ export function createApp() {
       first(db, "SELECT COUNT(DISTINCT participant_id) AS verified FROM follow_checks WHERE is_demo = 0 AND result = 'following' AND checked_at > ?", since),
       getSetting(db, "automation_enabled", true),
     ]);
-    return c.json({ account: publicAccount(account), campaigns, events, jobs, flows, follows, automation_enabled: automation });
+    // Daily series (UTC days) for the activity chart, best campaigns and the latest activity.
+    const [sComments, sDelivered, top, recent] = await Promise.all([
+      all<{ d: number; n: number }>(db, "SELECT CAST(received_at / 86400000 AS INTEGER) AS d, COUNT(*) AS n FROM webhook_events WHERE is_demo = 0 AND event_type IN ('comment','story_reply','story_mention') AND received_at > ? GROUP BY d", since),
+      all<{ d: number; n: number }>(db, "SELECT CAST(updated_at / 86400000 AS INTEGER) AS d, COUNT(*) AS n FROM action_jobs WHERE is_demo = 0 AND kind = 'send_message' AND purpose = 'content' AND status = 'accepted' AND created_at > ? GROUP BY d", since),
+      all(
+        db,
+        `SELECT c.id, c.name, c.type, c.status, COUNT(f.id) AS triggers, SUM(f.state = 'content_sent') AS delivered
+           FROM campaigns c JOIN conversation_flows f ON f.campaign_id = c.id AND f.is_demo = 0 AND f.created_at > ?
+          WHERE c.deleted_at IS NULL GROUP BY c.id ORDER BY triggers DESC LIMIT 4`,
+        since,
+      ),
+      all(
+        db,
+        `SELECT f.id, f.state, f.updated_at, p.username, p.profile_pic_url, c.name AS campaign
+           FROM conversation_flows f JOIN participants p ON p.id = f.participant_id JOIN campaigns c ON c.id = f.campaign_id
+          WHERE f.is_demo = 0 ORDER BY f.updated_at DESC LIMIT 6`,
+      ),
+    ]);
+    return c.json({ account: publicAccount(account), campaigns, events, jobs, flows, follows, automation_enabled: automation, series: { comments: sComments, delivered: sDelivered }, top_campaigns: top, recent });
   });
 
   api.post("/automation", async (c) => {
