@@ -30,3 +30,23 @@ describe("winner reel (visual only)", () => {
     expect(list.sort()).toEqual(["a", "b", "c", "d", "w"]);
   });
 });
+
+describe("reel timing", () => {
+  it("runs about 6 seconds, swings up and down several times, and slows down", () => {
+    for (const style of REEL_STYLES) {
+      const p = buildReelPath(style, 300, 150);
+      expect(p.duration).toBeCloseTo(6, 5);
+      // count direction changes and compare speed early vs. late in the run
+      let turns = 0;
+      let prevDir = 0;
+      for (let t = 0.02; t <= 4.4; t += 0.02) {
+        const d = Math.sign(p.at(t) - p.at(t - 0.02));
+        if (d && prevDir && d !== prevDir) turns++;
+        if (d) prevDir = d;
+      }
+      expect(turns).toBeGreaterThanOrEqual(5);
+      const speed = (a: number, b: number) => { let s = 0; for (let t = a; t < b; t += 0.02) s += Math.abs(p.at(t + 0.02) - p.at(t)); return s / (b - a); };
+      expect(speed(0, 1.2)).toBeGreaterThan(speed(3.2, 4.4));
+    }
+  });
+});

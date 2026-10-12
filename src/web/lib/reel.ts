@@ -3,7 +3,7 @@
  * a path only decides how the list moves before it stops with the winner under the arrow.
  *
  * Each style returns `y(t)`: the (fractional) list index under the arrow at t seconds. Consecutive winners use
- * different styles, so the second pick never moves like the first.
+ * different styles (number of swings and the landing), so the second pick never moves exactly like the first.
  */
 export type ReelStyle = "sweep" | "spin" | "jumps" | "pendulum";
 export const REEL_STYLES: ReelStyle[] = ["sweep", "spin", "jumps", "pendulum"];
@@ -11,7 +11,7 @@ export const REEL_STYLES: ReelStyle[] = ["sweep", "spin", "jumps", "pendulum"];
 export interface ReelPath {
   style: ReelStyle;
   duration: number;
-  /** Spin loops over the list; the other styles stay inside it (its top and bottom are visible). */
+  /** True when the reel loops over the list (no current style does; the list top and bottom stay visible). */
   wrap: boolean;
   at: (t: number) => number;
 }
@@ -50,65 +50,53 @@ function segments(y0: number, segs: Seg[]): (t: number) => number {
   };
 }
 
+/** Total motion time: fast random swings that slow down, then a stop on the winner. */
+export const REEL_SECONDS = 6;
+
+const inOutSine = (x: number) => -(Math.cos(Math.PI * x) - 1) / 2;
+const outCubic = (x: number) => 1 - Math.pow(1 - x, 3);
+
+/**
+ * Every style: the list runs up and down to random places, fast at first and slower each time,
+ * for REEL_SECONDS in total, ending exactly on the winner. Styles only change the number of swings
+ * and how the last swing lands, so consecutive winners still look different.
+ */
 export function buildReelPath(style: ReelStyle, n: number, target: number, rand: () => number = Math.random): ReelPath {
   const last = Math.max(0, n - 1);
-  const r = () => rand() * last;
-  if (n <= 1) return { style, duration: 3, wrap: false, at: () => 0 };
+  if (n <= 1) return { style, duration: REEL_SECONDS, wrap: false, at: () => 0 };
 
-  if (style === "sweep") {
-    // top ↔ bottom ↔ middle, a few random stops, then settles with a small overshoot
-    const segs: Seg[] = [
-      { to: last, dur: 1.1, ease: inOutCubic },
-      { to: 0, dur: 1.2, ease: inOutCubic },
-      { to: last / 2, dur: 0.8, ease: inOutCubic },
-      { to: r(), dur: 0.75, ease: inOutCubic },
-      { to: r(), dur: 0.7, ease: inOutCubic },
-      { to: target, dur: 2.0, ease: outBack },
-    ];
-    const f = segments(r(), segs);
-    return { style, duration: segs.reduce((a, s) => a + s.dur, 0), wrap: false, at: (t) => clamp(f(t), -0.6, last + 0.6) };
+  const cfg = {
+    sweep: { swings: 11, ease: inOutSine, land: outBack, landDur: 1.4 },
+    spin: { swings: 13, ease: inOutCubic, land: outQuint, landDur: 1.3 },
+    jumps: { swings: 9, ease: outBack, land: outElastic, landDur: 1.6 },
+    pendulum: { swings: 10, ease: inOutSine, land: outCubic, landDur: 1.5 },
+  }[style];
+
+  // Durations grow geometrically (fast → slow) and add up to the time before the landing.
+  const growth = 1.22;
+  const weights = Array.from({ length: cfg.swings }, (_, i) => Math.pow(growth, i));
+  const total = weights.reduce((a, w) => a + w, 0);
+  const runTime = REEL_SECONDS - cfg.landDur;
+
+  // Random stops, alternating up and down, each far enough from the previous one to read as a swing.
+  const minJump = Math.min(last, Math.max(2, last * 0.3));
+  let pos = rand() * last;
+  const start = pos;
+  let up = rand() < 0.5;
+  const segs: Seg[] = [];
+  for (let i = 0; i < cfg.swings; i++) {
+    const room = up ? pos : last - pos;
+    let to: number;
+    if (room >= minJump) to = up ? pos - minJump - rand() * (room - minJump) : pos + minJump + rand() * (room - minJump);
+    else to = up ? pos + minJump + rand() * Math.max(0, last - pos - minJump) : pos - minJump - rand() * Math.max(0, pos - minJump);
+    to = clamp(to, 0, last);
+    up = to < pos ? false : true; // next swing goes the other way
+    pos = to;
+    segs.push({ to, dur: (runTime * weights[i]) / total, ease: cfg.ease });
   }
-
-  if (style === "spin") {
-    // slot machine: a short pull back, then a fast spin that slows down onto the winner
-    const k = 70 + Math.floor(rand() * 40); // rows travelled (independent of the list size)
-    const start = target + 2 - k;
-    const pull = 0.45;
-    const spin = 5.6;
-    return {
-      style,
-      duration: pull + spin,
-      wrap: true,
-      at: (t) => (t < pull ? start - 2 * inOutCubic(t / pull) : start - 2 + k * outQuint(clamp((t - pull) / spin, 0, 1))),
-    };
-  }
-
-  if (style === "jumps") {
-    // jumps between random places with short pauses, then an elastic stop
-    const segs: Seg[] = [];
-    for (let i = 0; i < 5; i++) {
-      const to = r();
-      segs.push({ to, dur: 0.5 - i * 0.03, ease: outBack }, { to, dur: 0.22, ease: (x) => x });
-    }
-    segs.push({ to: target, dur: 1.9, ease: outElastic });
-    const f = segments(r(), segs);
-    return { style, duration: segs.reduce((a, s) => a + s.dur, 0), wrap: false, at: (t) => clamp(f(t), -0.6, last + 0.6) };
-  }
-
-  // pendulum: big up/down swings across the list that shrink until it rests on the winner
-  const T = 6.6;
-  const amp = Math.max(target, last - target, 3);
-  const freq = 0.5 + rand() * 0.15;
-  const phase = rand() < 0.5 ? 0 : Math.PI;
-  return {
-    style,
-    duration: T,
-    wrap: false,
-    at: (t) => {
-      const u = clamp(t / T, 0, 1);
-      return clamp(target + amp * Math.pow(1 - u, 2.2) * Math.cos(2 * Math.PI * freq * t + phase), 0, last);
-    },
-  };
+  segs.push({ to: target, dur: cfg.landDur, ease: cfg.land });
+  const f = segments(start, segs);
+  return { style, duration: REEL_SECONDS, wrap: false, at: (t) => (t >= REEL_SECONDS ? target : clamp(f(t), -0.6, last + 0.6)) };
 }
 
 /** Visual order of the reel: every eligible name once (capped), shuffled, with the winner at a random place. */
