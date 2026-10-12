@@ -2,7 +2,8 @@ import { useState } from "react";
 import { api } from "../api";
 import { Alert, Card, Field, PageHeader, toast, useAsync } from "../components/ui";
 import { SimResult } from "./CampaignWizard";
-import { PhonePreview, type ChatMsg, type CommentMsg } from "../components/PhonePreview";
+import { PhonePreview, type ButtonAction, type ChatMsg, type CommentMsg } from "../components/PhonePreview";
+import { openExternal } from "../platform";
 import { REASONS } from "./Logs";
 
 const SCENARIOS: Record<string, { label: string; script: any }> = {
@@ -59,7 +60,17 @@ export function SimulatorPage() {
         maxId = Math.max(maxId, j.id);
         if (j.kind === "send_message" && j.status === "accepted" && j.result?.text) {
           const lb = j.result.link_button;
+          const ab = j.result.account_button;
+          // What each button does when tapped in the phone (start / verify run the real pipeline; links open).
+          const realAccountUrl = account?.username ? `https://www.instagram.com/${account.username}/` : ab?.url;
+          const actions: ButtonAction[] = lb
+            ? [{ type: "url", url: lb.url }]
+            : [
+                ...(ab ? [{ type: "url", url: realAccountUrl } as ButtonAction] : []),
+                ...((j.result.quick_replies ?? []) as any[]).map((q): ButtonAction => (String(q.payload).includes(":verify:") ? { type: "verify" } : { type: "start" })),
+              ];
           nextDm.push({
+            buttonActions: actions,
             from: "bot",
             text: lb?.text ?? (j.result.account_button ? String(j.result.text).split(j.result.account_button.url).join("").replace(/[ \t]{2,}/g, " ").trim() : j.result.text),
             buttons: lb ? [lb.title] : [...(j.result.account_button ? [j.result.account_button.title] : []), ...(j.result.quick_replies?.map((q: any) => q.title) ?? [])],
@@ -126,29 +137,36 @@ export function SimulatorPage() {
         )}
         <button className="btn btn-primary mt-3 w-full" disabled={busy} onClick={() => run(event, true)}>تشغيل الحدث</button>
       </Card>
-      <Card title="2) تفاعل الشخص التجريبي">
-        <div className="flex flex-wrap gap-2">
-          <button className="btn btn-ghost" disabled={busy} onClick={() => run("message", false, "ابدأ")}>يرد «ابدأ»</button>
-          <button className="btn btn-ghost" disabled={busy} onClick={() => run("verify_button", false)}>يضغط «تحقّق من المتابعة»</button>
-          <button className="btn btn-ghost" disabled={busy} onClick={() => run("message", false, "تابعت")}>يكتب «تابعت»</button>
-          <button className="btn btn-ghost" disabled={busy} onClick={() => run("message", false, "شكرًا")}>رسالة عادية</button>
-        </div>
-        <p className="muted mt-2 text-xs">الفاصل بين محاولات التحقق مطبّق كما في الإنتاج: الضغط داخل الفاصل يُجدول التحقق لنهايته (في المحاكاة يُنفّذ عند تفاعلك التالي بعد انتهاء الفاصل).</p>
-      </Card>
-      {result && (
-        <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-          <PhonePreview
-            key={seen === 0 ? "reset" : "live"}
-            accountUsername={account?.username ?? "hsn_demo"}
-            avatarUrl={account?.profile_picture_url}
-            comments={comments}
-            dm={dm}
-            defaultTab="dm"
-            footnote="محاكاة — لا يُرسل أي شيء إلى إنستقرام."
-          />
+      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+        <PhonePreview
+          key={seen === 0 ? "reset" : "live"}
+          accountUsername={account?.username ?? "hsn_demo"}
+          avatarUrl={account?.profile_picture_url}
+          comments={comments}
+          dm={dm}
+          defaultTab="dm"
+          busy={busy || !result}
+          inputPlaceholder={result ? "اكتب رسالة كأنك الشخص…" : "شغّل الحدث أولًا من فوق"}
+          onSend={(t) => run("message", false, t)}
+          onButton={(a) => {
+            if (a.type === "start") run("start_button", false);
+            else if (a.type === "verify") run("verify_button", false);
+            else void openExternal(a.url);
+          }}
+          footnote="اضغط الأزرار داخل الرسائل أو اكتب في خانة المراسلة كأنك الشخص. «افتح حسابنا» يفتح حسابك الحقيقي. لا يُرسل أي شيء إلى إنستقرام. الفاصل بين محاولات التحقق مطبّق كما في الإنتاج."
+        />
+        {result ? (
           <Card title="التفاصيل التقنية"><SimResult sim={result} /></Card>
-        </div>
-      )}
+        ) : (
+          <Card title="كيف تجرب؟">
+            <ol className="list-decimal space-y-1 pr-5 text-sm">
+              <li>اختر الحملة والسيناريو واضغط «تشغيل الحدث».</li>
+              <li>تظهر الرسائل في شاشة الجوال كما يشوفها الشخص.</li>
+              <li>اضغط «ابدأ» أو «تحقّق من المتابعة» داخل الرسالة، أو اكتب أي رد في خانة المراسلة.</li>
+            </ol>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

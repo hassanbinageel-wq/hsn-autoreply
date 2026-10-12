@@ -4,8 +4,12 @@ export interface ChatMsg {
   from: "bot" | "user";
   text: string;
   buttons?: string[];
+  /** What tapping each button does (same order as `buttons`); only used when the preview is interactive. */
+  buttonActions?: ButtonAction[];
   note?: string; // small grey caption (e.g. "رد خاص على التعليق")
 }
+
+export type ButtonAction = { type: "start" } | { type: "verify" } | { type: "url"; url: string };
 
 export interface CommentMsg {
   username: string;
@@ -22,11 +26,17 @@ export interface PhonePreviewProps {
   dm: ChatMsg[];
   defaultTab?: "post" | "comments" | "dm";
   footnote?: string;
+  /** Interactive mode (simulator): tap buttons inside messages and type in the message bar. */
+  onButton?: (action: ButtonAction, title: string) => void;
+  onSend?: (text: string) => void;
+  busy?: boolean;
+  inputPlaceholder?: string;
 }
 
 function Avatar({ url, size = 28 }: { url?: string | null; size?: number }) {
-  return url ? (
-    <img src={url} alt="" referrerPolicy="no-referrer" className="shrink-0 rounded-full object-cover" style={{ width: size, height: size }} />
+  const [broken, setBroken] = useState(false);
+  return url && !broken ? (
+    <img src={url} alt="" referrerPolicy="no-referrer" onError={() => setBroken(true)} className="shrink-0 rounded-full object-cover" style={{ width: size, height: size }} />
   ) : (
     <div className="shrink-0 rounded-full bg-gradient-to-br from-violet-600 via-fuchsia-600 to-orange-500" style={{ width: size, height: size }} />
   );
@@ -35,6 +45,14 @@ function Avatar({ url, size = 28 }: { url?: string | null; size?: number }) {
 /** Instagram-like phone mockup used as a live preview. Pure presentation — nothing is sent. */
 export function PhonePreview(p: PhonePreviewProps) {
   const [tab, setTab] = useState<"post" | "comments" | "dm">(p.defaultTab ?? "dm");
+  const [draft, setDraft] = useState("");
+  const send = () => {
+    const t = draft.trim();
+    if (!t || !p.onSend || p.busy) return;
+    p.onSend(t);
+    setDraft("");
+    setTab("dm");
+  };
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = bodyRef.current;
@@ -93,9 +111,22 @@ export function PhonePreview(p: PhonePreviewProps) {
                       {m.note && <div className="mb-0.5 text-[10px] opacity-50">{m.note}</div>}
                       <div className="rounded-2xl rounded-br-md bg-[#262626] px-3 py-2">
                         <div className="whitespace-pre-wrap break-words">{m.text}</div>
-                        {m.buttons?.map((b) => (
-                          <div key={b} className="mt-2 rounded-lg bg-white/10 py-1.5 text-center text-xs font-semibold">{b}</div>
-                        ))}
+                        {m.buttons?.map((b, bi) => {
+                          const action = m.buttonActions?.[bi];
+                          return p.onButton && action ? (
+                            <button
+                              key={b}
+                              type="button"
+                              disabled={p.busy}
+                              onClick={() => p.onButton!(action, b)}
+                              className="mt-2 block w-full rounded-lg bg-white/10 py-1.5 text-center text-xs font-semibold transition hover:bg-white/20 active:scale-[.98] disabled:opacity-50"
+                            >
+                              {b}
+                            </button>
+                          ) : (
+                            <div key={b} className="mt-2 rounded-lg bg-white/10 py-1.5 text-center text-xs font-semibold">{b}</div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -111,10 +142,33 @@ export function PhonePreview(p: PhonePreviewProps) {
           )}
         </div>
         {/* input bar */}
-        <div className="flex items-center gap-2 border-t border-white/10 px-3 py-2.5 text-white/60">
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white" aria-hidden>📷</span>
-          <span className="text-xs">مراسلة…</span>
-        </div>
+        {p.onSend ? (
+          <form
+            className="flex items-center gap-2 border-t border-white/10 px-3 py-2 text-white"
+            onSubmit={(e) => {
+              e.preventDefault();
+              send();
+            }}
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-500 text-white" aria-hidden>📷</span>
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              disabled={p.busy}
+              enterKeyHint="send"
+              placeholder={p.inputPlaceholder ?? "مراسلة…"}
+              className="min-w-0 flex-1 rounded-full bg-white/10 px-3 py-1.5 text-xs text-white placeholder:text-white/50 focus:outline-none focus:ring-1 focus:ring-white/40 disabled:opacity-50"
+            />
+            {draft.trim() && (
+              <button type="submit" disabled={p.busy} className="shrink-0 text-xs font-bold text-sky-400 disabled:opacity-50">إرسال</button>
+            )}
+          </form>
+        ) : (
+          <div className="flex items-center gap-2 border-t border-white/10 px-3 py-2.5 text-white/60">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white" aria-hidden>📷</span>
+            <span className="text-xs">مراسلة…</span>
+          </div>
+        )}
         <div className="mx-auto mb-2 h-1 w-24 rounded-full bg-white/40" aria-hidden />
       </div>
       <div className="surface-2 flex rounded-full p-1 text-sm" role="tablist">
