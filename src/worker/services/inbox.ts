@@ -54,13 +54,15 @@ const AVATAR_HOST = /^https:\/\/[A-Za-z0-9.-]+\.(cdninstagram\.com|fbcdn\.net)\/
  * User Profile API (the person messaged the account, so consent exists). Bounded per call (subrequest limit).
  * A failed or refused lookup is remembered for the same TTL, so it is not retried on every page load.
  */
-export async function refreshAvatars(ctx: EngineContext, limit = 15): Promise<{ checked: number; updated: number }> {
+export async function refreshAvatars(ctx: EngineContext, tenantId: number, limit = 15): Promise<{ checked: number; updated: number }> {
   const now = ctx.now();
   const rows = await all<{ id: number; igsid: string; account_id: number }>(
     ctx.db,
     `SELECT p.id, p.igsid, p.account_id FROM participants p
-      WHERE p.is_demo = 0 AND p.last_message_at IS NOT NULL AND (p.profile_pic_at IS NULL OR p.profile_pic_at < ?)
+      WHERE p.account_id IN (SELECT id FROM instagram_accounts WHERE tenant_id = ?)
+        AND p.is_demo = 0 AND p.last_message_at IS NOT NULL AND (p.profile_pic_at IS NULL OR p.profile_pic_at < ?)
       ORDER BY p.last_message_at DESC LIMIT ?`,
+    tenantId,
     now - AVATAR_TTL_MS,
     limit,
   );

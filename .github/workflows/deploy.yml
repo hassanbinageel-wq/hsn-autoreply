@@ -59,6 +59,14 @@ jobs:
         run: |
           [[ "$CLOUDFLARE_API_TOKEN" =~ ^[A-Za-z0-9_-]{20,}$ ]] || { echo "::error::CLOUDFLARE_API_TOKEN must be the token only: one line, no spaces or extra text. Re-paste it in Settings › Secrets."; exit 1; }
           [[ "$CLOUDFLARE_ACCOUNT_ID" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::CLOUDFLARE_ACCOUNT_ID must be the 32-character account id only."; exit 1; }
+      - name: Record a restore point before migrations (D1 Time Travel — data never leaves Cloudflare)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          # To undo a bad migration: npx wrangler d1 time-travel restore hsn_autoreply --bookmark=<bookmark below>
+          # (Free plan: restore points are kept 7 days.)
+          npx wrangler d1 time-travel info hsn_autoreply || echo "::warning::could not read the Time Travel bookmark"
       - name: Apply D1 migrations (forward-only)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -14,6 +14,10 @@ export interface SessionInfo {
   kind: "web" | "device";
   csrf_token: string | null;
   username: string;
+  /** The customer (tenant) this login belongs to; every query is scoped to it. */
+  tenant_id: number;
+  /** The owner tenant: may manage customers and the follow requirement. */
+  is_owner: boolean;
 }
 
 export type AppEnv = { Bindings: Env; Variables: { session: SessionInfo } };
@@ -46,11 +50,11 @@ export async function createSession(
 async function lookup(db: D1Database, token: string, kind: "web" | "device"): Promise<SessionInfo | null> {
   if (!token || token.length > 128) return null;
   const now = Date.now();
-  const s = await first<SessionInfo & { expires_at: number; last_seen_at: number }>(
+  const s = await first<Omit<SessionInfo, "is_owner"> & { expires_at: number; last_seen_at: number; is_owner: number }>(
     db,
-    `SELECT s.id, s.user_id, s.kind, s.csrf_token, s.expires_at, s.last_seen_at, u.username
-       FROM sessions s JOIN admin_users u ON u.id = s.user_id
-      WHERE s.id = ? AND s.kind = ? AND s.revoked_at IS NULL AND s.expires_at > ?`,
+    `SELECT s.id, s.user_id, s.kind, s.csrf_token, s.expires_at, s.last_seen_at, u.username, u.tenant_id, t.is_owner
+       FROM sessions s JOIN admin_users u ON u.id = s.user_id JOIN tenants t ON t.id = u.tenant_id
+      WHERE s.id = ? AND s.kind = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND t.status = 'active'`,
     await sha256Hex(token),
     kind,
     now,
@@ -61,7 +65,7 @@ async function lookup(db: D1Database, token: string, kind: "web" | "device"): Pr
     const newExp = kind === "device" ? now + DEVICE_SESSION_TTL : s.expires_at;
     await run(db, "UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?", now, newExp, s.id);
   }
-  return { id: s.id, user_id: s.user_id, kind: s.kind, csrf_token: s.csrf_token, username: s.username };
+  return { id: s.id, user_id: s.user_id, kind: s.kind, csrf_token: s.csrf_token, username: s.username, tenant_id: s.tenant_id, is_owner: s.is_owner === 1 };
 }
 
 export function allowedAppOrigins(env: Env): string[] {

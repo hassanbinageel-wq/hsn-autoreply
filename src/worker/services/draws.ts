@@ -15,6 +15,8 @@ import type { CommentItem } from "../meta/types";
 
 export interface DrawRow {
   id: number;
+  /** The customer the draw belongs to: its Instagram account is the only one used. */
+  tenant_id: number;
   campaign_id: number;
   name: string;
   source_type: "media" | "story";
@@ -83,8 +85,9 @@ export async function loadDraw(db: D1Database, id: number): Promise<DrawRow | nu
   return first<DrawRow>(db, "SELECT * FROM draws WHERE id = ?", id);
 }
 
-async function activeAccount(db: D1Database): Promise<AccountRow | null> {
-  return first<AccountRow>(db, "SELECT * FROM instagram_accounts WHERE is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1");
+/** The draw owner's connected Instagram account. */
+export async function activeAccount(db: D1Database, tenantId: number): Promise<AccountRow | null> {
+  return first<AccountRow>(db, "SELECT * FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1", tenantId);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -158,7 +161,7 @@ export async function fetchBatch(ctx: EngineContext, drawId: number, opts: { res
 
   if (d.source_type === "story") return fetchStoryReplies(ctx, d);
 
-  const account = await activeAccount(ctx.db);
+  const account = await activeAccount(ctx.db, d.tenant_id);
   if (!account) throw new DrawFailure(409, "no_account", "اربط حساب إنستقرام أولًا");
   const token = await ctx.getAccessToken(account);
   const client = ctx.meta(false);
@@ -243,10 +246,11 @@ async function fetchStoryReplies(ctx: EngineContext, d: DrawRow): Promise<DrawRo
     ctx.db,
     `SELECT e.dedup_key, e.sender_id, e.text, e.event_time, p.username
        FROM webhook_events e
-       LEFT JOIN instagram_accounts a ON a.ig_user_id = e.account_ig_id AND a.is_demo = 0
+       JOIN instagram_accounts a ON a.ig_user_id = e.account_ig_id AND a.is_demo = 0 AND a.tenant_id = ?
        LEFT JOIN participants p ON p.account_id = a.id AND p.igsid = e.sender_id
       WHERE e.event_type = 'story_reply' AND e.is_demo = 0 AND e.media_id = ?
       ORDER BY e.id`,
+    d.tenant_id,
     d.media_id,
   );
   await insertEntries(
@@ -281,7 +285,8 @@ async function fetchStoryReplies(ctx: EngineContext, d: DrawRow): Promise<DrawRo
 export async function eligibilityContext(db: D1Database, d: DrawRow, excludeDrawId = true): Promise<EligibilityContext> {
   const acc = await first<{ ig_user_id: string; app_scoped_id: string | null; username: string | null }>(
     db,
-    "SELECT ig_user_id, app_scoped_id, username FROM instagram_accounts WHERE is_demo = 0 ORDER BY status = 'active' DESC, id LIMIT 1",
+    "SELECT ig_user_id, app_scoped_id, username FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 ORDER BY status = 'active' DESC, id LIMIT 1",
+    d.tenant_id,
   );
   const previous = new Set<string>();
   if (d.exclude_previous_winners) {

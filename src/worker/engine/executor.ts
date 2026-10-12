@@ -76,8 +76,9 @@ async function loadAll(ctx: EngineContext, job: JobRow): Promise<Loaded | null> 
 /** Common guards before any Meta call. Returns a cancellation reason or null. */
 async function guard(ctx: EngineContext, l: Loaded): Promise<string | null> {
   if (l.account.status !== "active") return "account_not_active";
+  if (l.account.tenant_status && l.account.tenant_status !== "active") return "customer_suspended";
   if (l.flow.is_demo) return null; // demo flows ignore production switches
-  if (!(await getSetting(ctx.db, "automation_enabled", true))) return "automation_paused";
+  if (!(await getSetting(ctx.db, l.account.tenant_id, "automation_enabled", true))) return "automation_paused";
   if (l.campaign.deleted_at) return "campaign_deleted";
   if (l.campaign.status !== "active") return "campaign_not_active";
   return null;
@@ -356,7 +357,7 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
     case "following":
       await transitionFlow(ctx, l.flow, "ready_to_deliver", { last_follow_result: "following" }, "follow_verified");
       if (prev === "not_following" && ctx.notify && !l.flow.is_demo) {
-        await ctx.notify("new_follower", `🎉 متابع جديد: ${l.participant.username ? "@" + l.participant.username : "شخص"} تابعك عبر حملة «${l.campaign.name}»`);
+        await ctx.notify(l.account.tenant_id, "new_follower", `🎉 متابع جديد: ${l.participant.username ? "@" + l.participant.username : "شخص"} تابعك عبر حملة «${l.campaign.name}»`);
       }
       await enqueue(ctx.db, { ...common, kind: "send_message", purpose: "content", dedupKey: `deliver:${l.flow.id}` }, now);
       break;
@@ -518,7 +519,7 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
     if (isContent) {
       await transitionFlow(ctx, l.flow, "content_sent", { content_status: "accepted", content_delivered_at: now }, "content_accepted_by_meta");
       if (ctx.notify && !l.flow.is_demo) {
-        await ctx.notify("delivery", `✅ استلم ${l.participant.username ? "@" + l.participant.username : "شخص"} محتوى حملة «${l.campaign.name}»`);
+        await ctx.notify(l.account.tenant_id, "delivery", `✅ استلم ${l.participant.username ? "@" + l.participant.username : "شخص"} محتوى حملة «${l.campaign.name}»`);
       }
     }
     if (channel === "private_reply" && l.campaign.public_reply_enabled && l.flow.source_comment_id) {

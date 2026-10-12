@@ -110,6 +110,13 @@ export const setupSchema = z.object({
   password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
 });
 
+export const tenantCreateSchema = z.object({
+  name: text(80).min(2, "اكتب اسم العميل"),
+  username: text(64).regex(/^[A-Za-z0-9_.-]{3,64}$/, "اسم المستخدم: أحرف إنجليزية وأرقام فقط"),
+  password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
+  notes: text(500).optional(),
+});
+
 export const settingsSchema = z.object({
   timezone: text(64).optional(),
   retention_days: z.number().int().min(7).max(3650).optional(),

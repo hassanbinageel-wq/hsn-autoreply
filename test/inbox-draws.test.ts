@@ -32,7 +32,7 @@ describe("inbox profile pictures", () => {
       B: { profile_pic: "https://evil.example.com/b.jpg" },
       C: "no_consent",
     };
-    const r = await refreshAvatars(makeCtx(meta));
+    const r = await refreshAvatars(makeCtx(meta), 1);
     expect(r).toEqual({ checked: 3, updated: 1 });
     const rows = await DB.prepare("SELECT igsid, username, profile_pic_url, profile_pic_at FROM participants ORDER BY igsid").all<any>();
     const by = Object.fromEntries(rows.results.map((x: any) => [x.igsid, x]));
@@ -41,7 +41,7 @@ describe("inbox profile pictures", () => {
     expect(by.C.profile_pic_at).toBeGreaterThan(0);
     expect(by.NOINBOX.profile_pic_at).toBeNull();
     // second call within the TTL: nothing to do
-    expect(await refreshAvatars(makeCtx(meta))).toEqual({ checked: 0, updated: 0 });
+    expect(await refreshAvatars(makeCtx(meta), 1)).toEqual({ checked: 0, updated: 0 });
     expect(AVATAR_TTL_MS).toBeGreaterThan(86_400_000);
   });
 });

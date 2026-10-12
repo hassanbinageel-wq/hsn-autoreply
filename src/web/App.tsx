@@ -17,6 +17,7 @@ import { CardDesignsPage } from "./pages/CardDesigns";
 import { TemplatesPage } from "./pages/Templates";
 import { LogsPage } from "./pages/Logs";
 import { SimulatorPage } from "./pages/Simulator";
+import { OwnerPage } from "./pages/Owner";
 import { SettingsPage } from "./pages/Settings";
 import { DownloadPage } from "./pages/Download";
 
@@ -91,7 +92,9 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ to: string; label: strin
     { to: "/download", label: "تنزيل التطبيق", icon: "smartphone" },
   ] },
 ];
-const NAV = NAV_GROUPS.flatMap((g) => g.items);
+/** Owner-only section (customers management). */
+const OWNER_GROUP = { title: "الإدارة", items: [{ to: "/owner", label: "العملاء", icon: "users" }] };
+const NAV = [...NAV_GROUPS, OWNER_GROUP].flatMap((g) => g.items);
 const MOBILE_TABS = ["/", "/campaigns", "/inbox"];
 
 export function App() {
@@ -99,6 +102,7 @@ export function App() {
   const [theme, setTheme] = useTheme();
   const [auth, setAuth] = useState<"loading" | "in" | "out">("loading");
   const [username, setUsername] = useState("");
+  const [isOwner, setIsOwner] = useState(false);
   const [online, setOnline] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(false);
@@ -108,9 +112,10 @@ export function App() {
   const checkAuth = useCallback(async () => {
     try {
       if (isNative && !(await deviceToken.get())) return setAuth("out");
-      const me = await api<{ username: string; csrf_token?: string }>("/api/auth/me");
+      const me = await api<{ username: string; csrf_token?: string; is_owner?: boolean }>("/api/auth/me");
       setCsrf(me.csrf_token);
       setUsername(me.username);
+      setIsOwner(!!me.is_owner);
       setAuth("in");
       api<{ settings: { timezone?: string } }>("/api/settings")
         .then((s) => setTz(s.settings.timezone ?? "Asia/Aden"))
@@ -198,6 +203,7 @@ export function App() {
       case "/simulator": page = <SimulatorPage />; break;
       case "/settings": page = <SettingsPage theme={theme} setTheme={setTheme} onLogout={logout} username={username} />; break;
       case "/download": page = <DownloadPage />; break;
+      case "/owner": page = isOwner ? <OwnerPage /> : <DashboardPage />; break;
       default: page = <Alert tone="warn">الصفحة غير موجودة</Alert>;
     }
 
@@ -230,7 +236,7 @@ export function App() {
           </span>
         </Link>
         <nav className="flex-1 overflow-y-auto">
-          {NAV_GROUPS.map((g) => (
+          {(isOwner ? [NAV_GROUPS[0], OWNER_GROUP, ...NAV_GROUPS.slice(1)] : NAV_GROUPS).map((g) => (
             <div key={g.title}>
               <div className="muted px-2.5 pb-1.5 pt-3 text-[11px] font-semibold">{g.title}</div>
               {g.items.map((n) => (
@@ -319,7 +325,7 @@ export function App() {
           <div className="card safe-bottom absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-b-none p-4" onClick={(e) => e.stopPropagation()} role="menu">
             <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-[var(--border)]" />
             <div className="grid grid-cols-3 gap-2">
-              {NAV.filter((n) => !MOBILE_TABS.includes(n.to)).map((n) => (
+              {NAV.filter((n) => !MOBILE_TABS.includes(n.to) && (isOwner || n.to !== "/owner")).map((n) => (
                 <Link key={n.to} to={n.to} className={`flex flex-col items-center gap-1.5 rounded-2xl border border-[var(--border)] px-2 py-3.5 text-center text-xs font-bold ${isActive(n.to) ? "border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300" : ""}`}>
                   <Icon name={n.icon} size={22} />
                   {n.label}

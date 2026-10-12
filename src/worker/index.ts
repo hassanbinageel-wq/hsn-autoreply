@@ -1,6 +1,6 @@
 import { createApp } from "./app";
 import type { Env } from "./env";
-import { getSetting, run } from "./lib/db";
+import { all, getSetting, OWNER_TENANT, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
 import { engineContext, refreshAccountProfiles, refreshExpiringTokens } from "./services/account";
 import { sanitize } from "./meta/client";
@@ -35,26 +35,43 @@ export async function expireFlows(db: D1Database, now = Date.now()): Promise<voi
  *    so duplicate protection keeps working for the whole window in which Meta may redeliver.
  */
 export async function cleanup(db: D1Database, now = Date.now()): Promise<void> {
-  const retention = await getSetting(db, "retention_days", 90);
-  const dedup = await getSetting(db, "dedup_retention_days", 30);
-  const scrubBefore = now - retention * 86_400_000;
-  const deleteBefore = now - Math.max(retention, dedup) * 86_400_000;
+  // Each customer's data follows that customer's retention settings.
+  const tenants = await all<{ id: number }>(db, "SELECT id FROM tenants ORDER BY id");
+  for (const t of tenants) await cleanupTenant(db, t.id, now);
+  // Events of Instagram accounts that no customer has (never connected or removed): the owner's retention.
+  const retention = await getSetting(db, OWNER_TENANT, "retention_days", 90);
+  const dedup = await getSetting(db, OWNER_TENANT, "dedup_retention_days", 30);
+  const orphan = "account_ig_id NOT IN (SELECT ig_user_id FROM instagram_accounts)";
   await db.batch([
-    db.prepare("UPDATE webhook_events SET text = NULL, sender_username = NULL, payload = '{}' WHERE received_at < ? AND payload != '{}'").bind(scrubBefore),
-    db.prepare("DELETE FROM webhook_events WHERE received_at < ?").bind(deleteBefore),
-    db.prepare("DELETE FROM action_attempts WHERE started_at < ?").bind(scrubBefore),
-    db.prepare("DELETE FROM action_jobs WHERE updated_at < ? AND status IN ('accepted','failed','cancelled','uncertain')").bind(deleteBefore),
-    db.prepare("DELETE FROM follow_checks WHERE checked_at < ?").bind(scrubBefore),
-    db.prepare("DELETE FROM messages WHERE created_at < ?").bind(scrubBefore),
-    db
-      .prepare("DELETE FROM conversation_flows WHERE updated_at < ? AND state IN ('content_sent','verification_unavailable','expired','failed','cancelled')")
-      .bind(scrubBefore),
-    db.prepare("DELETE FROM participants WHERE updated_at < ? AND id NOT IN (SELECT participant_id FROM conversation_flows)").bind(scrubBefore),
+    db.prepare(`UPDATE webhook_events SET text = NULL, sender_username = NULL, payload = '{}' WHERE ${orphan} AND received_at < ? AND payload != '{}'`).bind(now - retention * 86_400_000),
+    db.prepare(`DELETE FROM webhook_events WHERE ${orphan} AND received_at < ?`).bind(now - Math.max(retention, dedup) * 86_400_000),
     db.prepare("DELETE FROM sessions WHERE expires_at < ? OR revoked_at < ?").bind(now, now - 86_400_000),
     db.prepare("DELETE FROM oauth_states WHERE expires_at < ?").bind(now),
     db.prepare("DELETE FROM rate_limits WHERE window_start < ?").bind(now - 86_400_000),
     db.prepare("DELETE FROM audit_logs WHERE at < ?").bind(now - 365 * 86_400_000),
     db.prepare("DELETE FROM media_cache WHERE kind = 'story' AND expires_at < ?").bind(now - 7 * 86_400_000),
+  ]);
+}
+
+async function cleanupTenant(db: D1Database, tenantId: number, now: number): Promise<void> {
+  const retention = await getSetting(db, tenantId, "retention_days", 90);
+  const dedup = await getSetting(db, tenantId, "dedup_retention_days", 30);
+  const scrubBefore = now - retention * 86_400_000;
+  const deleteBefore = now - Math.max(retention, dedup) * 86_400_000;
+  const ACC = "(SELECT id FROM instagram_accounts WHERE tenant_id = ?)";
+  const IG = "(SELECT ig_user_id FROM instagram_accounts WHERE tenant_id = ?)";
+  const PART = `(SELECT id FROM participants WHERE account_id IN ${ACC})`;
+  await db.batch([
+    db.prepare(`UPDATE webhook_events SET text = NULL, sender_username = NULL, payload = '{}' WHERE account_ig_id IN ${IG} AND received_at < ? AND payload != '{}'`).bind(tenantId, scrubBefore),
+    db.prepare(`DELETE FROM webhook_events WHERE account_ig_id IN ${IG} AND received_at < ?`).bind(tenantId, deleteBefore),
+    db.prepare(`DELETE FROM action_attempts WHERE job_id IN (SELECT id FROM action_jobs WHERE account_id IN ${ACC}) AND started_at < ?`).bind(tenantId, scrubBefore),
+    db.prepare(`DELETE FROM action_jobs WHERE account_id IN ${ACC} AND updated_at < ? AND status IN ('accepted','failed','cancelled','uncertain')`).bind(tenantId, deleteBefore),
+    db.prepare(`DELETE FROM follow_checks WHERE participant_id IN ${PART} AND checked_at < ?`).bind(tenantId, scrubBefore),
+    db.prepare(`DELETE FROM messages WHERE participant_id IN ${PART} AND created_at < ?`).bind(tenantId, scrubBefore),
+    db
+      .prepare(`DELETE FROM conversation_flows WHERE account_id IN ${ACC} AND updated_at < ? AND state IN ('content_sent','verification_unavailable','expired','failed','cancelled')`)
+      .bind(tenantId, scrubBefore),
+    db.prepare(`DELETE FROM participants WHERE account_id IN ${ACC} AND updated_at < ? AND id NOT IN (SELECT participant_id FROM conversation_flows)`).bind(tenantId, scrubBefore),
   ]);
 }
 
@@ -78,9 +95,8 @@ export default {
     const ectx = engineContext(env, () => used++);
     await expireFlows(env.DB);
     // Once an hour: pick up comments whose webhook never arrived (quota reached, outage, Meta stopped retrying).
-    if (new Date(controller.scheduledTime).getUTCMinutes() === 7) {
-      await autoRecover(env, ectx).catch((e) => console.error("recover", sanitize(String(e))));
-    }
+    // Each customer has its own minute in the hour (the owner keeps minute 7).
+    await autoRecover(env, ectx, new Date(controller.scheduledTime).getUTCMinutes()).catch((e) => console.error("recover", sanitize(String(e))));
     await runQueue(ectx, {
       maxJobs: 25,
       includeDemo: false,

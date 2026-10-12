@@ -50,7 +50,7 @@ export async function markNeedsReauth(db: D1Database, account: AccountRow, messa
     account.id,
   );
   await cancelJobsWhere(db, "account_id = ? AND kind != 'process_event'", now, account.id);
-  await audit(db, "system", "account.needs_reauth", String(account.id), { message: message.slice(0, 200) });
+  await audit(db, account.tenant_id, "system", "account.needs_reauth", String(account.id), { message: message.slice(0, 200) });
 }
 
 /** Builds the engine context used by the queue runner. */
@@ -64,10 +64,10 @@ export function engineContext(env: Env, onRequest?: () => void): EngineContext {
     getAccessToken: (a) => getAccessToken(env, env.DB, a),
     onAuthError: async (a, m) => {
       await markNeedsReauth(env.DB, a, m);
-      if (!a.is_demo) await notify(env, "reauth", "🔌 انقطع ربط حساب إنستقرام — الردود التلقائية متوقفة. افتح التطبيق › الربط واضغط «ربط» من جديد.", onRequest);
+      if (!a.is_demo) await notify(env, a.tenant_id, "reauth", "🔌 انقطع ربط حساب إنستقرام — الردود التلقائية متوقفة. افتح التطبيق › الربط واضغط «ربط» من جديد.", onRequest);
     },
     publicBaseUrl: env.PUBLIC_BASE_URL,
-    notify: (kind, text) => notify(env, kind, text, onRequest),
+    notify: (tenantId, kind, text) => notify(env, tenantId, kind, text, onRequest),
   };
 }
 
@@ -77,8 +77,14 @@ export interface ConnectResult {
   accountId?: number;
 }
 
+/** True when the Instagram account is new or already belongs to this customer. */
+export async function accountAvailableTo(db: D1Database, igUserId: string, tenantId: number): Promise<boolean> {
+  const existing = await first<{ tenant_id: number }>(db, "SELECT tenant_id FROM instagram_accounts WHERE ig_user_id = ?", igUserId);
+  return !existing || existing.tenant_id === tenantId;
+}
+
 /** Completes Instagram Login: code → short-lived token → long-lived token → profile → encrypted storage → webhook subscription. */
-export async function completeOAuth(env: Env, code: string): Promise<ConnectResult> {
+export async function completeOAuth(env: Env, code: string, tenantId: number): Promise<ConnectResult> {
   const meta = metaClient(env);
   const short = await meta.exchangeCode(code, redirectUri(env));
   if (!short.ok) return { ok: false, error: `code_exchange: ${short.error.message}` };
@@ -90,32 +96,41 @@ export async function completeOAuth(env: Env, code: string): Promise<ConnectResu
   const igUserId = String(me.data.user_id ?? short.data.user_id ?? "");
   if (!igUserId) return { ok: false, error: "profile: missing user_id" };
 
+  // An Instagram account belongs to one customer only: it can never be taken over from another tenant.
+  if (!(await accountAvailableTo(env.DB, igUserId, tenantId))) {
+    await audit(env.DB, tenantId, "system", "account.connect_refused", igUserId, { reason: "owned_by_other_tenant" });
+    return { ok: false, error: "account_owned_by_other_customer: هذا الحساب مربوط بعميل آخر في الخدمة — تواصل مع الإدارة" };
+  }
+
   const now = Date.now();
   const enc = await encryptSecret(token, env.TOKEN_ENC_KEY, aad(igUserId));
   const scopes = short.data.permissions?.length ? short.data.permissions : [...INSTAGRAM_SCOPES];
   const expiresAt = long.data.expires_in ? now + long.data.expires_in * 1000 : null;
 
-  // Single-account system: a newly connected account replaces any previously connected (non-demo) one.
+  // One account per customer: a newly connected account replaces the customer's previous (non-demo) one.
   await run(
     env.DB,
-    "UPDATE instagram_accounts SET status = 'disconnected', token_ciphertext = NULL, token_iv = NULL, disconnected_at = ?, updated_at = ? WHERE is_demo = 0 AND ig_user_id != ? AND status != 'disconnected'",
+    "UPDATE instagram_accounts SET status = 'disconnected', token_ciphertext = NULL, token_iv = NULL, disconnected_at = ?, updated_at = ? WHERE tenant_id = ? AND is_demo = 0 AND ig_user_id != ? AND status != 'disconnected'",
     now,
     now,
+    tenantId,
     igUserId,
   );
   await run(
     env.DB,
     `INSERT INTO instagram_accounts
-       (ig_user_id, app_scoped_id, username, name, profile_picture_url, account_type, is_demo, token_ciphertext, token_iv, token_key_version,
+       (tenant_id, ig_user_id, app_scoped_id, username, name, profile_picture_url, account_type, is_demo, token_ciphertext, token_iv, token_key_version,
         token_expires_at, token_refreshed_at, scopes, status, api_version, connected_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, 'active', ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, 'active', ?, ?, ?, ?)
      ON CONFLICT(ig_user_id) DO UPDATE SET
        app_scoped_id = excluded.app_scoped_id, username = excluded.username, name = excluded.name,
        profile_picture_url = excluded.profile_picture_url, account_type = excluded.account_type,
        token_ciphertext = excluded.token_ciphertext, token_iv = excluded.token_iv, token_key_version = 1,
        token_expires_at = excluded.token_expires_at, token_refreshed_at = excluded.token_refreshed_at,
        scopes = excluded.scopes, status = 'active', last_error = NULL, api_version = excluded.api_version,
-       connected_at = excluded.connected_at, disconnected_at = NULL, updated_at = excluded.updated_at`,
+       connected_at = excluded.connected_at, disconnected_at = NULL, updated_at = excluded.updated_at
+     WHERE instagram_accounts.tenant_id = excluded.tenant_id`,
+    tenantId,
     igUserId,
     me.data.id ?? null,
     me.data.username ?? null,
@@ -132,10 +147,11 @@ export async function completeOAuth(env: Env, code: string): Promise<ConnectResu
     now,
     now,
   );
-  const acc = await first<AccountRow>(env.DB, "SELECT * FROM instagram_accounts WHERE ig_user_id = ?", igUserId);
-  await subscribeWebhooks(env, acc!.id, token);
-  await audit(env.DB, "admin", "account.connected", igUserId, { username: me.data.username, scopes });
-  return { ok: true, accountId: acc!.id };
+  const acc = await first<AccountRow>(env.DB, "SELECT * FROM instagram_accounts WHERE ig_user_id = ? AND tenant_id = ?", igUserId, tenantId);
+  if (!acc) return { ok: false, error: "account_owned_by_other_customer: هذا الحساب مربوط بعميل آخر في الخدمة — تواصل مع الإدارة" };
+  await subscribeWebhooks(env, acc.id, token);
+  await audit(env.DB, tenantId, "admin", "account.connected", igUserId, { username: me.data.username, scopes });
+  return { ok: true, accountId: acc.id };
 }
 
 export async function subscribeWebhooks(env: Env, accountId: number, token?: string): Promise<{ ok: boolean; error?: string }> {
@@ -158,8 +174,12 @@ export async function subscribeWebhooks(env: Env, accountId: number, token?: str
  * Re-reads the connected account's profile (username, name, picture). Instagram profile-picture URLs are signed
  * CDN links that expire, so the stored one is refreshed daily and whenever the app sees it broken.
  */
-export async function refreshAccountProfiles(env: Env): Promise<number> {
-  const rows = await env.DB.prepare("SELECT * FROM instagram_accounts WHERE is_demo = 0 AND status = 'active' AND token_ciphertext IS NOT NULL").all<AccountRow>();
+export async function refreshAccountProfiles(env: Env, tenantId?: number): Promise<number> {
+  const rows = await env.DB.prepare(
+    `SELECT * FROM instagram_accounts WHERE is_demo = 0 AND status = 'active' AND token_ciphertext IS NOT NULL${tenantId ? " AND tenant_id = ?" : ""}`,
+  )
+    .bind(...(tenantId ? [tenantId] : []))
+    .all<AccountRow>();
   let n = 0;
   for (const acc of rows.results ?? []) {
     const token = await getAccessToken(env, env.DB, acc);
@@ -253,5 +273,5 @@ export async function disconnectAccount(env: Env, accountId: number, opts: { pur
     );
   }
   await env.DB.batch(stmts);
-  await audit(env.DB, opts.actor, "account.disconnected", acc.ig_user_id, { purge: opts.purge });
+  await audit(env.DB, acc.tenant_id, opts.actor, "account.disconnected", acc.ig_user_id, { purge: opts.purge });
 }

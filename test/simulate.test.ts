@@ -10,7 +10,7 @@ beforeEach(async () => {
 describe("simulator", () => {
   it("a chosen campaign limited to specific posts is simulated on one of its posts (not ignored as out of scope)", async () => {
     const cid = await seedCampaign({ scope: "selected", media_ids: ["reel_course_1"], status: "draft" } as any);
-    const r: any = await simulate(TEST_ENV, simulateSchema.parse({ campaign_id: cid, event: "comment", text: "أبغى الكورس", participant: "sim_user", reset: true }));
+    const r: any = await simulate(TEST_ENV, 1, simulateSchema.parse({ campaign_id: cid, event: "comment", text: "أبغى الكورس", participant: "sim_user", reset: true }));
     const flat = JSON.stringify(r);
     expect(flat).not.toContain("media_not_in_scope");
     const ev = await DB.prepare("SELECT reason, status FROM webhook_events ORDER BY id DESC LIMIT 1").first<any>();

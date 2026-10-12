@@ -20,14 +20,15 @@ export interface RecoverResult {
  * have never seen as a normal event. It then goes through the exact same pipeline (matching, cooldowns, flows),
  * and the shared dedup key (comment:<id>) guarantees a comment is never answered twice.
  */
-export async function recoverMissedComments(ctx: EngineContext, opts: { maxMedia?: number } = {}): Promise<RecoverResult> {
+export async function recoverMissedComments(ctx: EngineContext, tenantId: number, opts: { maxMedia?: number } = {}): Promise<RecoverResult> {
   const now = ctx.now();
-  const account = await first<AccountRow>(ctx.db, "SELECT * FROM instagram_accounts WHERE is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1");
+  const account = await first<AccountRow>(ctx.db, "SELECT * FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1", tenantId);
   if (!account) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "no_account" };
-  if (!(await getSetting(ctx.db, "automation_enabled", true))) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "automation_paused" };
+  if (!(await getSetting(ctx.db, tenantId, "automation_enabled", true))) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "automation_paused" };
   const campaigns = await all<{ id: number; scope: string; auto_new_media: number; activated_at: number | null; process_old_events: number }>(
     ctx.db,
-    "SELECT id, scope, auto_new_media, activated_at, process_old_events FROM campaigns WHERE type = 'comment' AND status = 'active' AND deleted_at IS NULL",
+    "SELECT id, scope, auto_new_media, activated_at, process_old_events FROM campaigns WHERE tenant_id = ? AND type = 'comment' AND status = 'active' AND deleted_at IS NULL",
+    tenantId,
   );
   if (!campaigns.length) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "no_active_comment_campaign" };
   const since = now - RECOVER_WINDOW_MS;
@@ -41,10 +42,11 @@ export async function recoverMissedComments(ctx: EngineContext, opts: { maxMedia
     ? await all<{ media_id: string }>(
         ctx.db,
         `SELECT media_id FROM (
-           SELECT media_id, MAX(received_at) AS t FROM webhook_events WHERE event_type = 'comment' AND is_demo = 0 AND received_at > ? AND media_id IS NOT NULL GROUP BY media_id
+           SELECT media_id, MAX(received_at) AS t FROM webhook_events WHERE account_ig_id = ? AND event_type = 'comment' AND is_demo = 0 AND received_at > ? AND media_id IS NOT NULL GROUP BY media_id
            UNION ALL
            SELECT media_id, posted_at AS t FROM media_cache WHERE account_id = ? AND kind = 'media' AND posted_at > ?
          ) GROUP BY media_id ORDER BY MAX(t) DESC LIMIT 30`,
+        account.ig_user_id,
         since,
         account.id,
         since,
@@ -54,9 +56,10 @@ export async function recoverMissedComments(ctx: EngineContext, opts: { maxMedia
     ctx.db,
     `SELECT cm.media_id FROM campaign_media cm JOIN campaigns c ON c.id = cm.campaign_id
       LEFT JOIN media_cache m ON m.media_id = cm.media_id AND m.account_id = ?
-      WHERE c.type = 'comment' AND c.status = 'active' AND c.deleted_at IS NULL
+      WHERE c.tenant_id = ? AND c.type = 'comment' AND c.status = 'active' AND c.deleted_at IS NULL
       ORDER BY COALESCE(m.posted_at, 0) DESC LIMIT 30`,
     account.id,
+    tenantId,
   );
   for (const r of recent) add(r.media_id);
   for (const r of selected) add(r.media_id);
@@ -116,9 +119,21 @@ export async function recoverMissedComments(ctx: EngineContext, opts: { maxMedia
   return { media: media.length, fetched, recovered: fresh.length };
 }
 
-/** Hourly automatic recovery (setting "auto_recover_comments", on by default). Records the last run. */
-export async function autoRecover(env: Env, ctx: EngineContext): Promise<void> {
-  if (!(await getSetting(env.DB, "auto_recover_comments", true))) return;
-  const r = await recoverMissedComments(ctx, { maxMedia: 10 });
-  await setSetting(env.DB, "recover_last", { at: Date.now(), ...r, auto: true });
+/**
+ * Hourly automatic recovery (setting "auto_recover_comments", on by default), spread over the hour: each customer
+ * has its own minute, so one cron run never exceeds the free plan's 50 subrequests (at most 2 customers per run).
+ */
+export async function autoRecover(env: Env, ctx: EngineContext, minute: number): Promise<void> {
+  const tenants = await all<{ id: number }>(
+    env.DB,
+    `SELECT t.id FROM tenants t WHERE t.status = 'active' AND (t.id + 6) % 60 = ?
+       AND EXISTS (SELECT 1 FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 AND a.status = 'active')
+     ORDER BY t.id LIMIT 2`,
+    minute,
+  );
+  for (const t of tenants) {
+    if (!(await getSetting(env.DB, t.id, "auto_recover_comments", true))) continue;
+    const r = await recoverMissedComments(ctx, t.id, { maxMedia: 10 });
+    await setSetting(env.DB, t.id, "recover_last", { at: Date.now(), ...r, auto: true });
+  }
 }

@@ -127,16 +127,19 @@ export function UsageCard() {
   };
 
   return (
-    <Card title="استهلاك اليوم من الحد المجاني">
+    <Card title={u ? "استهلاك اليوم من الحد المجاني" : "استرجاع التعليقات الفائتة"}>
       {showList && <RecoveredList onClose={() => setShowList(false)} />}
       <div className="space-y-3">
+        {/* Platform usage is shown to the owner only. */}
+        {u && <>
         <Bar label="الطلبات" {...u.requests} info={INFO_REQUESTS} />
         <Bar label="الكتابة في قاعدة البيانات" {...u.writes} info={INFO_WRITES} />
         <p className="muted text-xs">
           تقدير تقريبي من نشاط اليوم (الأرقام الدقيقة في لوحة Cloudflare). يتجدد الحد {fmtTime(u.reset_at)} (03:00 بتوقيت السعودية). عند بلوغ 100% تتوقف
           الردود مؤقتًا بدون أي رسوم، ثم تكمل تلقائيًا.
         </p>
-        <div className="border-t border-[var(--border)] pt-3">
+        </>}
+        <div className={u ? "border-t border-[var(--border)] pt-3" : ""}>
           <div className="mb-2 font-semibold">استرجاع التعليقات الفائتة</div>
           <p className="muted mb-2 text-xs">
             يقرأ آخر التعليقات على منشورات حملاتك النشطة ويرد على أي تعليق مطابق لم يصل تنبيهه (خلال 7 أيام، وبعد تفعيل الحملة). لا يرد على نفس التعليق مرتين.

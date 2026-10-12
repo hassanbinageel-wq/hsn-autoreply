@@ -140,7 +140,7 @@ describe("2) automatic follow reminder", () => {
 describe("5) notifications", () => {
   it("notifies on a new follower and on delivery (when wired), never for demo", async () => {
     const got: Array<[string, string]> = [];
-    setCtxExtra({ notify: async (k, t) => void got.push([k, t]) });
+    setCtxExtra({ notify: async (_tenant, k, t) => void got.push([k, t]) });
     await seedCampaign({ name: "كورس المونتاج", require_follow: true });
     const meta = new MockMeta();
     const clock = { t: Date.now() };
@@ -160,7 +160,7 @@ describe("5) notifications", () => {
     await seedCampaign({ name: "حملة التقرير" });
     const meta = new MockMeta();
     await deliver(commentPayload({ text: "كورس" }), meta);
-    const text = await buildDailyReport(DB);
+    const text = await buildDailyReport(DB, 1);
     expect(text).toContain("آخر 24 ساعة");
     expect(text).toContain("استلموا المحتوى: 1");
     expect(text).toContain("حملة التقرير");

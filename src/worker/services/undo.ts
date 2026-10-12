@@ -1,4 +1,4 @@
-import { all, first, run, setSetting } from "../lib/db";
+import { all, first, run, setSetting, settingKey } from "../lib/db";
 import { cancelJobsWhere } from "../engine/jobs";
 import { deleteDraws } from "./draws";
 
@@ -24,12 +24,14 @@ export class UndoError extends Error {
   }
 }
 
-export async function recordUndo(db: D1Database, actor: string, kind: UndoKind, target: string, label: string, payload: unknown): Promise<void> {
+export async function recordUndo(db: D1Database, tenantId: number, actor: string, kind: UndoKind, target: string, label: string, payload: unknown): Promise<void> {
   let json: string | null = JSON.stringify(payload);
   if (json.length > MAX_PAYLOAD) json = null;
   await db.batch([
-    db.prepare("INSERT INTO undo_ops (at, actor, kind, target, label, payload) VALUES (?, ?, ?, ?, ?, ?)").bind(Date.now(), actor, kind, target, label, json),
-    db.prepare(`DELETE FROM undo_ops WHERE id NOT IN (SELECT id FROM undo_ops ORDER BY id DESC LIMIT ${UNDO_KEEP})`),
+    db.prepare("INSERT INTO undo_ops (tenant_id, at, actor, kind, target, label, payload) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(tenantId, Date.now(), actor, kind, target, label, json),
+    db
+      .prepare(`DELETE FROM undo_ops WHERE tenant_id = ? AND id NOT IN (SELECT id FROM undo_ops WHERE tenant_id = ? ORDER BY id DESC LIMIT ${UNDO_KEEP})`)
+      .bind(tenantId, tenantId),
   ]);
 }
 
@@ -46,10 +48,11 @@ export interface UndoRow {
   blocked_by: number | null;
 }
 
-export async function listUndo(db: D1Database): Promise<UndoRow[]> {
+export async function listUndo(db: D1Database, tenantId: number): Promise<UndoRow[]> {
   const rows = await all<any>(
     db,
-    `SELECT id, at, actor, kind, target, label, undone_at, undone_by, payload IS NOT NULL AS has_payload FROM undo_ops ORDER BY id DESC LIMIT ${UNDO_KEEP}`,
+    `SELECT id, at, actor, kind, target, label, undone_at, undone_by, payload IS NOT NULL AS has_payload FROM undo_ops WHERE tenant_id = ? ORDER BY id DESC LIMIT ${UNDO_KEEP}`,
+    tenantId,
   );
   return rows.map((r) => {
     const newer = rows.find((o) => o.id > r.id && !o.undone_at && sameTarget(o.target, r.target));
@@ -178,14 +181,14 @@ async function softDeleteCampaign(db: D1Database, id: number, now: number) {
   await stopCampaignWork(db, id, now, "campaign_undo");
 }
 
-export async function undoOperation(db: D1Database, opId: number, actor: string): Promise<{ label: string }> {
-  const list = await listUndo(db);
+export async function undoOperation(db: D1Database, tenantId: number, opId: number, actor: string): Promise<{ label: string }> {
+  const list = await listUndo(db, tenantId);
   const op = list.find((o) => o.id === opId);
   if (!op) throw new UndoError("not_found", "العملية غير موجودة (يُحتفظ بآخر 10 عمليات فقط)");
   if (op.undone_at) throw new UndoError("already", "تم استرجاع هذه العملية مسبقًا");
   if (op.blocked_by) throw new UndoError("blocked", "توجد عملية أحدث على نفس العنصر — استرجعها أولًا");
   if (!op.revertible) throw new UndoError("too_large", "هذه العملية كبيرة الحجم ولم تُحفظ نسختها، لا يمكن استرجاعها");
-  const row = await first<{ payload: string }>(db, "SELECT payload FROM undo_ops WHERE id = ?", opId);
+  const row = await first<{ payload: string }>(db, "SELECT payload FROM undo_ops WHERE id = ? AND tenant_id = ?", opId, tenantId);
   const p = JSON.parse(row!.payload);
   const now = Date.now();
 
@@ -249,8 +252,8 @@ export async function undoOperation(db: D1Database, opId: number, actor: string)
     }
     case "settings.update":
       for (const [k, v] of Object.entries(p.prev as Record<string, unknown>)) {
-        if (v === null) await run(db, "DELETE FROM app_settings WHERE key = ?", k);
-        else await setSetting(db, k, v, now);
+        if (v === null) await run(db, "DELETE FROM app_settings WHERE key = ?", settingKey(tenantId, k));
+        else await setSetting(db, tenantId, k, v, now);
       }
       break;
     default:

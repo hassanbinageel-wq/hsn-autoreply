@@ -28,7 +28,7 @@ describe("recovery of comments whose webhook never arrived", () => {
       { id: "old_1", text: "كورس", timestamp: iso(now - 8 * 86_400_000), from: { id: "u_old", username: "old_user" } },
       { id: "nomatch_1", text: "ماشاء الله", timestamp: iso(now - 10_000), from: { id: "u_x", username: "x" } },
     ];
-    const r = await recoverMissedComments(makeCtx(meta), { maxMedia: 10 });
+    const r = await recoverMissedComments(makeCtx(meta), 1, { maxMedia: 10 });
     expect(r).toMatchObject({ media: 1, fetched: 4, recovered: 2 }); // missed_1 + nomatch_1 (stored, then ignored by matching)
     await drain(meta);
     const replies = meta.sends().filter((s) => s.kind === "private_reply").map((s) => s.target);
@@ -37,7 +37,7 @@ describe("recovery of comments whose webhook never arrived", () => {
     expect(p.username).toBe("missed_user");
 
     // running again, or the late webhook finally arriving, changes nothing
-    expect((await recoverMissedComments(makeCtx(meta))).recovered).toBe(0);
+    expect((await recoverMissedComments(makeCtx(meta), 1)).recovered).toBe(0);
     await deliver(commentPayload({ text: "أبغى الكورس", commentId: "missed_1", mediaId: "media_A", from: "u_missed" }), meta);
     expect(meta.sends().filter((s) => s.kind === "private_reply")).toHaveLength(2);
     // the app can list what was recovered: who, on which post, and what was sent
@@ -58,10 +58,10 @@ describe("recovery of comments whose webhook never arrived", () => {
 
   it("does nothing without an active comment campaign or while automation is paused", async () => {
     const meta = new MockMeta();
-    expect((await recoverMissedComments(makeCtx(meta))).skipped_reason).toBe("no_active_comment_campaign");
+    expect((await recoverMissedComments(makeCtx(meta), 1)).skipped_reason).toBe("no_active_comment_campaign");
     await seedCampaign({ scope: "selected", media_ids: ["m"] });
     await DB.prepare("UPDATE app_settings SET value = 'false' WHERE key = 'automation_enabled'").run();
-    expect((await recoverMissedComments(makeCtx(meta))).skipped_reason).toBe("automation_paused");
+    expect((await recoverMissedComments(makeCtx(meta), 1)).skipped_reason).toBe("automation_paused");
     expect(meta.calls.filter((c) => c.kind === "list_comments")).toHaveLength(0);
   });
 
@@ -70,7 +70,7 @@ describe("recovery of comments whose webhook never arrived", () => {
     const meta = new MockMeta();
     await deliver(commentPayload({ text: "سلام", commentId: "act_1", mediaId: "busy_reel", from: "u1" }), meta);
     meta.comments["busy_reel"] = [{ id: "missed_2", text: "كورس", timestamp: iso(Date.now() - 20_000), from: { id: "u2", username: "two" } }];
-    const r = await recoverMissedComments(makeCtx(meta));
+    const r = await recoverMissedComments(makeCtx(meta), 1);
     expect(r.recovered).toBe(1);
     await drain(meta);
     expect(meta.sends().some((s) => s.target === "missed_2")).toBe(true);

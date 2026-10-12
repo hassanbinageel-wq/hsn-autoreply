@@ -1,7 +1,7 @@
 import { exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { signMetaBody, b64url } from "../src/worker/lib/crypto";
-import { commentPayload, DB, deliver, following, messagePayload, MockMeta, notFollowing, resetDb, seedAccount, seedCampaign, TEST_ENV } from "./helpers";
+import { commentPayload, DB, deliver, following, messagePayload, MockMeta, notFollowing, resetDb, seedAccount, seedCampaign, TEST_ENV, IG_ID } from "./helpers";
 
 const BASE = "https://hsn.example.workers.dev";
 const SELF = (exports as any).default as { fetch: (r: Request | string, init?: RequestInit) => Promise<Response> };
@@ -289,7 +289,7 @@ describe("campaign stats", () => {
 describe("CSV export", () => {
   it("is formula-injection safe", async () => {
     await seedAccount();
-    await DB.prepare("INSERT INTO webhook_events (dedup_key, account_ig_id, event_type, text, payload, event_time, received_at, status) VALUES ('x', '1', 'comment', '=cmd|calc', '{}', 1, 1, 'ignored')").run();
+    await DB.prepare("INSERT INTO webhook_events (dedup_key, account_ig_id, event_type, text, payload, event_time, received_at, status) VALUES ('x', ?, 'comment', '=cmd|calc', '{}', 1, 1, 'ignored')").bind(IG_ID).run();
     const { body } = await setupAndLogin("app");
     const r = await call("/api/logs/export?type=events", { headers: { Authorization: `Bearer ${body.token}` } });
     const text = await r.text();

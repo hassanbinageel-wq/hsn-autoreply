@@ -5,7 +5,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
 import type { Env } from "./env";
 import { missingSecrets } from "./env";
-import { all, audit, first, getSetting, run, setSetting } from "./lib/db";
+import { all, audit, first, getSetting, OWNER_TENANT, run, setSetting, settingKey, tenantSettingsFilter } from "./lib/db";
 import { hashPassword, randomToken, sha256Hex, timingSafeEqual, verifyMetaSignature, verifyPassword } from "./lib/crypto";
 import { parseWebhook } from "./meta/webhook-parse";
 import { INSTAGRAM_SCOPES, WEBHOOK_FIELDS, sanitize } from "./meta/client";
@@ -37,6 +37,7 @@ import { runQueue } from "./engine/executor";
 import { cancelJobsWhere } from "./engine/jobs";
 import type { AccountRow } from "./engine/context";
 import {
+  tenantCreateSchema,
   campaignInputSchema,
   drawInputSchema,
   loginSchema,
@@ -58,7 +59,6 @@ import { cardDesignInputSchema } from "../shared/card";
 import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "./services/cards";
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
-const PUBLIC_SETTINGS_SQL = "key NOT LIKE 'telegram%' AND key NOT LIKE 'notify%'";
 import { toCsv } from "../shared/csv";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, termsPage } from "./pages";
@@ -91,9 +91,14 @@ const idParam = (c: C) => {
   return Number.isInteger(n) && n > 0 ? n : null;
 };
 
-async function currentAccount(db: D1Database): Promise<AccountRow & Record<string, any> | null> {
-  return first(db, "SELECT * FROM instagram_accounts WHERE is_demo = 0 ORDER BY (status = 'active') DESC, updated_at DESC LIMIT 1");
+async function currentAccount(db: D1Database, tenantId: number): Promise<AccountRow & Record<string, any> | null> {
+  return first(db, "SELECT * FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 ORDER BY (status = 'active') DESC, updated_at DESC LIMIT 1", tenantId);
 }
+
+/** SQL condition: a row's account_id belongs to the tenant (engine tables are keyed by Instagram account). */
+const TENANT_ACCOUNTS = "(SELECT id FROM instagram_accounts WHERE tenant_id = ?)";
+/** Same for webhook events, which carry the Instagram account id. */
+const TENANT_IG_IDS = "(SELECT ig_user_id FROM instagram_accounts WHERE tenant_id = ?)";
 
 function publicAccount(a: any) {
   if (!a) return null;
@@ -105,6 +110,22 @@ function publicAccount(a: any) {
     webhook_fields: JSON.parse(a.webhook_fields || "[]"),
   };
 }
+
+/** One tenant's settings without secrets (Telegram token / notification internals). */
+async function publicSettings(db: D1Database, tenantId: number): Promise<Record<string, unknown>> {
+  const f = tenantSettingsFilter(tenantId);
+  const rows = await all<{ key: string; value: string }>(db, `SELECT key, value FROM app_settings WHERE ${f.where}`, ...f.params);
+  const out: Record<string, unknown> = {};
+  for (const r of rows) {
+    const k = f.strip(r.key);
+    if (k.startsWith("telegram") || k.startsWith("notify")) continue;
+    out[k] = JSON.parse(r.value);
+  }
+  return out;
+}
+
+/** The tenant of the logged-in user: every query below is scoped to it. */
+const T = (c: C): number => c.get("session").tenant_id;
 
 export function createApp() {
   const app = new Hono<AppEnv>();
@@ -238,7 +259,7 @@ export function createApp() {
     const data = await parseSignedRequest(String(form["signed_request"] ?? ""), c.env.INSTAGRAM_APP_SECRET);
     if (!data?.user_id) return c.text("invalid", 400);
     const uid = String(data.user_id);
-    const acc = await first<{ id: number }>(c.env.DB, "SELECT id FROM instagram_accounts WHERE (ig_user_id = ? OR app_scoped_id = ?) AND is_demo = 0", uid, uid);
+    const acc = await first<{ id: number; tenant_id: number }>(c.env.DB, "SELECT id, tenant_id FROM instagram_accounts WHERE (ig_user_id = ? OR app_scoped_id = ?) AND is_demo = 0", uid, uid);
     if (acc) {
       await disconnectAccount(c.env, acc.id, { purge: true, actor: "meta:data-deletion", skipRemote: true });
     } else {
@@ -250,7 +271,7 @@ export function createApp() {
       ]);
     }
     const code = randomToken(9);
-    await audit(c.env.DB, "meta", "data_deletion", code);
+    await audit(c.env.DB, acc?.tenant_id ?? OWNER_TENANT, "meta", "data_deletion", code);
     return c.json({ url: `${c.env.PUBLIC_BASE_URL}/meta/deletion-status?code=${code}`, confirmation_code: code });
   });
 
@@ -261,9 +282,9 @@ export function createApp() {
     const now = Date.now();
     // State must exist, be unexpired and unused — it is consumed atomically.
     const st = state
-      ? await first<{ client: "web" | "app" }>(
+      ? await first<{ client: "web" | "app"; user_id: number }>(
           c.env.DB,
-          "UPDATE oauth_states SET used_at = ? WHERE state_hash = ? AND used_at IS NULL AND expires_at > ? RETURNING client",
+          "UPDATE oauth_states SET used_at = ? WHERE state_hash = ? AND used_at IS NULL AND expires_at > ? RETURNING client, user_id",
           now,
           await sha256Hex(state),
           now,
@@ -275,11 +296,14 @@ export function createApp() {
     if (c.req.query("error") || !code) {
       return c.html(oauthResultPage(false, "تم إلغاء الربط أو رفض الأذونات.", st.client, c.env.APP_DEEP_LINK), 400);
     }
-    const r = await completeOAuth(c.env, code.replace(/#_$/, ""));
+    // The account is connected to the tenant of the user who started the flow.
+    const owner = await first<{ tenant_id: number }>(c.env.DB, "SELECT tenant_id FROM admin_users WHERE id = ?", st.user_id);
+    if (!owner) return c.html(oauthResultPage(false, "رابط الربط غير صالح أو منتهي. ابدأ الربط من جديد من التطبيق.", "web", c.env.APP_DEEP_LINK), 400);
+    const r = await completeOAuth(c.env, code.replace(/#_$/, ""), owner.tenant_id);
     if (!r.ok) {
       const detail = sanitize(r.error ?? "unknown");
       console.error("oauth failed", detail);
-      await audit(c.env.DB, "system", "oauth.failed", undefined, { detail });
+      await audit(c.env.DB, owner.tenant_id, "system", "oauth.failed", undefined, { detail });
       const hint = detail.startsWith("code_exchange")
         ? "غالبًا INSTAGRAM_APP_SECRET غير صحيح (يجب أن يكون «Instagram app secret» من صفحة إعداد API باستخدام تسجيل دخول Instagram، وليس المفتاح السري في «الإعدادات › أساسي»)، أو INSTAGRAM_APP_ID غير مطابق."
         : "تحقق من إعدادات التطبيق في Meta ثم أعد المحاولة.";
@@ -313,12 +337,17 @@ export function createApp() {
     const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
     const now = Date.now();
     try {
-      // The singleton unique index guarantees only one admin can ever be created.
-      await run(c.env.DB, "INSERT INTO admin_users (username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)", p.data.username, hash, now, now);
+      // First-time setup only: the owner login is created when no login exists at all (customers are added by the owner).
+      const r = await run(
+        c.env.DB,
+        "INSERT INTO admin_users (username, password_hash, tenant_id, created_at, updated_at) SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM admin_users)",
+        p.data.username, hash, OWNER_TENANT, now, now,
+      );
+      if (!r.meta.changes) return apiError(c, 409, "already_setup", "تم الإعداد مسبقًا");
     } catch {
       return apiError(c, 409, "already_setup", "تم الإعداد مسبقًا");
     }
-    await audit(c.env.DB, p.data.username, "admin.setup");
+    await audit(c.env.DB, OWNER_TENANT, p.data.username, "admin.setup");
     return c.json({ ok: true, next: "احذف SETUP_TOKEN من أسرار Worker الآن (wrangler secret delete SETUP_TOKEN)" });
   });
 
@@ -327,9 +356,9 @@ export function createApp() {
     if (!(await rateLimit(c.env.DB, `login:${ip}`, 10, 15 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، انتظر 15 دقيقة");
     const p = await parseBody(c, loginSchema);
     if (!p.ok) return p.res;
-    const user = await first<{ id: number; username: string; password_hash: string; failed_attempts: number; locked_until: number | null }>(
+    const user = await first<{ id: number; username: string; password_hash: string; failed_attempts: number; locked_until: number | null; tenant_id: number; tenant_status: string }>(
       c.env.DB,
-      "SELECT * FROM admin_users WHERE username = ?",
+      "SELECT u.*, t.status AS tenant_status FROM admin_users u JOIN tenants t ON t.id = u.tenant_id WHERE u.username = ?",
       p.data.username,
     );
     const now = Date.now();
@@ -343,9 +372,10 @@ export function createApp() {
       return apiError(c, 401, "invalid_credentials", "بيانات الدخول غير صحيحة");
     }
     await run(c.env.DB, "UPDATE admin_users SET failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?", now, user.id);
+    if (user.tenant_status !== "active") return apiError(c, 403, "account_suspended", "هذا الحساب موقوف — تواصل مع إدارة الخدمة");
     const kind = p.data.client === "app" ? "device" : "web";
     const s = await createSession(c.env.DB, user.id, kind, p.data.device_label);
-    await audit(c.env.DB, user.username, "auth.login", kind);
+    await audit(c.env.DB, user.tenant_id, user.username, "auth.login", kind);
     if (kind === "web") {
       setCookie(c, SESSION_COOKIE, s.token, { httpOnly: true, secure: true, sameSite: "Strict", path: "/", maxAge: WEB_SESSION_TTL / 1000 });
       return c.json({ ok: true, username: user.username, csrf_token: s.csrf });
@@ -357,9 +387,32 @@ export function createApp() {
   const api = new Hono<AppEnv>();
   api.use("*", requireAuth);
 
+  // Ownership guard: any route addressing a row by id only reaches rows of the caller's tenant (404 otherwise).
+  const OWNED: Record<string, string> = {
+    campaigns: "SELECT 1 FROM campaigns WHERE id = ? AND tenant_id = ?",
+    draws: "SELECT 1 FROM draws WHERE id = ? AND tenant_id = ?",
+    "card-designs": "SELECT 1 FROM card_designs WHERE id = ? AND tenant_id = ?",
+    templates: "SELECT 1 FROM templates WHERE id = ? AND tenant_id = ?",
+    undo: "SELECT 1 FROM undo_ops WHERE id = ? AND tenant_id = ?",
+    inbox: `SELECT 1 FROM participants WHERE id = ? AND account_id IN ${TENANT_ACCOUNTS}`,
+    flows: `SELECT 1 FROM conversation_flows WHERE id = ? AND account_id IN ${TENANT_ACCOUNTS}`,
+    jobs: `SELECT 1 FROM action_jobs WHERE id = ? AND account_id IN ${TENANT_ACCOUNTS}`,
+  };
+  api.use("/:kind/:id/*", ownedGuard);
+  api.use("/:kind/:id", ownedGuard);
+  async function ownedGuard(c: C, next: () => Promise<void>) {
+    const sql = OWNED[c.req.param("kind") ?? ""];
+    const raw = c.req.param("id") ?? "";
+    if (sql && /^\d+$/.test(raw)) {
+      const ok = await first(c.env.DB, sql, Number(raw), T(c));
+      if (!ok) return apiError(c, 404, "not_found", "غير موجود");
+    }
+    await next();
+  }
+
   api.get("/auth/me", (c) => {
     const s = c.get("session");
-    return c.json({ username: s.username, kind: s.kind, csrf_token: s.kind === "web" ? s.csrf_token : undefined });
+    return c.json({ username: s.username, kind: s.kind, is_owner: s.is_owner, csrf_token: s.kind === "web" ? s.csrf_token : undefined });
   });
 
   api.post("/auth/logout", async (c) => {
@@ -369,43 +422,140 @@ export function createApp() {
   });
 
   api.get("/auth/sessions", async (c) =>
-    c.json(await all(c.env.DB, "SELECT substr(id,1,12) AS id, kind, device_label, created_at, last_seen_at, expires_at FROM sessions WHERE revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC", Date.now())),
+    c.json(await all(c.env.DB, "SELECT substr(id,1,12) AS id, kind, device_label, created_at, last_seen_at, expires_at FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC", c.get("session").user_id, Date.now())),
   );
 
   api.post("/auth/sessions/revoke-others", async (c) => {
-    await run(c.env.DB, "UPDATE sessions SET revoked_at = ? WHERE id != ? AND revoked_at IS NULL", Date.now(), c.get("session").id);
+    await run(c.env.DB, "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND id != ? AND revoked_at IS NULL", Date.now(), c.get("session").user_id, c.get("session").id);
     return c.json({ ok: true });
   });
+
+  // ---- Owner panel (customers). Owner tenant only.
+  const owner = new Hono<AppEnv>();
+  owner.use("*", async (c, next) => {
+    if (!c.get("session").is_owner) return apiError(c, 403, "owner_only", "هذه الصفحة لإدارة الخدمة فقط");
+    await next();
+  });
+  owner.get("/tenants", async (c) => {
+    const since = Date.now() - 30 * 86_400_000;
+    const rows = await all<any>(
+      c.env.DB,
+      `SELECT t.id, t.name, t.is_owner, t.status, t.notes, t.created_at,
+              (SELECT u.username FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS username,
+              (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS ig_username,
+              (SELECT a.status FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS ig_status,
+              (SELECT a.follow_gate_allowed FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS follow_gate_allowed,
+              (SELECT COUNT(*) FROM campaigns c WHERE c.tenant_id = t.id AND c.deleted_at IS NULL) AS campaigns,
+              (SELECT COUNT(*) FROM campaigns c WHERE c.tenant_id = t.id AND c.deleted_at IS NULL AND c.status = 'active') AS active_campaigns,
+              (SELECT COUNT(*) FROM conversation_flows f WHERE f.is_demo = 0 AND f.created_at > ? AND f.account_id IN (SELECT id FROM instagram_accounts WHERE tenant_id = t.id)) AS flows_30d,
+              (SELECT MAX(s.last_seen_at) FROM sessions s JOIN admin_users u ON u.id = s.user_id WHERE u.tenant_id = t.id) AS last_seen_at
+         FROM tenants t ORDER BY t.is_owner DESC, t.id DESC`,
+      since,
+    );
+    return c.json(rows);
+  });
+  owner.post("/tenants", async (c) => {
+    const p = await parseBody(c, tenantCreateSchema);
+    if (!p.ok) return p.res;
+    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ?", p.data.username)) return apiError(c, 409, "username_taken", "اسم المستخدم مستخدم — اختر غيره");
+    const now = Date.now();
+    const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
+    const t = await first<{ id: number }>(c.env.DB, "INSERT INTO tenants (name, notes, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id", p.data.name, p.data.notes ?? null, now, now);
+    const tid = t!.id;
+    try {
+      await run(c.env.DB, "INSERT INTO admin_users (username, password_hash, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", p.data.username, hash, tid, now, now);
+    } catch {
+      await run(c.env.DB, "DELETE FROM tenants WHERE id = ?", tid);
+      return apiError(c, 409, "username_taken", "اسم المستخدم مستخدم — اختر غيره");
+    }
+    // Starter templates (no follow-requirement texts: customers only get the optional invitation).
+    await c.env.DB.batch(
+      [
+        ["public", "رد عام — شيّك الخاص", "شيّك الخاص 🙌"],
+        ["final", "المحتوى النهائي", "تفضل 🎁 {{content_url}}"],
+        ["mention", "شكر على المنشن", "تسلم على المنشن 🙌 هذه هديتنا لك: {{content_url}}"],
+      ].map(([kind, name, body]) => c.env.DB.prepare("INSERT INTO templates (tenant_id, kind, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(tid, kind, name, body, now, now)),
+    );
+    await audit(c.env.DB, T(c), c.get("session").username, "tenant.created", String(tid), { name: p.data.name, username: p.data.username });
+    return c.json({ id: tid });
+  });
+  const tenantParam = async (c: C) => {
+    const tid = Number(c.req.param("tid"));
+    if (!Number.isInteger(tid) || tid < 1) return null;
+    return first<{ id: number; is_owner: number; name: string }>(c.env.DB, "SELECT id, is_owner, name FROM tenants WHERE id = ?", tid);
+  };
+  owner.post("/tenants/:tid/status", async (c) => {
+    const t = await tenantParam(c);
+    if (!t) return apiError(c, 404, "not_found", "العميل غير موجود");
+    if (t.is_owner) return apiError(c, 409, "owner", "لا يمكن إيقاف حساب المالك");
+    const p = await parseBody(c, z.object({ status: z.enum(["active", "suspended"]) }));
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    await run(c.env.DB, "UPDATE tenants SET status = ?, updated_at = ? WHERE id = ?", p.data.status, now, t.id);
+    if (p.data.status === "suspended") {
+      // Logged-out immediately, and nothing more is sent for this customer.
+      await run(c.env.DB, "UPDATE sessions SET revoked_at = ? WHERE revoked_at IS NULL AND user_id IN (SELECT id FROM admin_users WHERE tenant_id = ?)", now, t.id);
+      await cancelJobsWhere(c.env.DB, `kind != 'process_event' AND account_id IN ${TENANT_ACCOUNTS}`, now, t.id);
+    }
+    await audit(c.env.DB, T(c), c.get("session").username, `tenant.${p.data.status}`, String(t.id), { name: t.name });
+    return c.json({ ok: true });
+  });
+  owner.post("/tenants/:tid/password", async (c) => {
+    const t = await tenantParam(c);
+    if (!t) return apiError(c, 404, "not_found", "العميل غير موجود");
+    const p = await parseBody(c, z.object({ password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256) }));
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
+    await run(c.env.DB, "UPDATE admin_users SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE tenant_id = ?", hash, now, t.id);
+    await run(c.env.DB, "UPDATE sessions SET revoked_at = ? WHERE revoked_at IS NULL AND user_id IN (SELECT id FROM admin_users WHERE tenant_id = ?)", now, t.id);
+    await audit(c.env.DB, T(c), c.get("session").username, "tenant.password_reset", String(t.id));
+    return c.json({ ok: true });
+  });
+  // The follow REQUIREMENT stays an owner decision per account (Meta Spam policy — for the owner's own accounts).
+  owner.post("/tenants/:tid/follow-gate", async (c) => {
+    const t = await tenantParam(c);
+    if (!t) return apiError(c, 404, "not_found", "العميل غير موجود");
+    const p = await parseBody(c, z.object({ allowed: z.boolean() }));
+    if (!p.ok) return p.res;
+    await run(c.env.DB, "UPDATE instagram_accounts SET follow_gate_allowed = ?, updated_at = ? WHERE tenant_id = ? AND is_demo = 0", p.data.allowed ? 1 : 0, Date.now(), t.id);
+    await audit(c.env.DB, T(c), c.get("session").username, p.data.allowed ? "follow_gate.allowed" : "follow_gate.disallowed", `tenant:${t.id}`);
+    return c.json({ ok: true });
+  });
+  api.route("/owner", owner);
 
   // ---- Dashboard
   api.get("/dashboard", async (c) => {
     const db = c.env.DB;
     const since = Date.now() - Number(c.req.query("days") ?? 30) * 86_400_000;
+    const t = T(c);
     const [account, campaigns, events, jobs, flows, follows, automation] = await Promise.all([
-      currentAccount(db),
-      first(db, "SELECT SUM(status='active') AS active, SUM(status='paused') AS paused, SUM(status='draft') AS draft FROM campaigns WHERE deleted_at IS NULL"),
-      all(db, "SELECT event_type, status, COUNT(*) AS n FROM webhook_events WHERE is_demo = 0 AND received_at > ? GROUP BY event_type, status", since),
-      all(db, "SELECT kind, purpose, status, COUNT(*) AS n FROM action_jobs WHERE is_demo = 0 AND created_at > ? AND kind != 'process_event' GROUP BY kind, purpose, status", since),
-      all(db, "SELECT state, COUNT(*) AS n FROM conversation_flows WHERE is_demo = 0 AND created_at > ? GROUP BY state", since),
-      first(db, "SELECT COUNT(DISTINCT participant_id) AS verified FROM follow_checks WHERE is_demo = 0 AND result = 'following' AND checked_at > ?", since),
-      getSetting(db, "automation_enabled", true),
+      currentAccount(db, t),
+      first(db, "SELECT SUM(status='active') AS active, SUM(status='paused') AS paused, SUM(status='draft') AS draft FROM campaigns WHERE tenant_id = ? AND deleted_at IS NULL", t),
+      all(db, `SELECT event_type, status, COUNT(*) AS n FROM webhook_events WHERE account_ig_id IN ${TENANT_IG_IDS} AND is_demo = 0 AND received_at > ? GROUP BY event_type, status`, t, since),
+      all(db, `SELECT kind, purpose, status, COUNT(*) AS n FROM action_jobs WHERE account_id IN ${TENANT_ACCOUNTS} AND is_demo = 0 AND created_at > ? AND kind != 'process_event' GROUP BY kind, purpose, status`, t, since),
+      all(db, `SELECT state, COUNT(*) AS n FROM conversation_flows WHERE account_id IN ${TENANT_ACCOUNTS} AND is_demo = 0 AND created_at > ? GROUP BY state`, t, since),
+      first(db, `SELECT COUNT(DISTINCT fc.participant_id) AS verified FROM follow_checks fc JOIN participants p ON p.id = fc.participant_id WHERE p.account_id IN ${TENANT_ACCOUNTS} AND fc.is_demo = 0 AND fc.result = 'following' AND fc.checked_at > ?`, t, since),
+      getSetting(db, t, "automation_enabled", true),
     ]);
     // Daily series (UTC days) for the activity chart, best campaigns and the latest activity.
     const [sComments, sDelivered, top, recent] = await Promise.all([
-      all<{ d: number; n: number }>(db, "SELECT CAST(received_at / 86400000 AS INTEGER) AS d, COUNT(*) AS n FROM webhook_events WHERE is_demo = 0 AND event_type IN ('comment','story_reply','story_mention') AND received_at > ? GROUP BY d", since),
-      all<{ d: number; n: number }>(db, "SELECT CAST(updated_at / 86400000 AS INTEGER) AS d, COUNT(*) AS n FROM action_jobs WHERE is_demo = 0 AND kind = 'send_message' AND purpose = 'content' AND status = 'accepted' AND created_at > ? GROUP BY d", since),
+      all<{ d: number; n: number }>(db, `SELECT CAST(received_at / 86400000 AS INTEGER) AS d, COUNT(*) AS n FROM webhook_events WHERE account_ig_id IN ${TENANT_IG_IDS} AND is_demo = 0 AND event_type IN ('comment','story_reply','story_mention') AND received_at > ? GROUP BY d`, t, since),
+      all<{ d: number; n: number }>(db, `SELECT CAST(updated_at / 86400000 AS INTEGER) AS d, COUNT(*) AS n FROM action_jobs WHERE account_id IN ${TENANT_ACCOUNTS} AND is_demo = 0 AND kind = 'send_message' AND purpose = 'content' AND status = 'accepted' AND created_at > ? GROUP BY d`, t, since),
       all(
         db,
         `SELECT c.id, c.name, c.type, c.status, COUNT(f.id) AS triggers, SUM(f.state = 'content_sent') AS delivered
            FROM campaigns c JOIN conversation_flows f ON f.campaign_id = c.id AND f.is_demo = 0 AND f.created_at > ?
-          WHERE c.deleted_at IS NULL GROUP BY c.id ORDER BY triggers DESC LIMIT 4`,
+          WHERE c.tenant_id = ? AND c.deleted_at IS NULL GROUP BY c.id ORDER BY triggers DESC LIMIT 4`,
         since,
+        t,
       ),
       all(
         db,
         `SELECT f.id, f.state, f.updated_at, p.username, p.profile_pic_url, c.name AS campaign
            FROM conversation_flows f JOIN participants p ON p.id = f.participant_id JOIN campaigns c ON c.id = f.campaign_id
-          WHERE f.is_demo = 0 ORDER BY f.updated_at DESC LIMIT 6`,
+          WHERE c.tenant_id = ? AND f.is_demo = 0 ORDER BY f.updated_at DESC LIMIT 6`,
+        t,
       ),
     ]);
     return c.json({ account: publicAccount(account), campaigns, events, jobs, flows, follows, automation_enabled: automation, series: { comments: sComments, delivered: sDelivered }, top_campaigns: top, recent });
@@ -414,9 +564,9 @@ export function createApp() {
   api.post("/automation", async (c) => {
     const p = await parseBody(c, z.object({ enabled: z.boolean() }));
     if (!p.ok) return p.res;
-    await setSetting(c.env.DB, "automation_enabled", p.data.enabled);
-    if (!p.data.enabled) await cancelJobsWhere(c.env.DB, "is_demo = 0 AND kind != 'process_event'", Date.now());
-    await audit(c.env.DB, c.get("session").username, p.data.enabled ? "automation.enabled" : "automation.disabled");
+    await setSetting(c.env.DB, T(c), "automation_enabled", p.data.enabled);
+    if (!p.data.enabled) await cancelJobsWhere(c.env.DB, `is_demo = 0 AND kind != 'process_event' AND account_id IN ${TENANT_ACCOUNTS}`, Date.now(), T(c));
+    await audit(c.env.DB, T(c), c.get("session").username, p.data.enabled ? "automation.enabled" : "automation.disabled");
     return c.json({ ok: true, enabled: p.data.enabled });
   });
 
@@ -424,21 +574,22 @@ export function createApp() {
   // The stored profile picture link expired (the app saw a broken image): read the profile again.
   api.post("/account/refresh-profile", async (c) => {
     if (!(await rateLimit(c.env.DB, `profile:${c.get("session").username}`, 6, 3_600_000))) return c.json({ ok: false });
-    await refreshAccountProfiles(c.env);
-    return c.json({ ok: true, account: publicAccount(await currentAccount(c.env.DB)) });
+    await refreshAccountProfiles(c.env, T(c));
+    return c.json({ ok: true, account: publicAccount(await currentAccount(c.env.DB, T(c))) });
   });
   // Owner-only switch: allow the follow REQUIREMENT on this account (everyone else gets the optional invitation).
   api.post("/account/follow-gate", async (c) => {
+    if (!c.get("session").is_owner) return apiError(c, 403, "owner_only", "هذا الإعداد متاح لإدارة الخدمة فقط");
     const p = await parseBody(c, z.object({ allowed: z.boolean() }));
     if (!p.ok) return p.res;
-    const a = await currentAccount(c.env.DB);
+    const a = await currentAccount(c.env.DB, T(c));
     if (!a) return apiError(c, 404, "not_found", "لا يوجد حساب متصل");
     await run(c.env.DB, "UPDATE instagram_accounts SET follow_gate_allowed = ?, updated_at = ? WHERE id = ?", p.data.allowed ? 1 : 0, Date.now(), a.id);
-    await audit(c.env.DB, c.get("session").username, p.data.allowed ? "follow_gate.allowed" : "follow_gate.disallowed", String(a.id));
+    await audit(c.env.DB, T(c), c.get("session").username, p.data.allowed ? "follow_gate.allowed" : "follow_gate.disallowed", String(a.id));
     return c.json({ ok: true });
   });
   api.get("/account", async (c) => {
-    const a = await currentAccount(c.env.DB);
+    const a = await currentAccount(c.env.DB, T(c));
     return c.json({
       account: publicAccount(a),
       required_scopes: INSTAGRAM_SCOPES,
@@ -471,21 +622,21 @@ export function createApp() {
   });
 
   api.post("/account/resubscribe", async (c) => {
-    const a = await currentAccount(c.env.DB);
+    const a = await currentAccount(c.env.DB, T(c));
     if (!a || a.status === "disconnected") return apiError(c, 404, "no_account", "لا يوجد حساب متصل");
     const r = await subscribeWebhooks(c.env, a.id);
     return r.ok ? c.json({ ok: true }) : apiError(c, 502 as any, "meta_error", r.error ?? "فشل الاشتراك");
   });
 
   api.post("/account/refresh-token", async (c) => {
-    const a = await currentAccount(c.env.DB);
+    const a = await currentAccount(c.env.DB, T(c));
     if (!a || a.status === "disconnected") return apiError(c, 404, "no_account", "لا يوجد حساب متصل");
     const r = await refreshToken(c.env, a);
     return r.ok ? c.json({ ok: true }) : apiError(c, 502 as any, "meta_error", r.error ?? "فشل التجديد");
   });
 
   api.get("/account/diagnostics", async (c) => {
-    const a = await currentAccount(c.env.DB);
+    const a = await currentAccount(c.env.DB, T(c));
     const checks: Array<{ name: string; ok: boolean | null; detail?: string }> = [];
     const miss = missingSecrets(c.env);
     checks.push({ name: "أسرار الخادم", ok: miss.length === 0, detail: miss.length ? `ناقص: ${miss.join(", ")}` : undefined });
@@ -514,7 +665,7 @@ export function createApp() {
   api.post("/account/disconnect", async (c) => {
     const p = await parseBody(c, z.object({ purge: z.boolean().default(false) }));
     if (!p.ok) return p.res;
-    const a = await currentAccount(c.env.DB);
+    const a = await currentAccount(c.env.DB, T(c));
     if (!a) return apiError(c, 404, "no_account", "لا يوجد حساب");
     await disconnectAccount(c.env, a.id, { purge: p.data.purge, actor: c.get("session").username });
     return c.json({ ok: true });
@@ -522,7 +673,7 @@ export function createApp() {
 
   // ---- Media & stories
   api.get("/media", async (c) => {
-    const a = await currentAccount(c.env.DB);
+    const a = await currentAccount(c.env.DB, T(c));
     if (!a) return c.json({ items: [] });
     const kind = c.req.query("kind") === "story" ? "story" : "media";
     const items = await all(c.env.DB, "SELECT * FROM media_cache WHERE account_id = ? AND kind = ? ORDER BY posted_at DESC LIMIT 1000", a.id, kind);
@@ -532,7 +683,7 @@ export function createApp() {
   api.post("/media/refresh", async (c) => {
     const p = await parseBody(c, z.object({ kind: z.enum(["media", "story"]), after: z.string().max(500).optional(), all: z.boolean().default(true) }));
     if (!p.ok) return p.res;
-    const a = await currentAccount(c.env.DB);
+    const a = await currentAccount(c.env.DB, T(c));
     if (!a || a.status !== "active") return apiError(c, 409, "no_account", "اربط الحساب أولًا");
     const token = await getAccessToken(c.env, c.env.DB, a);
     if (!token) return apiError(c, 409, "no_token", "التفويض غير متاح — أعد الربط");
@@ -565,8 +716,8 @@ export function createApp() {
     const q = (c.req.query("q") ?? "").slice(0, 100);
     const status = c.req.query("status");
     const type = c.req.query("type");
-    const where = ["deleted_at IS NULL"];
-    const params: unknown[] = [];
+    const where = ["c.tenant_id = ?", "deleted_at IS NULL"];
+    const params: unknown[] = [T(c)];
     if (q) {
       where.push("name LIKE ? ESCAPE '\\'");
       params.push(`%${q.replace(/[%_\\]/g, (m) => "\\" + m)}%`);
@@ -594,7 +745,7 @@ export function createApp() {
 
   api.get("/campaigns/:id", async (c) => {
     const id = idParam(c);
-    const row = id && (await first(c.env.DB, "SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
+    const row = id && (await first(c.env.DB, "SELECT * FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
     if (!row) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const [keywords, media] = await Promise.all([
       all(c.env.DB, "SELECT keyword, kind, match_type FROM campaign_keywords WHERE campaign_id = ? ORDER BY id", id),
@@ -606,7 +757,7 @@ export function createApp() {
   // Per-post performance of one campaign: comments, people reached, follow conversions, deliveries.
   api.get("/campaigns/:id/stats", async (c) => {
     const id = idParam(c);
-    const campaign = id && (await first<{ id: number; type: string; require_follow: number }>(c.env.DB, "SELECT id, type, require_follow FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
+    const campaign = id && (await first<{ id: number; type: string; require_follow: number }>(c.env.DB, "SELECT id, type, require_follow FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
     if (!campaign) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const days = Number(c.req.query("days") ?? 0);
     const since = days > 0 ? Date.now() - Math.min(days, 3650) * 86_400_000 : 0;
@@ -643,16 +794,16 @@ export function createApp() {
       all<{ media_id: string; total: number; matched: number }>(
         db,
         `SELECT media_id, COUNT(*) AS total, SUM(campaign_id = ?) AS matched FROM webhook_events
-          WHERE event_type = 'comment' AND is_demo = 0 AND received_at >= ? AND media_id IS NOT NULL
+          WHERE account_ig_id IN ${TENANT_IG_IDS} AND event_type = 'comment' AND is_demo = 0 AND received_at >= ? AND media_id IS NOT NULL
             AND (media_id IN (SELECT media_id FROM campaign_media WHERE campaign_id = ?) OR campaign_id = ?)
           GROUP BY media_id`,
-        id, since, id, id,
+        id, T(c), since, id, id,
       ),
     ]);
     const mediaIds = new Set<string>([...rows.map((r) => r.media_id), ...comments.map((r) => r.media_id)].filter(Boolean));
     for (const m of await all<{ media_id: string }>(db, "SELECT media_id FROM campaign_media WHERE campaign_id = ?", id)) mediaIds.add(m.media_id);
     const meta = mediaIds.size
-      ? await all<any>(db, `SELECT media_id, caption, permalink, thumbnail_url, media_product_type, posted_at FROM media_cache WHERE media_id IN (${[...mediaIds].map(() => "?").join(",")})`, ...mediaIds)
+      ? await all<any>(db, `SELECT media_id, caption, permalink, thumbnail_url, media_product_type, posted_at FROM media_cache WHERE account_id IN ${TENANT_ACCOUNTS} AND media_id IN (${[...mediaIds].map(() => "?").join(",")})`, T(c), ...mediaIds)
       : [];
     const byId = new Map(meta.map((m) => [m.media_id, m]));
     const empty = { triggers: 0, people: 0, reached: 0, interacted: 0, already_following: 0, new_followers: 0, not_followed: 0, delivered: 0, clicked: 0, clicks_total: 0, waiting: 0, dropped: 0, public_replies: 0, last_at: null };
@@ -677,7 +828,7 @@ export function createApp() {
   // Who interacted with a campaign: one row per person (latest interaction), with the same flags as the stats.
   api.get("/campaigns/:id/people", async (c) => {
     const id = idParam(c);
-    const campaign = id && (await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
+    const campaign = id && (await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
     if (!campaign) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const days = Number(c.req.query("days") ?? 0);
     const since = days > 0 ? Date.now() - Math.min(days, 3650) * 86_400_000 : 0;
@@ -741,7 +892,7 @@ export function createApp() {
     const d = p.data;
     const now = Date.now();
     const warnings: string[] = [];
-    if (d.require_follow && !(await followGateAllowed(c.env.DB))) {
+    if (d.require_follow && !(await followGateAllowed(c.env.DB, T(c)))) {
       warnings.push("شرط المتابعة غير مسموح لهذا الحساب — حُفظت الحملة بدونه. يمكنك إضافة دعوة اختيارية للمتابعة.");
     }
     if (d.require_follow && d.public_reply_enabled && publicReplyVariants(d.public_reply_text).some((v) => claimsDelivery(v))) {
@@ -753,7 +904,7 @@ export function createApp() {
     const cols = {
       name: d.name, type: d.type, priority: d.priority, scope: d.scope, match_all: d.match_all ? 1 : 0, unify_alef: d.unify_alef ? 1 : 0,
       // The follow requirement only on accounts the owner allowed (Meta Spam policy); others get the optional invitation.
-      include_replies: d.include_replies ? 1 : 0, require_follow: d.require_follow && (await followGateAllowed(c.env.DB)) ? 1 : 0, follow_invite: d.follow_invite ? 1 : 0, follow_invite_text: d.follow_invite_text ?? null,
+      include_replies: d.include_replies ? 1 : 0, require_follow: d.require_follow && (await followGateAllowed(c.env.DB, T(c))) ? 1 : 0, follow_invite: d.follow_invite ? 1 : 0, follow_invite_text: d.follow_invite_text ?? null,
       opening_text: d.opening_text ?? null,
       follow_request_text: d.follow_request_text ?? null, follow_reminder_text: d.follow_reminder_text ?? null, verify_error_text: d.verify_error_text ?? null,
       final_text: d.final_text, final_url: d.final_url || null, public_reply_enabled: d.public_reply_enabled ? 1 : 0, public_reply_text: d.public_reply_text ?? null,
@@ -765,7 +916,7 @@ export function createApp() {
       auto_new_media: d.auto_new_media && d.type === "comment" ? 1 : 0, auto_new_reels_only: d.auto_new_reels_only ? 1 : 0,
       // "New posts from now on": the starting point is kept once set (or taken from the request), else it is now.
       auto_new_since: d.auto_new_media && d.type === "comment"
-        ? d.auto_new_since ?? (id !== null ? (await first<{ v: number | null }>(c.env.DB, "SELECT auto_new_since AS v FROM campaigns WHERE id = ?", id))?.v : null) ?? now
+        ? d.auto_new_since ?? (id !== null ? (await first<{ v: number | null }>(c.env.DB, "SELECT auto_new_since AS v FROM campaigns WHERE id = ? AND tenant_id = ?", id, T(c)))?.v : null) ?? now
         : null,
     };
     const keys = Object.keys(cols);
@@ -774,16 +925,17 @@ export function createApp() {
     if (id === null) {
       const r = await first<{ id: number }>(
         c.env.DB,
-        `INSERT INTO campaigns (${keys.join(",")}, status, created_at, updated_at) VALUES (${keys.map(() => "?").join(",")}, 'draft', ?, ?) RETURNING id`,
+        `INSERT INTO campaigns (${keys.join(",")}, tenant_id, status, created_at, updated_at) VALUES (${keys.map(() => "?").join(",")}, ?, 'draft', ?, ?) RETURNING id`,
         ...Object.values(cols),
+        T(c),
         now,
         now,
       );
       campaignId = r!.id;
     } else {
-      const exists = await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND deleted_at IS NULL", id);
+      const exists = await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c));
       if (!exists) return apiError(c, 404, "not_found", "الحملة غير موجودة");
-      await run(c.env.DB, `UPDATE campaigns SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ?`, ...Object.values(cols), now, id);
+      await run(c.env.DB, `UPDATE campaigns SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ? AND tenant_id = ?`, ...Object.values(cols), now, id, T(c));
       campaignId = id;
     }
     await c.env.DB.batch([
@@ -792,9 +944,9 @@ export function createApp() {
       ...d.keywords.map((k) => c.env.DB.prepare("INSERT INTO campaign_keywords (campaign_id, keyword, kind, match_type) VALUES (?, ?, ?, ?)").bind(campaignId, k.keyword, k.kind, k.match_type)),
       ...[...new Set(d.media_ids)].map((m) => c.env.DB.prepare("INSERT INTO campaign_media (campaign_id, media_id) VALUES (?, ?)").bind(campaignId, m)),
     ]);
-    await audit(c.env.DB, c.get("session").username, id ? "campaign.updated" : "campaign.created", String(campaignId));
-    if (before) await recordUndo(c.env.DB, c.get("session").username, "campaign.update", `campaign:${campaignId}`, `تعديل الحملة «${before.row.name}»`, before);
-    else await recordUndo(c.env.DB, c.get("session").username, "campaign.create", `campaign:${campaignId}`, `إنشاء الحملة «${d.name}»`, { id: campaignId });
+    await audit(c.env.DB, T(c), c.get("session").username, id ? "campaign.updated" : "campaign.created", String(campaignId));
+    if (before) await recordUndo(c.env.DB, T(c), c.get("session").username, "campaign.update", `campaign:${campaignId}`, `تعديل الحملة «${before.row.name}»`, before);
+    else await recordUndo(c.env.DB, T(c), c.get("session").username, "campaign.create", `campaign:${campaignId}`, `إنشاء الحملة «${d.name}»`, { id: campaignId });
     return c.json({ id: campaignId, warnings });
   }
 
@@ -816,7 +968,7 @@ export function createApp() {
       }),
     );
     if (!p.ok) return p.res;
-    const src = id && (await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
+    const src = id && (await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
     if (!src) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const now = Date.now();
     const { id: _id, status: _s, activated_at: _a, created_at: _c, updated_at: _u, deleted_at: _d, name, ...rest } = src;
@@ -843,8 +995,8 @@ export function createApp() {
         ? [...new Set(p.data.media_ids)].map((m) => c.env.DB.prepare("INSERT OR IGNORE INTO campaign_media (campaign_id, media_id) VALUES (?, ?)").bind(r!.id, m))
         : [c.env.DB.prepare("INSERT INTO campaign_media (campaign_id, media_id) SELECT ?, media_id FROM campaign_media WHERE campaign_id = ?").bind(r!.id, id)]),
     ]);
-    await audit(c.env.DB, c.get("session").username, "campaign.duplicated", String(r!.id), { from: id, activate: p.data.activate });
-    await recordUndo(c.env.DB, c.get("session").username, "campaign.duplicate", `campaign:${r!.id}`, `نسخ الحملة «${name}»`, { id: r!.id });
+    await audit(c.env.DB, T(c), c.get("session").username, "campaign.duplicated", String(r!.id), { from: id, activate: p.data.activate });
+    await recordUndo(c.env.DB, T(c), c.get("session").username, "campaign.duplicate", `campaign:${r!.id}`, `نسخ الحملة «${name}»`, { id: r!.id });
     return c.json({ id: r!.id, status });
   });
 
@@ -852,25 +1004,26 @@ export function createApp() {
     const id = idParam(c);
     const p = await parseBody(c, z.object({ status: z.enum(["active", "paused", "archived", "draft"]) }));
     if (!p.ok) return p.res;
-    const row = id && (await first<{ status: string; activated_at: number | null; name: string }>(c.env.DB, "SELECT status, activated_at, name FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
+    const row = id && (await first<{ status: string; activated_at: number | null; name: string }>(c.env.DB, "SELECT status, activated_at, name FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
     if (!row) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const now = Date.now();
     // activated_at is reset on every (re)activation so events that arrived while paused are not replayed.
     await run(
       c.env.DB,
-      "UPDATE campaigns SET status = ?, activated_at = CASE WHEN ? = 'active' AND status != 'active' THEN ? ELSE activated_at END, updated_at = ? WHERE id = ?",
+      "UPDATE campaigns SET status = ?, activated_at = CASE WHEN ? = 'active' AND status != 'active' THEN ? ELSE activated_at END, updated_at = ? WHERE id = ? AND tenant_id = ?",
       p.data.status,
       p.data.status,
       now,
       now,
       id,
+      T(c),
     );
     let cancelled = 0;
     if (p.data.status !== "active") cancelled = await stopCampaignWork(c.env.DB, id!, now, "campaign_" + p.data.status);
-    await audit(c.env.DB, c.get("session").username, `campaign.${p.data.status}`, String(id), { cancelled });
+    await audit(c.env.DB, T(c), c.get("session").username, `campaign.${p.data.status}`, String(id), { cancelled });
     if (row.status !== p.data.status) {
       const word = { active: "تفعيل", paused: "إيقاف", archived: "أرشفة", draft: "إرجاع لمسودة" }[p.data.status];
-      await recordUndo(c.env.DB, c.get("session").username, "campaign.status", `campaign:${id}`, `${word} الحملة «${row.name}»`, { id, status: row.status });
+      await recordUndo(c.env.DB, T(c), c.get("session").username, "campaign.status", `campaign:${id}`, `${word} الحملة «${row.name}»`, { id, status: row.status });
     }
     return c.json({ ok: true, cancelled_jobs: cancelled });
   });
@@ -878,40 +1031,40 @@ export function createApp() {
   api.delete("/campaigns/:id", async (c) => {
     const id = idParam(c);
     if (!id) return apiError(c, 404, "not_found", "غير موجود");
-    const prev = await first<{ name: string; status: string }>(c.env.DB, "SELECT name, status FROM campaigns WHERE id = ? AND deleted_at IS NULL", id);
+    const prev = await first<{ name: string; status: string }>(c.env.DB, "SELECT name, status FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c));
     if (!prev) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const now = Date.now();
-    await run(c.env.DB, "UPDATE campaigns SET deleted_at = ?, status = 'archived', updated_at = ? WHERE id = ?", now, now, id);
+    await run(c.env.DB, "UPDATE campaigns SET deleted_at = ?, status = 'archived', updated_at = ? WHERE id = ? AND tenant_id = ?", now, now, id, T(c));
     const cancelled = await stopCampaignWork(c.env.DB, id, now, "campaign_deleted");
-    await audit(c.env.DB, c.get("session").username, "campaign.deleted", String(id));
-    await recordUndo(c.env.DB, c.get("session").username, "campaign.delete", `campaign:${id}`, `حذف الحملة «${prev.name}»`, { id, status: prev.status });
+    await audit(c.env.DB, T(c), c.get("session").username, "campaign.deleted", String(id));
+    await recordUndo(c.env.DB, T(c), c.get("session").username, "campaign.delete", `campaign:${id}`, `حذف الحملة «${prev.name}»`, { id, status: prev.status });
     return c.json({ ok: true, cancelled_jobs: cancelled });
   });
 
   // ---- Templates
-  api.get("/templates", async (c) => c.json(await all(c.env.DB, "SELECT * FROM templates ORDER BY kind, id")));
+  api.get("/templates", async (c) => c.json(await all(c.env.DB, "SELECT * FROM templates WHERE tenant_id = ? ORDER BY kind, id", T(c))));
   api.post("/templates", async (c) => {
     const p = await parseBody(c, templateInputSchema);
     if (!p.ok) return p.res;
     const now = Date.now();
-    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO templates (kind, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING id", p.data.kind, p.data.name, p.data.body, now, now);
-    await recordUndo(c.env.DB, c.get("session").username, "template.create", `template:${r!.id}`, `إضافة القالب «${p.data.name}»`, { id: r!.id });
+    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO templates (tenant_id, kind, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", T(c), p.data.kind, p.data.name, p.data.body, now, now);
+    await recordUndo(c.env.DB, T(c), c.get("session").username, "template.create", `template:${r!.id}`, `إضافة القالب «${p.data.name}»`, { id: r!.id });
     return c.json(r);
   });
   api.put("/templates/:id", async (c) => {
     const p = await parseBody(c, templateInputSchema);
     if (!p.ok) return p.res;
-    const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM templates WHERE id = ?", idParam(c));
+    const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM templates WHERE id = ? AND tenant_id = ?", idParam(c), T(c));
     if (!prev) return apiError(c, 404, "not_found", "القالب غير موجود");
-    await run(c.env.DB, "UPDATE templates SET kind = ?, name = ?, body = ?, updated_at = ? WHERE id = ?", p.data.kind, p.data.name, p.data.body, Date.now(), idParam(c));
-    await recordUndo(c.env.DB, c.get("session").username, "template.update", `template:${prev.id}`, `تعديل القالب «${prev.name}»`, { row: prev });
+    await run(c.env.DB, "UPDATE templates SET kind = ?, name = ?, body = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", p.data.kind, p.data.name, p.data.body, Date.now(), idParam(c), T(c));
+    await recordUndo(c.env.DB, T(c), c.get("session").username, "template.update", `template:${prev.id}`, `تعديل القالب «${prev.name}»`, { row: prev });
     return c.json({ ok: true });
   });
   api.delete("/templates/:id", async (c) => {
-    const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM templates WHERE id = ?", idParam(c));
+    const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM templates WHERE id = ? AND tenant_id = ?", idParam(c), T(c));
     if (!prev) return c.json({ ok: true });
-    await run(c.env.DB, "DELETE FROM templates WHERE id = ?", prev.id);
-    await recordUndo(c.env.DB, c.get("session").username, "template.delete", `template:${prev.id}`, `حذف القالب «${prev.name}»`, { row: prev });
+    await run(c.env.DB, "DELETE FROM templates WHERE id = ? AND tenant_id = ?", prev.id, T(c));
+    await recordUndo(c.env.DB, T(c), c.get("session").username, "template.delete", `template:${prev.id}`, `حذف القالب «${prev.name}»`, { row: prev });
     return c.json({ ok: true });
   });
 
@@ -919,12 +1072,12 @@ export function createApp() {
   api.post("/simulate", async (c) => {
     const p = await parseBody(c, simulateSchema);
     if (!p.ok) return p.res;
-    return c.json(await simulate(c.env, p.data));
+    return c.json(await simulate(c.env, T(c), p.data));
   });
 
   // ---- Logs
   api.get("/logs/events", async (c) => {
-    const { where, params } = logFilters(c, "received_at", ["status", "event_type"]);
+    const { where, params } = logFilters(c, "received_at", ["status", "event_type"], "", `account_ig_id IN ${TENANT_IG_IDS}`);
     return c.json(
       await all(
         c.env.DB,
@@ -935,7 +1088,7 @@ export function createApp() {
     );
   });
   api.get("/logs/jobs", async (c) => {
-    const { where, params } = logFilters(c, "created_at", ["status", "kind"]);
+    const { where, params } = logFilters(c, "created_at", ["status", "kind"], "", `account_id IN ${TENANT_ACCOUNTS}`);
     return c.json(
       await all(
         c.env.DB,
@@ -946,7 +1099,7 @@ export function createApp() {
     );
   });
   api.get("/logs/flows", async (c) => {
-    const { where, params } = logFilters(c, "f.created_at", ["state"], "f.");
+    const { where, params } = logFilters(c, "f.created_at", ["state"], "f.", `f.account_id IN ${TENANT_ACCOUNTS}`);
     return c.json(
       await all(
         c.env.DB,
@@ -960,7 +1113,7 @@ export function createApp() {
   });
   api.get("/flows/:id", async (c) => {
     const id = idParam(c);
-    const flow = id && (await first<any>(c.env.DB, "SELECT f.*, p.username, p.igsid FROM conversation_flows f JOIN participants p ON p.id = f.participant_id WHERE f.id = ?", id));
+    const flow = id && (await first<any>(c.env.DB, `SELECT f.*, p.username, p.igsid FROM conversation_flows f JOIN participants p ON p.id = f.participant_id WHERE f.id = ? AND f.account_id IN ${TENANT_ACCOUNTS}`, id, T(c)));
     if (!flow) return apiError(c, 404, "not_found", "غير موجود");
     const { start_token, verify_token, ...safe } = flow;
     const [jobs, checks, attempts] = await Promise.all([
@@ -976,7 +1129,7 @@ export function createApp() {
     const id = idParam(c);
     const p = await parseBody(c, z.object({ action: z.enum(["mark_accepted", "mark_failed", "retry"]) }));
     if (!p.ok) return p.res;
-    const job = id && (await first<any>(c.env.DB, "SELECT * FROM action_jobs WHERE id = ? AND status = 'uncertain'", id));
+    const job = id && (await first<any>(c.env.DB, `SELECT * FROM action_jobs WHERE id = ? AND status = 'uncertain' AND account_id IN ${TENANT_ACCOUNTS}`, id, T(c)));
     if (!job) return apiError(c, 404, "not_found", "لا توجد مهمة غير مؤكدة بهذا الرقم");
     const now = Date.now();
     if (p.data.action === "retry") {
@@ -997,7 +1150,7 @@ export function createApp() {
         );
       }
     }
-    await audit(c.env.DB, c.get("session").username, "job.resolve", String(id), p.data);
+    await audit(c.env.DB, T(c), c.get("session").username, "job.resolve", String(id), p.data);
     return c.json({ ok: true });
   });
 
@@ -1007,13 +1160,13 @@ export function createApp() {
     let rows: any[];
     if (type === "jobs") {
       headers = ["id", "kind", "purpose", "flow_id", "campaign_id", "status", "attempts", "last_error", "is_demo", "created_at"];
-      rows = await all(c.env.DB, `SELECT ${headers.join(",")} FROM action_jobs ORDER BY id DESC LIMIT 5000`);
+      rows = await all(c.env.DB, `SELECT ${headers.join(",")} FROM action_jobs WHERE account_id IN ${TENANT_ACCOUNTS} ORDER BY id DESC LIMIT 5000`, T(c));
     } else if (type === "flows") {
       headers = ["id", "campaign_id", "username", "state", "state_reason", "private_reply_status", "public_reply_status", "content_status", "verify_attempts", "last_follow_result", "is_demo", "created_at"];
-      rows = await all(c.env.DB, "SELECT f.id, f.campaign_id, p.username, f.state, f.state_reason, f.private_reply_status, f.public_reply_status, f.content_status, f.verify_attempts, f.last_follow_result, f.is_demo, f.created_at FROM conversation_flows f JOIN participants p ON p.id = f.participant_id ORDER BY f.id DESC LIMIT 5000");
+      rows = await all(c.env.DB, `SELECT f.id, f.campaign_id, p.username, f.state, f.state_reason, f.private_reply_status, f.public_reply_status, f.content_status, f.verify_attempts, f.last_follow_result, f.is_demo, f.created_at FROM conversation_flows f JOIN participants p ON p.id = f.participant_id WHERE f.account_id IN ${TENANT_ACCOUNTS} ORDER BY f.id DESC LIMIT 5000`, T(c));
     } else {
       headers = ["id", "event_type", "sender_username", "text", "status", "reason", "campaign_id", "is_demo", "received_at"];
-      rows = await all(c.env.DB, `SELECT ${headers.join(",")} FROM webhook_events ORDER BY id DESC LIMIT 5000`);
+      rows = await all(c.env.DB, `SELECT ${headers.join(",")} FROM webhook_events WHERE account_ig_id IN ${TENANT_IG_IDS} ORDER BY id DESC LIMIT 5000`, T(c));
     }
     for (const r of rows) for (const k of Object.keys(r)) if (k.endsWith("_at") && typeof r[k] === "number") r[k] = new Date(r[k]).toISOString();
     c.header("Content-Type", "text/csv; charset=utf-8");
@@ -1021,27 +1174,28 @@ export function createApp() {
     return c.body(toCsv(headers, rows));
   });
 
-  api.get("/undo", async (c) => c.json(await listUndo(c.env.DB)));
+  api.get("/undo", async (c) => c.json(await listUndo(c.env.DB, T(c))));
   api.post("/undo/:id", async (c) => {
     const id = idParam(c);
     if (!id) return apiError(c, 404, "not_found", "غير موجود");
     try {
-      const r = await undoOperation(c.env.DB, id, c.get("session").username);
-      await audit(c.env.DB, c.get("session").username, "undo", String(id), { label: r.label });
+      const r = await undoOperation(c.env.DB, T(c), id, c.get("session").username);
+      await audit(c.env.DB, T(c), c.get("session").username, "undo", String(id), { label: r.label });
       return c.json({ ok: true, ...r });
     } catch (e) {
       if (e instanceof UndoError) return apiError(c, 409, e.code, e.message);
       throw e;
     }
   });
-  api.get("/audit", async (c) => c.json(await all(c.env.DB, "SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200")));
+  api.get("/audit", async (c) => c.json(await all(c.env.DB, "SELECT * FROM audit_logs WHERE tenant_id = ? ORDER BY id DESC LIMIT 200", T(c))));
 
   // ---- Daily usage (estimate) and recovery of missed comments
   api.get("/usage", async (c) => {
+    // The platform-wide Cloudflare estimate concerns the owner only.
     const [usage, recover_last, auto_recover] = await Promise.all([
-      estimateUsage(c.env.DB),
-      getSetting<Record<string, unknown> | null>(c.env.DB, "recover_last", null),
-      getSetting(c.env.DB, "auto_recover_comments", true),
+      c.get("session").is_owner ? estimateUsage(c.env.DB) : Promise.resolve(null),
+      getSetting<Record<string, unknown> | null>(c.env.DB, T(c), "recover_last", null),
+      getSetting(c.env.DB, T(c), "auto_recover_comments", true),
     ]);
     return c.json({ usage, recover_last, auto_recover });
   });
@@ -1049,9 +1203,9 @@ export function createApp() {
     if (!(await rateLimit(c.env.DB, `recover:${c.get("session").username}`, 6, 3_600_000))) return apiError(c, 429, "rate_limited", "انتظر قليلًا قبل تشغيل الاسترجاع مرة أخرى");
     let used = 0;
     const ctx = engineContext(c.env, () => used++);
-    const r = await recoverMissedComments(ctx, { maxMedia: 15 });
-    await setSetting(c.env.DB, "recover_last", { at: Date.now(), ...r, auto: false });
-    await audit(c.env.DB, c.get("session").username, "comments.recovered", undefined, r);
+    const r = await recoverMissedComments(ctx, T(c), { maxMedia: 15 });
+    await setSetting(c.env.DB, T(c), "recover_last", { at: Date.now(), ...r, auto: false });
+    await audit(c.env.DB, T(c), c.get("session").username, "comments.recovered", undefined, r);
     if (r.recovered > 0) {
       c.executionCtx.waitUntil(
         runQueue(ctx, { maxJobs: 20, includeDemo: false, deadlineMs: 25_000, budget: { used: () => used, limit: 44 } }).catch((e) => console.error("recover queue", sanitize(String(e)))),
@@ -1072,9 +1226,10 @@ export function createApp() {
          FROM webhook_events e
          LEFT JOIN campaigns c ON c.id = e.campaign_id
          LEFT JOIN conversation_flows f ON f.id = e.flow_id
-         LEFT JOIN media_cache m ON m.media_id = e.media_id
-        WHERE e.recovered = 1 AND e.is_demo = 0 AND e.received_at > ?
+         LEFT JOIN media_cache m ON m.media_id = e.media_id AND m.account_id IN (SELECT id FROM instagram_accounts WHERE ig_user_id = e.account_ig_id)
+        WHERE e.account_ig_id IN ${TENANT_IG_IDS} AND e.recovered = 1 AND e.is_demo = 0 AND e.received_at > ?
         ORDER BY e.id DESC LIMIT 200`,
+      T(c),
       since,
     );
     const pids = [...new Set(items.map((i) => i.participant_id).filter(Boolean))] as number[];
@@ -1101,13 +1256,13 @@ export function createApp() {
     throw e;
   };
   async function resolveDrawMedia(c: C, d: { source_type: "media" | "story"; media_id?: string; url?: string }) {
-    const acc = await currentAccount(c.env.DB);
+    const acc = await currentAccount(c.env.DB, T(c));
     if (!acc || acc.status !== "active") throw new DrawFailure(409, "no_account", "اربط حساب إنستقرام أولًا");
     if (d.source_type === "story") {
       const id = d.media_id;
       if (!id) throw new DrawFailure(422, "validation", "اختر الستوري");
       const cached = await first<any>(c.env.DB, "SELECT media_id, caption, permalink, thumbnail_url FROM media_cache WHERE account_id = ? AND media_id = ? AND kind = 'story'", acc.id, id);
-      const seen = await first(c.env.DB, "SELECT 1 AS ok FROM webhook_events WHERE event_type = 'story_reply' AND is_demo = 0 AND media_id = ? LIMIT 1", id);
+      const seen = await first(c.env.DB, "SELECT 1 AS ok FROM webhook_events WHERE event_type = 'story_reply' AND is_demo = 0 AND media_id = ? AND account_ig_id = ? LIMIT 1", id, acc.ig_user_id);
       if (!cached && !seen) throw new DrawFailure(404, "unknown_story", "الستوري غير معروفة للنظام — اجلب الستوري الحالية أولًا");
       return { media_id: id, permalink: cached?.permalink ?? null, caption: cached?.caption ?? null, thumb: cached?.thumbnail_url ?? null, comments_count: null };
     }
@@ -1136,7 +1291,8 @@ export function createApp() {
       `SELECT d.id, d.name, d.campaign_id, c.name AS campaign_name, d.source_type, d.media_thumb, d.media_caption, d.winners_count, d.status, d.fetch_status,
               d.fetched_count, d.drawn_at, d.created_at,
               (SELECT COUNT(*) FROM draw_winners w WHERE w.draw_id = d.id AND w.status = 'active') AS active_winners
-         FROM draws d LEFT JOIN campaigns c ON c.id = d.campaign_id ORDER BY d.id DESC LIMIT 300`,
+         FROM draws d LEFT JOIN campaigns c ON c.id = d.campaign_id WHERE d.tenant_id = ? ORDER BY d.id DESC LIMIT 300`,
+      T(c),
     );
     return c.json(rows);
   });
@@ -1146,7 +1302,7 @@ export function createApp() {
     if (!p.ok) return p.res;
     try {
       const r = await pickNext(c.env.DB, id!, p.data.request_id);
-      if (!r.replay) await audit(c.env.DB, c.get("session").username, "draw.pick", String(id), { position: r.position });
+      if (!r.replay) await audit(c.env.DB, T(c), c.get("session").username, "draw.pick", String(id), { position: r.position });
       return c.json({ ok: true, ...r, winners: await winnersOf(c.env.DB, id!) });
     } catch (e) {
       return drawError(c, e);
@@ -1165,7 +1321,7 @@ export function createApp() {
   });
   api.post("/campaigns/:id/draws", async (c) => {
     const cid = idParam(c);
-    const camp = cid && (await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND deleted_at IS NULL", cid));
+    const camp = cid && (await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", cid, T(c)));
     if (!camp) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const p = await parseBody(c, drawInputSchema);
     if (!p.ok) return p.res;
@@ -1175,15 +1331,15 @@ export function createApp() {
       const now = Date.now();
       const r = await first<{ id: number }>(
         c.env.DB,
-        `INSERT INTO draws (campaign_id, name, source_type, media_id, media_permalink, media_caption, media_thumb, media_comments_count, winners_count,
+        `INSERT INTO draws (tenant_id, campaign_id, name, source_type, media_id, media_permalink, media_caption, media_thumb, media_comments_count, winners_count,
            starts_at, ends_at, timezone, include_replies, keyword, exclude_own, excluded_accounts, entry_mode, allow_repeat_winner, exclude_previous_winners, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        cid, d.name, d.source_type, m.media_id, m.permalink, m.caption, m.thumb, m.comments_count, d.winners_count,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        T(c), cid, d.name, d.source_type, m.media_id, m.permalink, m.caption, m.thumb, m.comments_count, d.winners_count,
         d.starts_at ?? null, d.ends_at ?? null, d.timezone ?? null, d.source_type === "story" ? 0 : +d.include_replies, d.keyword?.trim() || null, +d.exclude_own,
         JSON.stringify(d.excluded_accounts), d.entry_mode, d.entry_mode === "per_comment" ? +d.allow_repeat_winner : 0, +d.exclude_previous_winners, now, now,
       );
-      await audit(c.env.DB, c.get("session").username, "draw.created", String(r!.id), { campaign: cid });
-      await recordUndo(c.env.DB, c.get("session").username, "draw.create", `draw:${r!.id}`, `إنشاء السحب «${d.name}»`, { id: r!.id });
+      await audit(c.env.DB, T(c), c.get("session").username, "draw.created", String(r!.id), { campaign: cid });
+      await recordUndo(c.env.DB, T(c), c.get("session").username, "draw.create", `draw:${r!.id}`, `إنشاء السحب «${d.name}»`, { id: r!.id });
       return c.json({ id: r!.id });
     } catch (e) {
       return drawError(c, e);
@@ -1220,7 +1376,7 @@ export function createApp() {
     if (prevDraw) {
       // Only the settings are restored on undo, never the fetched-comments progress.
       const { fetch_state: _fs, fetch_status: _fst, fetched_count: _fc, fetch_updated_at: _fu, fetch_error: _fe, ...row } = prevDraw;
-      await recordUndo(c.env.DB, c.get("session").username, "draw.update", `draw:${id}`, `تعديل السحب «${prevDraw.name}»`, { row });
+      await recordUndo(c.env.DB, T(c), c.get("session").username, "draw.update", `draw:${id}`, `تعديل السحب «${prevDraw.name}»`, { row });
     }
     return c.json({ ok: true });
   });
@@ -1241,7 +1397,7 @@ export function createApp() {
     if (!p.ok) return p.res;
     try {
       const r = await runDraw(c.env.DB, id!, p.data.request_id);
-      if (!r.replay) await audit(c.env.DB, c.get("session").username, "draw.run", String(id));
+      if (!r.replay) await audit(c.env.DB, T(c), c.get("session").username, "draw.run", String(id));
       return c.json({ ok: true, replay: r.replay, winners: await winnersOf(c.env.DB, id!) });
     } catch (e) {
       return drawError(c, e);
@@ -1254,7 +1410,7 @@ export function createApp() {
     if (!p.ok) return p.res;
     try {
       const r = await replaceWinner(c.env.DB, id!, wid, p.data.reason);
-      await audit(c.env.DB, c.get("session").username, "draw.winner_replaced", String(id), { winner: wid, reason: p.data.reason });
+      await audit(c.env.DB, T(c), c.get("session").username, "draw.winner_replaced", String(id), { winner: wid, reason: p.data.reason });
       return c.json({ ok: true, ...r, winners: await winnersOf(c.env.DB, id!) });
     } catch (e) {
       return drawError(c, e);
@@ -1266,31 +1422,31 @@ export function createApp() {
     if (!d) return apiError(c, 404, "not_found", "السحب غير موجود");
     const snap = await drawSnapshots(c.env.DB, [d.id]);
     await deleteDraws(c.env.DB, [d.id]);
-    await recordUndo(c.env.DB, c.get("session").username, "draw.delete", `draw:${d.id}`, `حذف السحب «${d.name}»`, { draws: snap });
-    await audit(c.env.DB, c.get("session").username, "draw.deleted", String(d.id), { name: d.name, status: d.status });
+    await recordUndo(c.env.DB, T(c), c.get("session").username, "draw.delete", `draw:${d.id}`, `حذف السحب «${d.name}»`, { draws: snap });
+    await audit(c.env.DB, T(c), c.get("session").username, "draw.deleted", String(d.id), { name: d.name, status: d.status });
     return c.json({ ok: true });
   });
   // Clears the whole draws log (explicit confirmation word required).
   api.post("/draws/clear", async (c) => {
     const p = await parseBody(c, z.object({ confirm: z.literal("مسح") }));
     if (!p.ok) return p.res;
-    const ids = (await all<{ id: number }>(c.env.DB, "SELECT id FROM draws")).map((r) => r.id);
+    const ids = (await all<{ id: number }>(c.env.DB, "SELECT id FROM draws WHERE tenant_id = ?", T(c))).map((r) => r.id);
     const snap = await drawSnapshots(c.env.DB, ids);
     await deleteDraws(c.env.DB, ids);
-    if (ids.length) await recordUndo(c.env.DB, c.get("session").username, "draw.clear", "draws:all", `مسح سجل السحوبات (${ids.length})`, { draws: snap });
-    await audit(c.env.DB, c.get("session").username, "draw.cleared", undefined, { count: ids.length });
+    if (ids.length) await recordUndo(c.env.DB, T(c), c.get("session").username, "draw.clear", "draws:all", `مسح سجل السحوبات (${ids.length})`, { draws: snap });
+    await audit(c.env.DB, T(c), c.get("session").username, "draw.cleared", undefined, { count: ids.length });
     return c.json({ ok: true, deleted: ids.length });
   });
 
   // ---- Congratulation cards (designs, generated images, sending to winners)
-  api.get("/card-designs", async (c) => c.json(await all(c.env.DB, "SELECT id, name, design, updated_at FROM card_designs ORDER BY id DESC")));
+  api.get("/card-designs", async (c) => c.json(await all(c.env.DB, "SELECT id, name, design, updated_at FROM card_designs WHERE tenant_id = ? ORDER BY id DESC", T(c))));
   const designBody = z.object({ name: z.string().trim().min(1, "اكتب اسم التصميم").max(80), design: cardDesignInputSchema });
   api.post("/card-designs", async (c) => {
     const p = await parseBody(c, designBody);
     if (!p.ok) return p.res;
     const now = Date.now();
-    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO card_designs (name, design, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id", p.data.name, JSON.stringify(p.data.design), now, now);
-    await recordUndo(c.env.DB, c.get("session").username, "design.create", `design:${r!.id}`, `إضافة تصميم التهنئة «${p.data.name}»`, { id: r!.id });
+    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO card_designs (tenant_id, name, design, created_at, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING id", T(c), p.data.name, JSON.stringify(p.data.design), now, now);
+    await recordUndo(c.env.DB, T(c), c.get("session").username, "design.create", `design:${r!.id}`, `إضافة تصميم التهنئة «${p.data.name}»`, { id: r!.id });
     return c.json({ id: r!.id });
   });
   api.put("/card-designs/:id", async (c) => {
@@ -1300,24 +1456,28 @@ export function createApp() {
     const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM card_designs WHERE id = ?", id);
     if (!prev) return apiError(c, 404, "not_found", "التصميم غير موجود");
     await run(c.env.DB, "UPDATE card_designs SET name = ?, design = ?, updated_at = ? WHERE id = ?", p.data.name, JSON.stringify(p.data.design), Date.now(), id);
-    await recordUndo(c.env.DB, c.get("session").username, "design.update", `design:${id}`, `تعديل تصميم التهنئة «${prev.name}»`, { row: prev });
+    await recordUndo(c.env.DB, T(c), c.get("session").username, "design.update", `design:${id}`, `تعديل تصميم التهنئة «${prev.name}»`, { row: prev });
     return c.json({ ok: true });
   });
   api.delete("/card-designs/:id", async (c) => {
     const id = idParam(c);
     const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM card_designs WHERE id = ?", id);
     if (!prev) return c.json({ ok: true });
-    const drawIds = (await all<{ id: number }>(c.env.DB, "SELECT id FROM draws WHERE card_design_id = ?", id)).map((r) => r.id);
-    await run(c.env.DB, "UPDATE draws SET card_design_id = NULL WHERE card_design_id = ?", id);
+    const drawIds = (await all<{ id: number }>(c.env.DB, "SELECT id FROM draws WHERE card_design_id = ? AND tenant_id = ?", id, T(c))).map((r) => r.id);
+    await run(c.env.DB, "UPDATE draws SET card_design_id = NULL WHERE card_design_id = ? AND tenant_id = ?", id, T(c));
     await run(c.env.DB, "DELETE FROM card_designs WHERE id = ?", id);
-    await recordUndo(c.env.DB, c.get("session").username, "design.delete", `design:${id}`, `حذف تصميم التهنئة «${prev.name}»`, { row: prev, draw_ids: drawIds });
+    await recordUndo(c.env.DB, T(c), c.get("session").username, "design.delete", `design:${id}`, `حذف تصميم التهنئة «${prev.name}»`, { row: prev, draw_ids: drawIds });
     return c.json({ ok: true });
   });
   api.put("/draws/:id/card-design", async (c) => {
     const id = idParam(c);
     const p = await parseBody(c, z.object({ card_design_id: z.number().int().positive().nullable() }));
     if (!p.ok) return p.res;
-    await run(c.env.DB, "UPDATE draws SET card_design_id = ?, updated_at = ? WHERE id = ?", p.data.card_design_id, Date.now(), id);
+    // The design must be one of the tenant's own designs.
+    if (p.data.card_design_id && !(await first(c.env.DB, "SELECT 1 FROM card_designs WHERE id = ? AND tenant_id = ?", p.data.card_design_id, T(c)))) {
+      return apiError(c, 404, "not_found", "التصميم غير موجود");
+    }
+    await run(c.env.DB, "UPDATE draws SET card_design_id = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", p.data.card_design_id, Date.now(), id, T(c));
     return c.json({ ok: true });
   });
   api.get("/draws/:id/winners/:wid/plan", async (c) => {
@@ -1342,7 +1502,7 @@ export function createApp() {
     const wid = Number(c.req.param("wid"));
     try {
       const r = await sendCard(engineContext(c.env), c.env.PUBLIC_BASE_URL, id, wid);
-      await audit(c.env.DB, c.get("session").username, "draw.card_sent", String(id), { winner: wid, channel: r.channel });
+      await audit(c.env.DB, T(c), c.get("session").username, "draw.card_sent", String(id), { winner: wid, channel: r.channel });
       return c.json({ ok: true, ...r, winners: await winnersOf(c.env.DB, id) });
     } catch (e) {
       return drawError(c, e);
@@ -1356,7 +1516,7 @@ export function createApp() {
     const wid = Number(c.req.param("wid"));
     try {
       await publicReplyToWinner(engineContext(c.env), id, wid, p.data.text);
-      await audit(c.env.DB, c.get("session").username, "draw.public_reply", String(id), { winner: wid });
+      await audit(c.env.DB, T(c), c.get("session").username, "draw.public_reply", String(id), { winner: wid });
       return c.json({ ok: true, winners: await winnersOf(c.env.DB, id) });
     } catch (e) {
       return drawError(c, e);
@@ -1365,7 +1525,7 @@ export function createApp() {
 
   // ---- Notifications (Telegram)
   api.get("/notifications", async (c) => {
-    const [settings, has_token] = await Promise.all([getNotifySettings(c.env.DB), hasBotToken(c.env.DB)]);
+    const [settings, has_token] = await Promise.all([getNotifySettings(c.env.DB, T(c)), hasBotToken(c.env.DB, T(c))]);
     return c.json({ settings, has_token });
   });
   api.put("/notifications", async (c) => {
@@ -1398,27 +1558,27 @@ export function createApp() {
     }
     if (bot_token !== undefined) {
       if (bot_token && !isTelegramToken(bot_token)) return apiError(c, 422, "validation", "توكن البوت غير صحيح — انسخه كما أعطاك إياه BotFather");
-      await saveBotToken(c.env, bot_token || null);
+      await saveBotToken(c.env, T(c), bot_token || null);
       if (!bot_token) rest.chat_id = null;
     }
-    const cur = await getNotifySettings(c.env.DB);
+    const cur = await getNotifySettings(c.env.DB, T(c));
     const next = { ...cur, ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)) };
-    await setSetting(c.env.DB, "notify", next);
-    await audit(c.env.DB, c.get("session").username, "notifications.updated", undefined, { ...rest, bot_token: bot_token === undefined ? undefined : bot_token ? "set" : "removed" });
-    return c.json({ settings: next, has_token: await hasBotToken(c.env.DB) });
+    await setSetting(c.env.DB, T(c), "notify", next);
+    await audit(c.env.DB, T(c), c.get("session").username, "notifications.updated", undefined, { ...rest, bot_token: bot_token === undefined ? undefined : bot_token ? "set" : "removed" });
+    return c.json({ settings: next, has_token: await hasBotToken(c.env.DB, T(c)) });
   });
   api.post("/notifications/detect", async (c) => {
-    const r = await detectChat(c.env);
+    const r = await detectChat(c.env, T(c));
     if (!r.ok) return apiError(c, 422, "telegram", r.error ?? "تعذر العثور على المحادثة");
-    const next = { ...(await getNotifySettings(c.env.DB)), chat_id: r.chat_id!, enabled: true };
-    await setSetting(c.env.DB, "notify", next);
+    const next = { ...(await getNotifySettings(c.env.DB, T(c))), chat_id: r.chat_id!, enabled: true };
+    await setSetting(c.env.DB, T(c), "notify", next);
     return c.json({ settings: next, name: r.name ?? null });
   });
   api.post("/notifications/test", async (c) => {
     const p = await parseBody(c, z.object({ kind: z.enum(["test", "report"]).default("test") }));
     if (!p.ok) return p.res;
-    const text = p.data.kind === "report" ? await buildDailyReport(c.env.DB) : "✅ تم ربط إشعارات HSN AutoReply بنجاح. ستصلك التنبيهات والتقرير اليومي هنا.";
-    const r = await sendTelegram(c.env, text);
+    const text = p.data.kind === "report" ? await buildDailyReport(c.env.DB, T(c)) : "✅ تم ربط إشعارات HSN AutoReply بنجاح. ستصلك التنبيهات والتقرير اليومي هنا.";
+    const r = await sendTelegram(c.env, T(c), text);
     if (!r.ok) return apiError(c, 422, "telegram", r.error ?? "تعذر الإرسال");
     return c.json({ ok: true });
   });
@@ -1426,8 +1586,8 @@ export function createApp() {
   // ---- Inbox: conversations started or answered by the automation, and manual replies (24h window only)
   api.get("/inbox", async (c) => {
     const q = (c.req.query("q") ?? "").trim().replace(/^@/, "").slice(0, 60);
-    const params: unknown[] = [];
-    let where = "p.is_demo = 0 AND p.last_message_at IS NOT NULL";
+    const params: unknown[] = [T(c)];
+    let where = `p.account_id IN ${TENANT_ACCOUNTS} AND p.is_demo = 0 AND p.last_message_at IS NOT NULL`;
     if (q) {
       where += " AND p.username LIKE ? ESCAPE '\\'";
       params.push(`%${q.replace(/[%_\\]/g, (m) => "\\" + m)}%`);
@@ -1447,7 +1607,7 @@ export function createApp() {
   // Fills missing / expired profile pictures (bounded batch; the client calls it when the inbox opens).
   api.post("/inbox/avatars", async (c) => {
     if (!(await rateLimit(c.env.DB, `avatars:${c.get("session").username}`, 30, 3_600_000))) return c.json({ checked: 0, updated: 0 });
-    return c.json(await refreshAvatars(engineContext(c.env)));
+    return c.json(await refreshAvatars(engineContext(c.env), T(c)));
   });
   api.get("/inbox/:id", async (c) => {
     const id = idParam(c);
@@ -1489,15 +1649,13 @@ export function createApp() {
     }
     await recordMessage(c.env.DB, { accountId: a.id, participantId: p.id, direction: "out", source: "manual", kind: "message", text: body.data.text, mid: r.data.message_id ?? null, at: now });
     await markRead(c.env.DB, p.id, now);
-    await audit(c.env.DB, c.get("session").username, "inbox.sent", String(p.id));
+    await audit(c.env.DB, T(c), c.get("session").username, "inbox.sent", String(p.id));
     return c.json({ ok: true });
   });
 
   // ---- Settings
   api.get("/settings", async (c) => {
-    const rows = await all<{ key: string; value: string }>(c.env.DB, `SELECT key, value FROM app_settings WHERE ${PUBLIC_SETTINGS_SQL}`);
-    const out: Record<string, unknown> = {};
-    for (const r of rows) out[r.key] = JSON.parse(r.value);
+    const out = await publicSettings(c.env.DB, T(c));
     return c.json({ settings: out, app_version: c.env.APP_VERSION, releases_url: c.env.RELEASES_URL || null, apk_url: c.env.APK_DOWNLOAD_URL || null });
   });
   api.put("/settings", async (c) => {
@@ -1513,26 +1671,28 @@ export function createApp() {
     const prev: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(p.data)) {
       if (v === undefined) continue;
-      const old = await first<{ value: string }>(c.env.DB, "SELECT value FROM app_settings WHERE key = ?", k);
+      const old = await first<{ value: string }>(c.env.DB, "SELECT value FROM app_settings WHERE key = ?", settingKey(T(c), k));
       prev[k] = old ? JSON.parse(old.value) : null;
     }
-    for (const [k, v] of Object.entries(p.data)) if (v !== undefined) await setSetting(c.env.DB, k, v);
-    await audit(c.env.DB, c.get("session").username, "settings.updated", undefined, p.data);
+    for (const [k, v] of Object.entries(p.data)) if (v !== undefined) await setSetting(c.env.DB, T(c), k, v);
+    await audit(c.env.DB, T(c), c.get("session").username, "settings.updated", undefined, p.data);
     if (Object.keys(prev).some((k) => JSON.stringify(prev[k]) !== JSON.stringify((p.data as Record<string, unknown>)[k]))) {
-      await recordUndo(c.env.DB, c.get("session").username, "settings.update", "settings", "تعديل الإعدادات", { prev });
+      await recordUndo(c.env.DB, T(c), c.get("session").username, "settings.update", "settings", "تعديل الإعدادات", { prev });
     }
     return c.json({ ok: true });
   });
 
   // Backup of configuration only — never tokens, secrets, sessions or personal data.
   api.get("/settings/backup", async (c) => {
-    const [settings, campaigns, keywords, media, templates] = await Promise.all([
-      all(c.env.DB, `SELECT key, value FROM app_settings WHERE ${PUBLIC_SETTINGS_SQL}`),
-      all(c.env.DB, "SELECT * FROM campaigns WHERE deleted_at IS NULL"),
-      all(c.env.DB, "SELECT campaign_id, keyword, kind, match_type FROM campaign_keywords"),
-      all(c.env.DB, "SELECT campaign_id, media_id FROM campaign_media"),
-      all(c.env.DB, "SELECT kind, name, body FROM templates"),
+    const t = T(c);
+    const [settingsObj, campaigns, keywords, media, templates] = await Promise.all([
+      publicSettings(c.env.DB, t),
+      all(c.env.DB, "SELECT * FROM campaigns WHERE tenant_id = ? AND deleted_at IS NULL", t),
+      all(c.env.DB, "SELECT campaign_id, keyword, kind, match_type FROM campaign_keywords WHERE campaign_id IN (SELECT id FROM campaigns WHERE tenant_id = ?)", t),
+      all(c.env.DB, "SELECT campaign_id, media_id FROM campaign_media WHERE campaign_id IN (SELECT id FROM campaigns WHERE tenant_id = ?)", t),
+      all(c.env.DB, "SELECT kind, name, body FROM templates WHERE tenant_id = ?", t),
     ]);
+    const settings = Object.entries(settingsObj).map(([key, value]) => ({ key, value: JSON.stringify(value) }));
     c.header("Content-Disposition", `attachment; filename="hsn-autoreply-backup-${new Date().toISOString().slice(0, 10)}.json"`);
     return c.json({ format: "hsn-autoreply-backup", version: 1, exported_at: new Date().toISOString(), settings, campaigns, keywords, media, templates });
   });
@@ -1553,7 +1713,7 @@ export function createApp() {
     if (!p.ok) return p.res;
     const now = Date.now();
     const allowedSettings = ["timezone", "retention_days", "dedup_retention_days", "any_reply_counts_as_start", "global_user_hourly_limit"];
-    for (const s of p.data.settings) if (allowedSettings.includes(s.key)) await run(c.env.DB, "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", s.key, s.value, now);
+    for (const s of p.data.settings) if (allowedSettings.includes(s.key)) await run(c.env.DB, "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at", settingKey(T(c), s.key), s.value, now);
     let restored = 0;
     for (const raw of p.data.campaigns) {
       const oldId = Number(raw.id);
@@ -1568,11 +1728,11 @@ export function createApp() {
       const d = parsed.data;
       const r = await first<{ id: number }>(
         c.env.DB,
-        `INSERT INTO campaigns (name, type, status, priority, scope, match_all, unify_alef, include_replies, require_follow, follow_invite, follow_invite_text, opening_text, follow_request_text,
+        `INSERT INTO campaigns (tenant_id, name, type, status, priority, scope, match_all, unify_alef, include_replies, require_follow, follow_invite, follow_invite_text, opening_text, follow_request_text,
            follow_reminder_text, verify_error_text, final_text, final_url, public_reply_enabled, public_reply_text, public_reply_on_dm_fail, public_reply_fallback_text,
            schedule_start, schedule_end, timezone, per_user_cooldown_hours, max_deliveries_per_user, max_verify_attempts, verify_cooldown_seconds, process_old_events, created_at, updated_at)
-         VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        d.name, d.type, d.priority, d.scope, +d.match_all, +d.unify_alef, +d.include_replies, +(d.require_follow && (await followGateAllowed(c.env.DB))), +d.follow_invite, d.follow_invite_text ?? null, d.opening_text ?? null, d.follow_request_text ?? null,
+         VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        T(c), d.name, d.type, d.priority, d.scope, +d.match_all, +d.unify_alef, +d.include_replies, +(d.require_follow && (await followGateAllowed(c.env.DB, T(c)))), +d.follow_invite, d.follow_invite_text ?? null, d.opening_text ?? null, d.follow_request_text ?? null,
         d.follow_reminder_text ?? null, d.verify_error_text ?? null, d.final_text, d.final_url || null, +d.public_reply_enabled, d.public_reply_text ?? null, d.public_reply_on_dm_fail,
         d.public_reply_fallback_text ?? null, d.schedule_start ?? null, d.schedule_end ?? null, d.timezone, d.per_user_cooldown_hours, d.max_deliveries_per_user,
         d.max_verify_attempts, d.verify_cooldown_seconds, +d.process_old_events, now, now,
@@ -1584,8 +1744,8 @@ export function createApp() {
       if (children.length) await c.env.DB.batch(children);
       restored++;
     }
-    for (const t of p.data.templates) await run(c.env.DB, "INSERT INTO templates (kind, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", t.kind, t.name, t.body, now, now);
-    await audit(c.env.DB, c.get("session").username, "settings.restored", undefined, { campaigns: restored });
+    for (const t of p.data.templates) await run(c.env.DB, "INSERT INTO templates (tenant_id, kind, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", T(c), t.kind, t.name, t.body, now, now);
+    await audit(c.env.DB, T(c), c.get("session").username, "settings.restored", undefined, { campaigns: restored });
     return c.json({ ok: true, campaigns: restored, note: "الحملات المستعادة في وضع مسودة — راجعها ثم فعّلها." });
   });
 
@@ -1593,30 +1753,34 @@ export function createApp() {
     const p = await parseBody(c, z.object({ scope: z.enum(["logs", "demo", "all_personal"]), confirm: z.literal("DELETE") }));
     if (!p.ok) return p.res;
     const db = c.env.DB;
+    const t = T(c);
+    // Every statement is limited to the caller's tenant (its Instagram accounts and its own logs).
+    const ACC = TENANT_ACCOUNTS;
+    const PART = `(SELECT id FROM participants WHERE account_id IN ${ACC})`;
     if (p.data.scope === "demo") {
       await db.batch([
-        db.prepare("DELETE FROM action_jobs WHERE is_demo = 1"),
-        db.prepare("DELETE FROM webhook_events WHERE is_demo = 1"),
-        db.prepare("DELETE FROM instagram_accounts WHERE is_demo = 1"),
+        db.prepare("DELETE FROM action_jobs WHERE is_demo = 1 AND account_id IN (SELECT id FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 1)").bind(t),
+        db.prepare("DELETE FROM webhook_events WHERE is_demo = 1 AND account_ig_id IN (SELECT ig_user_id FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 1)").bind(t),
+        db.prepare("DELETE FROM instagram_accounts WHERE is_demo = 1 AND tenant_id = ?").bind(t),
       ]);
     } else if (p.data.scope === "logs") {
       await db.batch([
-        db.prepare("DELETE FROM action_attempts"),
-        db.prepare("UPDATE webhook_events SET text = NULL, sender_username = NULL, payload = '{}'"),
-        db.prepare("DELETE FROM audit_logs"),
+        db.prepare(`DELETE FROM action_attempts WHERE job_id IN (SELECT id FROM action_jobs WHERE account_id IN ${ACC})`).bind(t),
+        db.prepare(`UPDATE webhook_events SET text = NULL, sender_username = NULL, payload = '{}' WHERE account_ig_id IN ${TENANT_IG_IDS}`).bind(t),
+        db.prepare("DELETE FROM audit_logs WHERE tenant_id = ?").bind(t),
       ]);
     } else {
       await db.batch([
-        db.prepare("DELETE FROM action_attempts"),
-        db.prepare("DELETE FROM follow_checks"),
-        db.prepare("DELETE FROM conversation_flows"),
-        db.prepare("DELETE FROM messages"),
-        db.prepare("DELETE FROM participants"),
-        db.prepare("UPDATE action_jobs SET payload = '{}', result = NULL WHERE status NOT IN ('pending','processing','retry_scheduled')"),
-        db.prepare("UPDATE webhook_events SET text = NULL, sender_username = NULL, sender_id = NULL, payload = '{}'"),
+        db.prepare(`DELETE FROM action_attempts WHERE job_id IN (SELECT id FROM action_jobs WHERE account_id IN ${ACC})`).bind(t),
+        db.prepare(`DELETE FROM follow_checks WHERE participant_id IN ${PART}`).bind(t),
+        db.prepare(`DELETE FROM conversation_flows WHERE account_id IN ${ACC}`).bind(t),
+        db.prepare(`DELETE FROM messages WHERE participant_id IN ${PART}`).bind(t),
+        db.prepare(`DELETE FROM participants WHERE account_id IN ${ACC}`).bind(t),
+        db.prepare(`UPDATE action_jobs SET payload = '{}', result = NULL WHERE status NOT IN ('pending','processing','retry_scheduled') AND account_id IN ${ACC}`).bind(t),
+        db.prepare(`UPDATE webhook_events SET text = NULL, sender_username = NULL, sender_id = NULL, payload = '{}' WHERE account_ig_id IN ${TENANT_IG_IDS}`).bind(t),
       ]);
     }
-    await audit(db, c.get("session").username, "data.deleted", p.data.scope);
+    await audit(db, t, c.get("session").username, "data.deleted", p.data.scope);
     return c.json({ ok: true });
   });
 
@@ -1633,14 +1797,15 @@ export function createApp() {
 }
 
 /** The follow requirement is allowed only when the owner enabled it on a connected (non-demo) account. */
-async function followGateAllowed(db: D1Database): Promise<boolean> {
-  const r = await first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM instagram_accounts WHERE is_demo = 0 AND follow_gate_allowed = 1 AND status != 'disconnected'");
+async function followGateAllowed(db: D1Database, tenantId: number): Promise<boolean> {
+  const r = await first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 AND follow_gate_allowed = 1 AND status != 'disconnected'", tenantId);
   return (r?.n ?? 0) > 0;
 }
 
-function logFilters(c: C, timeCol: string, eq: string[], prefix = "") {
-  const where: string[] = [];
-  const params: unknown[] = [];
+/** Log filters; `scope` is the tenant condition (always applied first). */
+function logFilters(c: C, timeCol: string, eq: string[], prefix: string, scope: string) {
+  const where: string[] = [scope];
+  const params: unknown[] = [T(c)];
   for (const k of eq) {
     const v = c.req.query(k);
     if (v && /^[a-z_]{1,40}$/.test(v)) {
@@ -1663,5 +1828,5 @@ function logFilters(c: C, timeCol: string, eq: string[], prefix = "") {
     where.push(`${timeCol} > ?`);
     params.push(Date.now() - days * 86_400_000);
   }
-  return { where: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
+  return { where: `WHERE ${where.join(" AND ")}`, params };
 }

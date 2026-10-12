@@ -17,6 +17,11 @@ export interface SendPlan {
   public_reply?: { can: boolean; reason: string; status?: string | null };
 }
 
+/** The connected Instagram account of the customer who owns the draw. */
+async function drawAccount(db: D1Database, drawId: number): Promise<(AccountRow & { username: string | null }) | null> {
+  return first(db, "SELECT * FROM instagram_accounts WHERE tenant_id = (SELECT tenant_id FROM draws WHERE id = ?) AND is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1", drawId);
+}
+
 interface WinnerRow {
   id: number;
   draw_id: number;
@@ -63,7 +68,9 @@ export async function sendPlan(db: D1Database, w: WinnerRow, now = Date.now()): 
   if (!w.author_id) return { can: false, reason: "معرّف الحساب غير متاح من Meta — لا يمكن مراسلته" };
   const p = await first<{ last_user_message_at: number | null }>(
     db,
-    "SELECT p.last_user_message_at FROM participants p JOIN instagram_accounts a ON a.id = p.account_id WHERE a.is_demo = 0 AND p.igsid = ? ORDER BY p.last_user_message_at DESC LIMIT 1",
+    `SELECT p.last_user_message_at FROM participants p JOIN instagram_accounts a ON a.id = p.account_id
+      WHERE a.is_demo = 0 AND a.tenant_id = (SELECT tenant_id FROM draws WHERE id = ?) AND p.igsid = ? ORDER BY p.last_user_message_at DESC LIMIT 1`,
+    w.draw_id,
     w.author_id,
   );
   const last = p?.last_user_message_at ?? null;
@@ -119,7 +126,7 @@ export async function publicReplyToWinner(ctx: EngineContext, drawId: number, wi
   if (!w) throw new DrawFailure(404, "not_found", "الفائز غير موجود");
   const plan = publicReplyPlan(w);
   if (!plan.can) throw new DrawFailure(409, "cannot_reply", plan.reason);
-  const account = await first<AccountRow>(db, "SELECT * FROM instagram_accounts WHERE is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1");
+  const account = await drawAccount(db, drawId);
   if (!account) throw new DrawFailure(409, "no_account", "اربط حساب إنستقرام أولًا");
   const token = await ctx.getAccessToken(account);
   if (!token) throw new DrawFailure(409, "no_token", "التفويض غير متاح — أعد الربط");
@@ -170,7 +177,7 @@ export async function sendCard(ctx: EngineContext, publicBaseUrl: string, drawId
   if (!plan.can) throw new DrawFailure(409, "cannot_send", plan.reason);
   const card = await first<{ token: string }>(db, "SELECT token FROM draw_cards WHERE winner_id = ? ORDER BY id DESC LIMIT 1", winnerId);
   if (!card) throw new DrawFailure(409, "no_card", "أنشئ بطاقة الفائز أولًا");
-  const account = await first<AccountRow & { username: string | null }>(db, "SELECT * FROM instagram_accounts WHERE is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1");
+  const account = await drawAccount(db, drawId);
   if (!account) throw new DrawFailure(409, "no_account", "اربط حساب إنستقرام أولًا");
   const token = await ctx.getAccessToken(account);
   if (!token) throw new DrawFailure(409, "no_token", "التفويض غير متاح — أعد الربط");

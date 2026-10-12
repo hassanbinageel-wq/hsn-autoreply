@@ -2,7 +2,7 @@ import type { z } from "zod";
 import type { simulateSchema } from "../../shared/schemas";
 import { TERMINAL_FLOW_STATES } from "../../shared/states";
 import type { Env } from "../env";
-import { all, first, run } from "../lib/db";
+import { all, first, OWNER_TENANT, run } from "../lib/db";
 import type { NormalizedEvent } from "../meta/webhook-parse";
 import { runQueue } from "../engine/executor";
 import { engineContext } from "./account";
@@ -10,29 +10,36 @@ import { storeEvents } from "./webhook";
 import type { FlowRow } from "../engine/context";
 
 export const DEMO_IG_ID = "demo_business";
+/** Each customer has its own demo account (the owner keeps the original one). */
+export const demoIgId = (tenantId: number) => (tenantId === OWNER_TENANT ? DEMO_IG_ID : `${DEMO_IG_ID}_t${tenantId}`);
 const TERMINAL_SQL = TERMINAL_FLOW_STATES.map((s) => `'${s}'`).join(",");
 
-async function ensureDemoAccount(db: D1Database): Promise<number> {
+async function ensureDemoAccount(db: D1Database, tenantId: number): Promise<number> {
   const now = Date.now();
+  const igId = demoIgId(tenantId);
   await run(
     db,
-    `INSERT OR IGNORE INTO instagram_accounts (ig_user_id, username, name, is_demo, status, webhook_status, follow_check_support, created_at, updated_at)
-     VALUES (?, 'hsn_demo', 'حساب تجريبي', 1, 'active', 'subscribed', 'supported', ?, ?)`,
-    DEMO_IG_ID,
+    `INSERT OR IGNORE INTO instagram_accounts (tenant_id, ig_user_id, username, name, is_demo, status, webhook_status, follow_check_support, created_at, updated_at)
+     VALUES (?, ?, 'hsn_demo', 'حساب تجريبي', 1, 'active', 'subscribed', 'supported', ?, ?)`,
+    tenantId,
+    igId,
     now,
     now,
   );
-  return (await first<{ id: number }>(db, "SELECT id FROM instagram_accounts WHERE ig_user_id = ?", DEMO_IG_ID))!.id;
+  return (await first<{ id: number }>(db, "SELECT id FROM instagram_accounts WHERE ig_user_id = ? AND tenant_id = ?", igId, tenantId))!.id;
 }
 
 /**
  * Runs a scenario through the REAL pipeline (event store → queue → engine) using demo rows
  * (is_demo = 1) and the DemoMetaClient, so nothing is ever sent to Instagram.
  */
-export async function simulate(env: Env, input: z.infer<typeof simulateSchema>) {
+export async function simulate(env: Env, tenantId: number, input: z.infer<typeof simulateSchema>) {
   const db = env.DB;
   const now = Date.now();
-  const accountId = await ensureDemoAccount(db);
+  if (input.campaign_id && !(await first(db, "SELECT 1 FROM campaigns WHERE id = ? AND tenant_id = ?", input.campaign_id, tenantId))) {
+    return { ok: false, error: "الحملة غير موجودة" };
+  }
+  const accountId = await ensureDemoAccount(db, tenantId);
   const igsid = `demo_${input.participant}`;
 
   if (input.reset) {
@@ -71,7 +78,7 @@ export async function simulate(env: Env, input: z.infer<typeof simulateSchema>) 
     scopedMedia = m?.media_id ?? null;
   }
   const uid = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-  const base = { accountIgId: DEMO_IG_ID, senderId: igsid, senderUsername: input.participant, time: now };
+  const base = { accountIgId: demoIgId(tenantId), senderId: igsid, senderUsername: input.participant, time: now };
   let ev: NormalizedEvent;
   let forced: number | undefined;
   switch (input.event) {

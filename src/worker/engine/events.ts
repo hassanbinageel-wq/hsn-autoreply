@@ -50,13 +50,14 @@ export async function processEvent(ctx: EngineContext, row: EventRow, opts: { fo
 
   const account = await first<AccountRow>(
     ctx.db,
-    "SELECT * FROM instagram_accounts WHERE ig_user_id = ? AND is_demo = ?",
+    "SELECT a.*, t.status AS tenant_status FROM instagram_accounts a JOIN tenants t ON t.id = a.tenant_id WHERE a.ig_user_id = ? AND a.is_demo = ?",
     ev.accountIgId,
     isDemo ? 1 : 0,
   );
   if (!account) return { status: "ignored", reason: "unknown_account" };
   if (account.status !== "active") return { status: "ignored", reason: "account_not_active" };
-  const paused = !isDemo && !(await getSetting(ctx.db, "automation_enabled", true));
+  if (account.tenant_status !== "active") return { status: "ignored", reason: "customer_suspended" };
+  const paused = !isDemo && !(await getSetting(ctx.db, account.tenant_id, "automation_enabled", true));
 
   switch (ev.kind) {
     case "echo":
@@ -103,9 +104,9 @@ export async function processEvent(ctx: EngineContext, row: EventRow, opts: { fo
     case "quick_reply":
     case "postback":
       if (ev.buttonPayload && BUTTON_RE.test(ev.buttonPayload)) return routeButton(ctx, row, ev, participant);
-      return routeControl(ctx, row, ev, participant);
+      return routeControl(ctx, row, ev, participant, account);
     case "message":
-      return routeControl(ctx, row, ev, participant);
+      return routeControl(ctx, row, ev, participant, account);
   }
   return { status: "ignored", reason: "unsupported_event" };
 }
@@ -244,10 +245,12 @@ async function triggerCampaign(
 ): Promise<ProcessOutcome> {
   const type = ev.kind as CampaignRow["type"];
   const candidates = forcedCampaignId
-    ? await all<CampaignRow>(ctx.db, "SELECT * FROM campaigns WHERE id = ? AND type = ? AND deleted_at IS NULL", forcedCampaignId, type)
+    ? await all<CampaignRow>(ctx.db, "SELECT * FROM campaigns WHERE id = ? AND tenant_id = ? AND type = ? AND deleted_at IS NULL", forcedCampaignId, account.tenant_id, type)
     : await all<CampaignRow>(
         ctx.db,
-        "SELECT * FROM campaigns WHERE type = ? AND status = 'active' AND deleted_at IS NULL ORDER BY priority DESC, id ASC",
+        // Only the campaigns of the customer who owns this Instagram account.
+        "SELECT * FROM campaigns WHERE tenant_id = ? AND type = ? AND status = 'active' AND deleted_at IS NULL ORDER BY priority DESC, id ASC",
+        account.tenant_id,
         type,
       );
   if (!candidates.length) return { status: "ignored", reason: "no_active_campaign" };
@@ -287,7 +290,7 @@ async function triggerCampaign(
     );
     if (recent) return { status: "ignored", reason: "user_cooldown", campaignId: chosen.id };
   }
-  const hourlyLimit = await getSetting(ctx.db, "global_user_hourly_limit", 10);
+  const hourlyLimit = await getSetting(ctx.db, account.tenant_id, "global_user_hourly_limit", 10);
   if (hourlyLimit > 0) {
     const n = await first<{ n: number }>(
       ctx.db,
@@ -364,7 +367,7 @@ async function routeButton(ctx: EngineContext, row: EventRow, ev: NormalizedEven
   return handleVerify(ctx, row, flow);
 }
 
-async function routeControl(ctx: EngineContext, row: EventRow, ev: NormalizedEvent, participant: ParticipantRow): Promise<ProcessOutcome> {
+async function routeControl(ctx: EngineContext, row: EventRow, ev: NormalizedEvent, participant: ParticipantRow, account: AccountRow): Promise<ProcessOutcome> {
   const flows = await openFlows(ctx.db, participant.id);
   if (!flows.length) return { status: "ignored", reason: "plain_message_no_trigger" };
   const text = ev.text ?? "";
@@ -376,7 +379,7 @@ async function routeControl(ctx: EngineContext, row: EventRow, ev: NormalizedEve
     if (awaitingFollow) return handleVerify(ctx, row, awaitingFollow);
     return { status: "ignored", reason: "flow_busy", flowId: flows[0].id };
   }
-  const anyReply = await getSetting(ctx.db, "any_reply_counts_as_start", true);
+  const anyReply = await getSetting(ctx.db, account.tenant_id, "any_reply_counts_as_start", true);
   if (awaitingStart && anyReply) return handleStart(ctx, row, awaitingStart);
   // A person waiting on the follow gate who writes anything (e.g. "تابعتك الحين") gets a FRESH check.
   // Cooldown + attempt limits still apply, and content is only sent if Meta returns following=true.

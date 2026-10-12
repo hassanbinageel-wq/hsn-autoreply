@@ -14,7 +14,8 @@ export interface EngineContext {
   /** Public origin of this Worker (e.g. https://x.workers.dev); enables tracked content links. */
   publicBaseUrl?: string;
   /** Owner notifications (Telegram), best-effort: never throws, never blocks the flow. */
-  notify?: (kind: NotifyKind, text: string) => Promise<void>;
+  /** Telegram notification to the account's owner (tenant). */
+  notify?: (tenantId: number, kind: NotifyKind, text: string) => Promise<void>;
 }
 
 export type NotifyKind = "new_follower" | "delivery" | "reauth" | "failures" | "spike" | "usage" | "report" | "test";
@@ -27,6 +28,10 @@ export interface AccountRow {
   is_demo: number;
   status: string;
   follow_check_support: string;
+  /** The customer (tenant) the account belongs to. */
+  tenant_id: number;
+  /** active | suspended (a suspended customer's automation never runs). */
+  tenant_status?: string;
   /** The owner allowed the follow REQUIREMENT on this account (admin panel only). */
   follow_gate_allowed?: number;
 }
@@ -173,5 +178,5 @@ export async function loadParticipant(db: D1Database, id: number): Promise<Parti
   return first<ParticipantRow>(db, "SELECT * FROM participants WHERE id = ?", id);
 }
 export async function loadAccount(db: D1Database, id: number): Promise<AccountRow | null> {
-  return first<AccountRow>(db, "SELECT * FROM instagram_accounts WHERE id = ?", id);
+  return first<AccountRow>(db, "SELECT a.*, t.status AS tenant_status FROM instagram_accounts a JOIN tenants t ON t.id = a.tenant_id WHERE a.id = ?", id);
 }

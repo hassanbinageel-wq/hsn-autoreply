@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import type { NotifyKind } from "../engine/context";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
-import { all, first, getSetting, setSetting } from "../lib/db";
+import { all, first, getSetting, OWNER_TENANT, setSetting, settingKey } from "../lib/db";
 import { sanitize } from "../meta/client";
 import { estimateUsage } from "./usage";
 
@@ -40,7 +40,8 @@ export const DEFAULT_NOTIFY: NotifySettings = {
 };
 
 const TOKEN_KEY = "telegram_token";
-const TOKEN_AAD = "telegram-bot-token";
+/** The encrypted token is bound to its tenant (the owner keeps the original binding). */
+const tokenAad = (tenantId: number) => (tenantId === OWNER_TENANT ? "telegram-bot-token" : `telegram-bot-token:t${tenantId}`);
 const TELEGRAM_TOKEN_RE = /^\d{5,15}:[A-Za-z0-9_-]{30,64}$/;
 
 /** Minimum time between two alerts of the same kind, so a bad hour never floods the owner's phone. */
@@ -55,35 +56,35 @@ export function isTelegramToken(t: string): boolean {
   return TELEGRAM_TOKEN_RE.test(t);
 }
 
-export async function getNotifySettings(db: D1Database): Promise<NotifySettings> {
-  return { ...DEFAULT_NOTIFY, ...(await getSetting<Partial<NotifySettings>>(db, "notify", {})) };
+export async function getNotifySettings(db: D1Database, tenantId: number): Promise<NotifySettings> {
+  return { ...DEFAULT_NOTIFY, ...(await getSetting<Partial<NotifySettings>>(db, tenantId, "notify", {})) };
 }
 
-export async function hasBotToken(db: D1Database): Promise<boolean> {
-  return !!(await getSetting<{ ciphertext?: string } | null>(db, TOKEN_KEY, null))?.ciphertext;
+export async function hasBotToken(db: D1Database, tenantId: number): Promise<boolean> {
+  return !!(await getSetting<{ ciphertext?: string } | null>(db, tenantId, TOKEN_KEY, null))?.ciphertext;
 }
 
-export async function saveBotToken(env: Env, token: string | null): Promise<void> {
+export async function saveBotToken(env: Env, tenantId: number, token: string | null): Promise<void> {
   if (!token) {
-    await env.DB.prepare("DELETE FROM app_settings WHERE key = ?").bind(TOKEN_KEY).run();
+    await env.DB.prepare("DELETE FROM app_settings WHERE key = ?").bind(settingKey(tenantId, TOKEN_KEY)).run();
     return;
   }
-  const enc = await encryptSecret(token, env.TOKEN_ENC_KEY, TOKEN_AAD);
-  await setSetting(env.DB, TOKEN_KEY, enc);
+  const enc = await encryptSecret(token, env.TOKEN_ENC_KEY, tokenAad(tenantId));
+  await setSetting(env.DB, tenantId, TOKEN_KEY, enc);
 }
 
-async function botToken(env: Env): Promise<string | null> {
-  const enc = await getSetting<{ ciphertext: string; iv: string } | null>(env.DB, TOKEN_KEY, null);
+async function botToken(env: Env, tenantId: number): Promise<string | null> {
+  const enc = await getSetting<{ ciphertext: string; iv: string } | null>(env.DB, tenantId, TOKEN_KEY, null);
   if (!enc?.ciphertext) return null;
   try {
-    return await decryptSecret(enc.ciphertext, enc.iv, env.TOKEN_ENC_KEY, TOKEN_AAD);
+    return await decryptSecret(enc.ciphertext, enc.iv, env.TOKEN_ENC_KEY, tokenAad(tenantId));
   } catch {
     return null;
   }
 }
 
-async function telegram(env: Env, method: string, body: Record<string, unknown>, token?: string | null): Promise<{ ok: boolean; result?: any; error?: string }> {
-  const t = token ?? (await botToken(env));
+async function telegram(env: Env, tenantId: number, method: string, body: Record<string, unknown>, token?: string | null): Promise<{ ok: boolean; result?: any; error?: string }> {
+  const t = token ?? (await botToken(env, tenantId));
   if (!t) return { ok: false, error: "لم يُضبط توكن البوت" };
   try {
     const r = await fetch(`https://api.telegram.org/bot${t}/${method}`, {
@@ -100,15 +101,15 @@ async function telegram(env: Env, method: string, body: Record<string, unknown>,
   }
 }
 
-export async function sendTelegram(env: Env, text: string, s?: NotifySettings): Promise<{ ok: boolean; error?: string }> {
-  const cfg = s ?? (await getNotifySettings(env.DB));
+export async function sendTelegram(env: Env, tenantId: number, text: string, s?: NotifySettings): Promise<{ ok: boolean; error?: string }> {
+  const cfg = s ?? (await getNotifySettings(env.DB, tenantId));
   if (!cfg.chat_id) return { ok: false, error: "لم تُحدَّد المحادثة بعد" };
-  return telegram(env, "sendMessage", { chat_id: cfg.chat_id, text: text.slice(0, 4000), disable_web_page_preview: true });
+  return telegram(env, tenantId, "sendMessage", { chat_id: cfg.chat_id, text: text.slice(0, 4000), disable_web_page_preview: true });
 }
 
 /** Finds the chat of the latest message sent to the bot (the owner sends /start once). */
-export async function detectChat(env: Env, token?: string | null): Promise<{ ok: boolean; chat_id?: string; name?: string; error?: string }> {
-  const r = await telegram(env, "getUpdates", { limit: 20, allowed_updates: ["message"] }, token);
+export async function detectChat(env: Env, tenantId: number, token?: string | null): Promise<{ ok: boolean; chat_id?: string; name?: string; error?: string }> {
+  const r = await telegram(env, tenantId, "getUpdates", { limit: 20, allowed_updates: ["message"] }, token);
   if (!r.ok) return { ok: false, error: r.error };
   const msgs = (r.result as any[]).map((u) => u.message).filter((m) => m?.chat?.type === "private");
   const last = msgs.at(-1);
@@ -117,9 +118,9 @@ export async function detectChat(env: Env, token?: string | null): Promise<{ ok:
 }
 
 /** Sends an owner notification if that kind is enabled (and not throttled). Never throws. */
-export async function notify(env: Env, kind: NotifyKind, text: string, onRequest?: () => void): Promise<void> {
+export async function notify(env: Env, tenantId: number, kind: NotifyKind, text: string, onRequest?: () => void): Promise<void> {
   try {
-    const s = await getNotifySettings(env.DB);
+    const s = await getNotifySettings(env.DB, tenantId);
     if (!s.enabled || !s.chat_id) return;
     const on: Record<NotifyKind, boolean> = {
       new_follower: s.notify_new_follower,
@@ -135,12 +136,12 @@ export async function notify(env: Env, kind: NotifyKind, text: string, onRequest
     const throttle = THROTTLE_MS[kind];
     if (throttle) {
       const key = `notify_last_${kind}`;
-      const last = await getSetting<number>(env.DB, key, 0);
+      const last = await getSetting<number>(env.DB, tenantId, key, 0);
       if (Date.now() - last < throttle) return;
-      await setSetting(env.DB, key, Date.now());
+      await setSetting(env.DB, tenantId, key, Date.now());
     }
     onRequest?.(); // counts against the same per-invocation subrequest budget as the Meta calls
-    await sendTelegram(env, text, s);
+    await sendTelegram(env, tenantId, text, s);
   } catch (e) {
     console.error("notify failed", sanitize(String(e)));
   }
@@ -158,13 +159,14 @@ function localParts(ms: number, tz: string): { date: string; hour: number } {
 }
 
 /** Numbers for the last 24 hours (production data only). */
-export async function buildDailyReport(db: D1Database, now = Date.now()): Promise<string> {
+export async function buildDailyReport(db: D1Database, tenantId: number, now = Date.now()): Promise<string> {
   const since = now - 86_400_000;
+  const ACC = "(SELECT id FROM instagram_accounts WHERE tenant_id = ?)";
   const perFlow = `
     SELECT f.campaign_id, f.participant_id, f.state, f.link_clicks,
            EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'not_following') AS saw_not,
            EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'following') AS saw_yes
-      FROM conversation_flows f WHERE f.is_demo = 0 AND f.created_at >= ?`;
+      FROM conversation_flows f WHERE f.account_id IN ${ACC} AND f.is_demo = 0 AND f.created_at >= ?`;
   const [t, comments, top, failed] = await Promise.all([
     first<any>(
       db,
@@ -173,16 +175,23 @@ export async function buildDailyReport(db: D1Database, now = Date.now()): Promis
               COUNT(DISTINCT CASE WHEN state = 'content_sent' THEN participant_id END) AS delivered,
               COUNT(DISTINCT CASE WHEN link_clicks > 0 THEN participant_id END) AS clicked
          FROM (${perFlow})`,
+      tenantId,
       since,
     ),
-    first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM webhook_events WHERE is_demo = 0 AND event_type = 'comment' AND received_at >= ?", since),
+    first<{ n: number }>(
+      db,
+      "SELECT COUNT(*) AS n FROM webhook_events WHERE account_ig_id IN (SELECT ig_user_id FROM instagram_accounts WHERE tenant_id = ?) AND is_demo = 0 AND event_type = 'comment' AND received_at >= ?",
+      tenantId,
+      since,
+    ),
     all<any>(
       db,
       `SELECT c.name, COUNT(DISTINCT x.participant_id) AS people, COUNT(DISTINCT CASE WHEN x.state = 'content_sent' THEN x.participant_id END) AS delivered
          FROM (${perFlow}) x JOIN campaigns c ON c.id = x.campaign_id GROUP BY x.campaign_id ORDER BY people DESC LIMIT 3`,
+      tenantId,
       since,
     ),
-    first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM action_jobs WHERE is_demo = 0 AND status IN ('failed','uncertain') AND updated_at >= ?", since),
+    first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM action_jobs WHERE account_id IN ${ACC} AND is_demo = 0 AND status IN ('failed','uncertain') AND updated_at >= ?`, tenantId, since),
   ]);
   const lines = [
     "📊 تقرير HSN AutoReply — آخر 24 ساعة",
@@ -201,37 +210,45 @@ export async function buildDailyReport(db: D1Database, now = Date.now()): Promis
   return lines.join("\n");
 }
 
-/** Called every minute by the cron: daily report at the chosen local hour, failure and spike alerts. */
+/** Called every minute by the cron: notifications of every active customer. */
 export async function runNotifications(env: Env, now = Date.now()): Promise<void> {
-  const s = await getNotifySettings(env.DB);
+  const tenants = await all<{ id: number }>(env.DB, "SELECT id FROM tenants WHERE status = 'active' ORDER BY id");
+  for (const t of tenants) await runTenantNotifications(env, t.id, now);
+}
+
+/** Daily report at the chosen local hour, failure and spike alerts (usage alerts: owner only). */
+async function runTenantNotifications(env: Env, tenantId: number, now: number): Promise<void> {
+  const s = await getNotifySettings(env.DB, tenantId);
   if (!s.enabled || !s.chat_id) return;
-  const local = localParts(now, await getSetting<string>(env.DB, "timezone", s.timezone));
+  const ACC = "(SELECT id FROM instagram_accounts WHERE tenant_id = ?)";
+  const local = localParts(now, await getSetting<string>(env.DB, tenantId, "timezone", s.timezone));
   if (s.daily_report && local.hour === s.report_hour) {
-    const last = await getSetting<string>(env.DB, "notify_last_report_date", "");
+    const last = await getSetting<string>(env.DB, tenantId, "notify_last_report_date", "");
     if (last !== local.date) {
-      await setSetting(env.DB, "notify_last_report_date", local.date);
-      await sendTelegram(env, await buildDailyReport(env.DB, now), s);
+      await setSetting(env.DB, tenantId, "notify_last_report_date", local.date);
+      await sendTelegram(env, tenantId, await buildDailyReport(env.DB, tenantId, now), s);
     }
   }
   // Failure/spike checks every 10 minutes (not every cron minute) to stay far below the free D1 read quota.
   if (Math.floor(now / 60_000) % 10 !== 0) return;
   if (s.alert_failures) {
-    const f = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM action_jobs WHERE is_demo = 0 AND status IN ('failed','uncertain') AND updated_at >= ?", now - 3_600_000);
-    if ((f?.n ?? 0) >= 3) await notify(env, "failures", `⚠️ ${f!.n} رسائل فشلت أو نتيجتها غير مؤكدة خلال الساعة الأخيرة. افتح «السجل» في التطبيق للتفاصيل.`);
+    const f = await first<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM action_jobs WHERE account_id IN ${ACC} AND is_demo = 0 AND status IN ('failed','uncertain') AND updated_at >= ?`, tenantId, now - 3_600_000);
+    if ((f?.n ?? 0) >= 3) await notify(env, tenantId, "failures", `⚠️ ${f!.n} رسائل فشلت أو نتيجتها غير مؤكدة خلال الساعة الأخيرة. افتح «السجل» في التطبيق للتفاصيل.`);
   }
-  if (s.alert_usage) {
+  if (s.alert_usage && tenantId === OWNER_TENANT) {
     const u = await estimateUsage(env.DB, now);
     const worst = u.writes.pct >= u.requests.pct ? { name: "عمليات الكتابة في قاعدة البيانات", ...u.writes } : { name: "الطلبات", ...u.requests };
     if (worst.pct >= 80) {
       await notify(
         env,
+        tenantId,
         "usage",
         `⚠️ اقتربت من الحد المجاني اليومي في Cloudflare: ${worst.name} ≈ ${worst.pct}% (تقديري). عند بلوغ 100% تتوقف الردود حتى 03:00 بتوقيت السعودية ثم تكمل تلقائيًا، ويسترجع النظام التعليقات الفائتة.`,
       );
     }
   }
   if (s.alert_spike) {
-    const c = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM conversation_flows WHERE is_demo = 0 AND created_at >= ?", now - 3_600_000);
-    if ((c?.n ?? 0) >= s.spike_per_hour) await notify(env, "spike", `🔥 تفاعل كبير: ${c!.n} شخص تفاعلوا مع حملاتك خلال الساعة الأخيرة.`);
+    const c = await first<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM conversation_flows WHERE account_id IN ${ACC} AND is_demo = 0 AND created_at >= ?`, tenantId, now - 3_600_000);
+    if ((c?.n ?? 0) >= s.spike_per_hour) await notify(env, tenantId, "spike", `🔥 تفاعل كبير: ${c!.n} شخص تفاعلوا مع حملاتك خلال الساعة الأخيرة.`);
   }
 }

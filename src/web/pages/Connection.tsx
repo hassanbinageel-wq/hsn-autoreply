@@ -12,6 +12,7 @@ const SCOPE_AR: Record<string, string> = {
 
 export function ConnectionPage() {
   const { data, loading, error, reload } = useAsync(() => api("/api/account"), []);
+  const { data: me } = useAsync(() => api<{ is_owner?: boolean }>("/api/auth/me"), []);
   const [diagData, setDiagData] = useState<{ checks: Array<{ name: string; ok: boolean | null; detail?: string }> } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const status = new URLSearchParams(location.hash.split("?")[1] ?? "").get("status");
@@ -67,7 +68,7 @@ export function ConnectionPage() {
               <div><dt className="muted">آخر تجديد للتوكن</dt><dd>{fmtTime(a.token_refreshed_at)}</dd></div>
             </dl>
             {a.follow_check_note && <Alert tone="warn">سبب تعذر التحقق من المتابعة: {a.follow_check_note}</Alert>}
-            <div className="rounded-2xl border border-amber-300/60 px-4 py-1 dark:border-amber-800/60">
+            {me?.is_owner && <div className="rounded-2xl border border-amber-300/60 px-4 py-1 dark:border-amber-800/60">
               <Toggle
                 checked={!!a.follow_gate_allowed}
                 disabled={!!busy}
@@ -82,7 +83,7 @@ export function ConnectionPage() {
                 label="السماح بشرط المتابعة الإلزامي (لحساباتك فقط)"
                 description="عند الإيقاف: أي حملة عليها الشرط ترسل المحتوى للجميع مباشرة. باقي الحملات تستخدم الدعوة الاختيارية."
               />
-            </div>
+            </div>}
             {a.last_error && <Alert tone="warn">آخر خطأ: {a.last_error}</Alert>}
           </div>
         ) : (

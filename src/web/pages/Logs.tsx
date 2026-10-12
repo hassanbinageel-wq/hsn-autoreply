@@ -33,6 +33,8 @@ export const REASONS: Record<string, string> = {
   verify_deferred: "طلب تحقق مجدول لنهاية الفاصل",
   story_not_identifiable: "لا يمكن تحديد الستوري",
   unknown_account: "حساب غير معروف",
+  account_not_active: "الحساب غير متصل",
+  customer_suspended: "حساب العميل موقوف",
 };
 
 export function LogsPage() {
