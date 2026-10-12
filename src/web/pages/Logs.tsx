@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { api, download } from "../api";
 import { AR_LABELS } from "../../shared/states";
+import { Icon } from "../components/Icon";
 import { Alert, Badge, Card, Empty, Modal, PageHeader, Spinner, fmtTime, toast, useAsync } from "../components/ui";
 
-type Tab = "events" | "flows" | "jobs";
+type Tab = "events" | "flows" | "jobs" | "undo";
 
 export const REASONS: Record<string, string> = {
   campaign_matched: "طابق حملة",
@@ -42,7 +43,7 @@ export function LogsPage() {
   const [flowId, setFlowId] = useState<number | null>(null);
   const statusKey = tab === "flows" ? "state" : "status";
   const { data, loading, error, reload } = useAsync(
-    () => api<any[]>(`/api/logs/${tab}?${statusKey}=${status}&demo=${demo}&days=${days}`),
+    () => (tab === "undo" ? Promise.resolve([]) : api<any[]>(`/api/logs/${tab}?${statusKey}=${status}&demo=${demo}&days=${days}`)),
     [tab, status, demo, days],
   );
   const statuses =
@@ -54,13 +55,14 @@ export function LogsPage() {
         title="سجل العمليات"
         actions={<button className="btn btn-ghost" onClick={() => download(`/api/logs/export?type=${tab}`, `hsn-${tab}.csv`).catch((e) => toast(e.message, "bad"))}>تصدير CSV</button>}
       />
-      <div className="flex gap-2" role="tablist">
-        {(["events", "flows", "jobs"] as Tab[]).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} className={`btn ${tab === t ? "btn-primary" : "btn-ghost"}`} onClick={() => { setTab(t); setStatus(""); }}>
-            {{ events: "الأحداث", flows: "المسارات", jobs: "الإجراءات" }[t]}
+      <div className="seg w-fit max-w-full overflow-x-auto" role="tablist">
+        {(["events", "flows", "jobs", "undo"] as Tab[]).map((t) => (
+          <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => { setTab(t); setStatus(""); }}>
+            {{ events: "الأحداث", flows: "المسارات", jobs: "الإجراءات", undo: "↶ استرجاع العمليات" }[t]}
           </button>
         ))}
       </div>
+      {tab === "undo" ? <UndoPanel /> : <>
       <div className="grid grid-cols-3 gap-2">
         <select className="input" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="الحالة">
           <option value="">كل الحالات</option>
@@ -123,6 +125,7 @@ export function LogsPage() {
           ))}
         </div>
       )}
+      </>}
       <FlowModal id={flowId} onClose={() => setFlowId(null)} onChange={reload} />
     </div>
   );
@@ -175,5 +178,56 @@ function FlowModal({ id, onClose, onChange }: { id: number | null; onClose: () =
         </div>
       )}
     </Modal>
+  );
+}
+
+const UNDO_ICON: Record<string, string> = { campaign: "target", template: "puzzle", design: "palette", draw: "gift", settings: "settings" };
+
+function UndoPanel() {
+  const { data, loading, error, reload } = useAsync(() => api<any[]>("/api/undo"), []);
+  const [busy, setBusy] = useState<number | null>(null);
+  const undo = async (o: any) => {
+    if (!confirm(`استرجاع: ${o.label}؟`)) return;
+    setBusy(o.id);
+    try {
+      await api(`/api/undo/${o.id}`, { body: {} });
+      toast(`تم الاسترجاع: ${o.label}`);
+      reload();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <Card title="آخر 10 عمليات" action={<span className="chip surface-2 muted">إضافة · تعديل · حذف</span>}>
+      <p className="muted mb-3 text-sm">
+        تقدر ترجع أي عملية من آخر 10 عمليات على الحملات والقوالب وتصاميم التهنئة والسحوبات والإعدادات. إذا كان على نفس العنصر عملية أحدث، استرجع الأحدث أولًا.
+        الرسائل المرسلة لإنستقرام لا يمكن سحبها، والحملة المسترجَعة النشطة تبدأ من الآن ولا تعيد معالجة التعليقات القديمة.
+      </p>
+      {loading && !data ? <Spinner /> : error ? <Alert tone="bad">{error}</Alert> : !data!.length ? <Empty title="لا توجد عمليات بعد" /> : (
+        <ul className="divide-y divide-[var(--border)]">
+          {data!.map((o) => (
+            <li key={o.id} className={`flex items-center gap-3 py-3 ${o.undone_at ? "opacity-60" : ""}`}>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                <Icon name={(UNDO_ICON[o.target.split(":")[0]] ?? "list") as any} size={18} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className={`truncate font-semibold ${o.undone_at ? "line-through" : ""}`}>{o.label}</div>
+                <div className="muted text-xs">
+                  {fmtTime(o.at)} · {o.actor}
+                  {o.undone_at ? ` · استُرجعت ${fmtTime(o.undone_at)}` : o.blocked_by ? " · استرجع العملية الأحدث على نفس العنصر أولًا" : !o.revertible ? " · كبيرة الحجم ولم تُحفظ نسختها" : ""}
+                </div>
+              </div>
+              {o.undone_at ? <span className="chip surface-2 muted">مسترجعة</span> : (
+                <button className="btn btn-ghost min-h-10 shrink-0 gap-1.5 px-3 text-sm" disabled={!o.revertible || busy !== null} onClick={() => undo(o)}>
+                  <Icon name="refresh" size={16} /> {busy === o.id ? "…" : "استرجاع"}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

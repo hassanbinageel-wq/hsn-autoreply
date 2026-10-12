@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Link, navigate } from "../App";
 import { AR_LABELS } from "../../shared/states";
-import { Alert, Badge, Empty, Modal, PageHeader, Spinner, toast, useAsync } from "../components/ui";
+import { Alert, Badge, Empty, Modal, Spinner, toast, useAsync } from "../components/ui";
 import { Icon } from "../components/Icon";
 
 const TYPE_ICON: Record<string, string> = { comment: "msg", story_reply: "play", story_mention: "sparkle" };
@@ -130,6 +130,23 @@ export function CampaignsPage() {
   const [status, setStatus] = useState("");
   const [type, setType] = useState("");
   const [copyFor, setCopyFor] = useState<any>(null);
+  // Card size (min card width in px), remembered on this device.
+  const [size, setSize] = useState(() => {
+    try {
+      return Number(localStorage.getItem("hsn.campaignCardSize")) || 320;
+    } catch {
+      return 320;
+    }
+  });
+  const changeSize = (v: number) => {
+    setSize(v);
+    try {
+      localStorage.setItem("hsn.campaignCardSize", String(v));
+    } catch {
+      /* storage unavailable */
+    }
+  };
+  const compact = size < 250;
   const { data, loading, error, reload } = useAsync(
     () => api<any[]>(`/api/campaigns?q=${encodeURIComponent(q)}&status=${status}&type=${type}`),
     [q, status, type],
@@ -148,11 +165,29 @@ export function CampaignsPage() {
   return (
     <div className="space-y-4">
       {copyFor && <CopyToReelModal c={copyFor} onClose={() => setCopyFor(null)} onDone={() => { setCopyFor(null); reload(); }} />}
-      <PageHeader
-        title="الحملات"
-        subtitle={data ? `${data.length} حملة · ${data.filter((c) => c.status === "active").length} نشطة` : undefined}
-        actions={<Link to="/campaigns/new" className="btn btn-primary"><Icon name="plus" size={18} />حملة جديدة</Link>}
-      />
+      <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div>
+            <h1 className="text-2xl font-extrabold leading-tight sm:text-[26px]">الحملات</h1>
+            {data && <p className="muted mt-1 text-sm">{data.length} حملة · {data.filter((c) => c.status === "active").length} نشطة</p>}
+          </div>
+          <label className="flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2" title="حجم بطاقات الحملات">
+            <Icon name="grid" size={15} className="muted" />
+            <input
+              type="range"
+              min={200}
+              max={460}
+              step={10}
+              value={size}
+              onChange={(e) => changeSize(Number(e.target.value))}
+              aria-label="حجم بطاقات الحملات"
+              className="size-range w-28 sm:w-36"
+            />
+            <Icon name="image" size={19} className="muted" />
+          </label>
+        </div>
+        <Link to="/campaigns/new" className="btn btn-primary"><Icon name="plus" size={18} />حملة جديدة</Link>
+      </header>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
           <Icon name="search" size={17} className="muted absolute right-3 top-1/2 -translate-y-1/2" />
@@ -176,7 +211,7 @@ export function CampaignsPage() {
       ) : !data!.length ? (
         <Empty title="لا توجد حملات">أنشئ أول حملة، ثم جرّبها في المعاينة قبل التفعيل.</Empty>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${size}px), 1fr))` }}>
           {data!.map((c) => {
             const rate = c.people_count ? Math.round((c.delivered_count / c.people_count) * 100) : null;
             return (
@@ -188,7 +223,7 @@ export function CampaignsPage() {
                 onKeyDown={(e) => e.key === "Enter" && navigate(`/campaigns/${c.id}`)}
                 className="card group flex cursor-pointer flex-col overflow-hidden transition hover:-translate-y-0.5 hover:shadow-xl"
               >
-                <div className="relative h-36 w-full overflow-hidden" style={{ background: TYPE_GRAD[c.type] }}>
+                <div className="relative w-full overflow-hidden" style={{ background: TYPE_GRAD[c.type], height: Math.round(size * 0.45) }}>
                   {c.cover_url && <img src={c.cover_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={`h-full w-full object-cover transition group-hover:scale-105 ${c.status !== "active" ? "opacity-60 grayscale-[40%]" : ""}`} />}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent" />
                   <div className="absolute right-3 top-3">
@@ -196,11 +231,11 @@ export function CampaignsPage() {
                   </div>
                   <span className="absolute left-3 top-3 flex h-9 w-9 items-center justify-center rounded-xl bg-white/20 text-white backdrop-blur"><Icon name={TYPE_ICON[c.type]} size={18} /></span>
                   <div className="absolute bottom-3 right-3 flex flex-wrap gap-1.5">
-                    {c.require_follow ? <span className="chip bg-black/40 text-white"><Icon name="lock" size={12} />شرط المتابعة</span> : null}
-                    {c.media_count > 1 && <span className="chip bg-black/40 text-white">{c.media_count} منشورات</span>}
+                    {c.require_follow && !compact ? <span className="chip bg-black/40 text-white"><Icon name="lock" size={12} />شرط المتابعة</span> : null}
+                    {c.media_count > 1 && !compact && <span className="chip bg-black/40 text-white">{c.media_count} منشورات</span>}
                   </div>
                 </div>
-                <div className="flex flex-1 flex-col p-4">
+                <div className={`flex flex-1 flex-col ${compact ? "p-3" : "p-4"}`}>
                   <b className="font-display truncate text-[15px] font-extrabold">{c.name}</b>
                   <span className="muted text-xs">{AR_LABELS[c.type] ?? c.type}</span>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
@@ -210,7 +245,7 @@ export function CampaignsPage() {
                   </div>
                   <div className="mt-3 flex gap-2">
                     <button className="btn btn-ghost min-h-9 flex-1 text-xs" onClick={(e) => { e.stopPropagation(); navigate(`/campaigns/${c.id}/stats`); }}>
-                      <Icon name="eye" size={16} />الإحصائيات
+                      <Icon name="eye" size={16} />{!compact && "الإحصائيات"}
                     </button>
                     <CardMenu c={c} act={act} onCopy={() => setCopyFor(c)} />
                   </div>
@@ -218,7 +253,7 @@ export function CampaignsPage() {
               </div>
             );
           })}
-          <Link to="/campaigns/new" className="flex min-h-[300px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--border)] text-center transition hover:border-violet-400">
+          <Link to="/campaigns/new" className="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--border)] text-center transition hover:border-violet-400">
             <span className="grad flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/30"><Icon name="plus" size={26} /></span>
             <b className="font-display mt-2 text-base">حملة جديدة</b>
             <span className="muted text-xs">ابدأ واختبرها في المحاكاة قبل التفعيل</span>

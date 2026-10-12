@@ -60,6 +60,7 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 const PUBLIC_SETTINGS_SQL = "key NOT LIKE 'telegram%' AND key NOT LIKE 'notify%'";
 import { toCsv } from "../shared/csv";
+import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, termsPage } from "./pages";
 
 type C = Context<AppEnv>;
@@ -750,6 +751,7 @@ export function createApp() {
         : null,
     };
     const keys = Object.keys(cols);
+    const before = id !== null ? await campaignSnapshot(c.env.DB, id) : null;
     let campaignId: number;
     if (id === null) {
       const r = await first<{ id: number }>(
@@ -773,6 +775,8 @@ export function createApp() {
       ...[...new Set(d.media_ids)].map((m) => c.env.DB.prepare("INSERT INTO campaign_media (campaign_id, media_id) VALUES (?, ?)").bind(campaignId, m)),
     ]);
     await audit(c.env.DB, c.get("session").username, id ? "campaign.updated" : "campaign.created", String(campaignId));
+    if (before) await recordUndo(c.env.DB, c.get("session").username, "campaign.update", `campaign:${campaignId}`, `تعديل الحملة «${before.row.name}»`, before);
+    else await recordUndo(c.env.DB, c.get("session").username, "campaign.create", `campaign:${campaignId}`, `إنشاء الحملة «${d.name}»`, { id: campaignId });
     return c.json({ id: campaignId, warnings });
   }
 
@@ -822,6 +826,7 @@ export function createApp() {
         : [c.env.DB.prepare("INSERT INTO campaign_media (campaign_id, media_id) SELECT ?, media_id FROM campaign_media WHERE campaign_id = ?").bind(r!.id, id)]),
     ]);
     await audit(c.env.DB, c.get("session").username, "campaign.duplicated", String(r!.id), { from: id, activate: p.data.activate });
+    await recordUndo(c.env.DB, c.get("session").username, "campaign.duplicate", `campaign:${r!.id}`, `نسخ الحملة «${name}»`, { id: r!.id });
     return c.json({ id: r!.id, status });
   });
 
@@ -829,7 +834,7 @@ export function createApp() {
     const id = idParam(c);
     const p = await parseBody(c, z.object({ status: z.enum(["active", "paused", "archived", "draft"]) }));
     if (!p.ok) return p.res;
-    const row = id && (await first<{ status: string; activated_at: number | null }>(c.env.DB, "SELECT status, activated_at FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
+    const row = id && (await first<{ status: string; activated_at: number | null; name: string }>(c.env.DB, "SELECT status, activated_at, name FROM campaigns WHERE id = ? AND deleted_at IS NULL", id));
     if (!row) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const now = Date.now();
     // activated_at is reset on every (re)activation so events that arrived while paused are not replayed.
@@ -845,16 +850,23 @@ export function createApp() {
     let cancelled = 0;
     if (p.data.status !== "active") cancelled = await stopCampaignWork(c.env.DB, id!, now, "campaign_" + p.data.status);
     await audit(c.env.DB, c.get("session").username, `campaign.${p.data.status}`, String(id), { cancelled });
+    if (row.status !== p.data.status) {
+      const word = { active: "تفعيل", paused: "إيقاف", archived: "أرشفة", draft: "إرجاع لمسودة" }[p.data.status];
+      await recordUndo(c.env.DB, c.get("session").username, "campaign.status", `campaign:${id}`, `${word} الحملة «${row.name}»`, { id, status: row.status });
+    }
     return c.json({ ok: true, cancelled_jobs: cancelled });
   });
 
   api.delete("/campaigns/:id", async (c) => {
     const id = idParam(c);
     if (!id) return apiError(c, 404, "not_found", "غير موجود");
+    const prev = await first<{ name: string; status: string }>(c.env.DB, "SELECT name, status FROM campaigns WHERE id = ? AND deleted_at IS NULL", id);
+    if (!prev) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const now = Date.now();
     await run(c.env.DB, "UPDATE campaigns SET deleted_at = ?, status = 'archived', updated_at = ? WHERE id = ?", now, now, id);
     const cancelled = await stopCampaignWork(c.env.DB, id, now, "campaign_deleted");
     await audit(c.env.DB, c.get("session").username, "campaign.deleted", String(id));
+    await recordUndo(c.env.DB, c.get("session").username, "campaign.delete", `campaign:${id}`, `حذف الحملة «${prev.name}»`, { id, status: prev.status });
     return c.json({ ok: true, cancelled_jobs: cancelled });
   });
 
@@ -864,17 +876,24 @@ export function createApp() {
     const p = await parseBody(c, templateInputSchema);
     if (!p.ok) return p.res;
     const now = Date.now();
-    const r = await first(c.env.DB, "INSERT INTO templates (kind, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING id", p.data.kind, p.data.name, p.data.body, now, now);
+    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO templates (kind, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING id", p.data.kind, p.data.name, p.data.body, now, now);
+    await recordUndo(c.env.DB, c.get("session").username, "template.create", `template:${r!.id}`, `إضافة القالب «${p.data.name}»`, { id: r!.id });
     return c.json(r);
   });
   api.put("/templates/:id", async (c) => {
     const p = await parseBody(c, templateInputSchema);
     if (!p.ok) return p.res;
+    const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM templates WHERE id = ?", idParam(c));
+    if (!prev) return apiError(c, 404, "not_found", "القالب غير موجود");
     await run(c.env.DB, "UPDATE templates SET kind = ?, name = ?, body = ?, updated_at = ? WHERE id = ?", p.data.kind, p.data.name, p.data.body, Date.now(), idParam(c));
+    await recordUndo(c.env.DB, c.get("session").username, "template.update", `template:${prev.id}`, `تعديل القالب «${prev.name}»`, { row: prev });
     return c.json({ ok: true });
   });
   api.delete("/templates/:id", async (c) => {
-    await run(c.env.DB, "DELETE FROM templates WHERE id = ?", idParam(c));
+    const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM templates WHERE id = ?", idParam(c));
+    if (!prev) return c.json({ ok: true });
+    await run(c.env.DB, "DELETE FROM templates WHERE id = ?", prev.id);
+    await recordUndo(c.env.DB, c.get("session").username, "template.delete", `template:${prev.id}`, `حذف القالب «${prev.name}»`, { row: prev });
     return c.json({ ok: true });
   });
 
@@ -984,6 +1003,19 @@ export function createApp() {
     return c.body(toCsv(headers, rows));
   });
 
+  api.get("/undo", async (c) => c.json(await listUndo(c.env.DB)));
+  api.post("/undo/:id", async (c) => {
+    const id = idParam(c);
+    if (!id) return apiError(c, 404, "not_found", "غير موجود");
+    try {
+      const r = await undoOperation(c.env.DB, id, c.get("session").username);
+      await audit(c.env.DB, c.get("session").username, "undo", String(id), { label: r.label });
+      return c.json({ ok: true, ...r });
+    } catch (e) {
+      if (e instanceof UndoError) return apiError(c, 409, e.code, e.message);
+      throw e;
+    }
+  });
   api.get("/audit", async (c) => c.json(await all(c.env.DB, "SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200")));
 
   // ---- Daily usage (estimate) and recovery of missed comments
@@ -1133,6 +1165,7 @@ export function createApp() {
         JSON.stringify(d.excluded_accounts), d.entry_mode, d.entry_mode === "per_comment" ? +d.allow_repeat_winner : 0, +d.exclude_previous_winners, now, now,
       );
       await audit(c.env.DB, c.get("session").username, "draw.created", String(r!.id), { campaign: cid });
+      await recordUndo(c.env.DB, c.get("session").username, "draw.create", `draw:${r!.id}`, `إنشاء السحب «${d.name}»`, { id: r!.id });
       return c.json({ id: r!.id });
     } catch (e) {
       return drawError(c, e);
@@ -1158,6 +1191,7 @@ export function createApp() {
     const p = await parseBody(c, drawInputSchema);
     if (!p.ok) return p.res;
     const x = p.data;
+    const prevDraw = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM draws WHERE id = ?", id);
     await run(
       c.env.DB,
       `UPDATE draws SET name = ?, winners_count = ?, starts_at = ?, ends_at = ?, timezone = ?, include_replies = ?, keyword = ?, exclude_own = ?,
@@ -1165,6 +1199,11 @@ export function createApp() {
       x.name, x.winners_count, x.starts_at ?? null, x.ends_at ?? null, x.timezone ?? null, d.source_type === "story" ? 0 : +x.include_replies, x.keyword?.trim() || null,
       +x.exclude_own, JSON.stringify(x.excluded_accounts), x.entry_mode, x.entry_mode === "per_comment" ? +x.allow_repeat_winner : 0, +x.exclude_previous_winners, Date.now(), id,
     );
+    if (prevDraw) {
+      // Only the settings are restored on undo, never the fetched-comments progress.
+      const { fetch_state: _fs, fetch_status: _fst, fetched_count: _fc, fetch_updated_at: _fu, fetch_error: _fe, ...row } = prevDraw;
+      await recordUndo(c.env.DB, c.get("session").username, "draw.update", `draw:${id}`, `تعديل السحب «${prevDraw.name}»`, { row });
+    }
     return c.json({ ok: true });
   });
   api.post("/draws/:id/fetch", async (c) => {
@@ -1207,7 +1246,9 @@ export function createApp() {
     const id = idParam(c);
     const d = id && (await loadDraw(c.env.DB, id));
     if (!d) return apiError(c, 404, "not_found", "السحب غير موجود");
+    const snap = await drawSnapshots(c.env.DB, [d.id]);
     await deleteDraws(c.env.DB, [d.id]);
+    await recordUndo(c.env.DB, c.get("session").username, "draw.delete", `draw:${d.id}`, `حذف السحب «${d.name}»`, { draws: snap });
     await audit(c.env.DB, c.get("session").username, "draw.deleted", String(d.id), { name: d.name, status: d.status });
     return c.json({ ok: true });
   });
@@ -1216,7 +1257,9 @@ export function createApp() {
     const p = await parseBody(c, z.object({ confirm: z.literal("مسح") }));
     if (!p.ok) return p.res;
     const ids = (await all<{ id: number }>(c.env.DB, "SELECT id FROM draws")).map((r) => r.id);
+    const snap = await drawSnapshots(c.env.DB, ids);
     await deleteDraws(c.env.DB, ids);
+    if (ids.length) await recordUndo(c.env.DB, c.get("session").username, "draw.clear", "draws:all", `مسح سجل السحوبات (${ids.length})`, { draws: snap });
     await audit(c.env.DB, c.get("session").username, "draw.cleared", undefined, { count: ids.length });
     return c.json({ ok: true, deleted: ids.length });
   });
@@ -1229,19 +1272,27 @@ export function createApp() {
     if (!p.ok) return p.res;
     const now = Date.now();
     const r = await first<{ id: number }>(c.env.DB, "INSERT INTO card_designs (name, design, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id", p.data.name, JSON.stringify(p.data.design), now, now);
+    await recordUndo(c.env.DB, c.get("session").username, "design.create", `design:${r!.id}`, `إضافة تصميم التهنئة «${p.data.name}»`, { id: r!.id });
     return c.json({ id: r!.id });
   });
   api.put("/card-designs/:id", async (c) => {
     const id = idParam(c);
     const p = await parseBody(c, designBody);
     if (!p.ok) return p.res;
+    const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM card_designs WHERE id = ?", id);
+    if (!prev) return apiError(c, 404, "not_found", "التصميم غير موجود");
     await run(c.env.DB, "UPDATE card_designs SET name = ?, design = ?, updated_at = ? WHERE id = ?", p.data.name, JSON.stringify(p.data.design), Date.now(), id);
+    await recordUndo(c.env.DB, c.get("session").username, "design.update", `design:${id}`, `تعديل تصميم التهنئة «${prev.name}»`, { row: prev });
     return c.json({ ok: true });
   });
   api.delete("/card-designs/:id", async (c) => {
     const id = idParam(c);
+    const prev = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM card_designs WHERE id = ?", id);
+    if (!prev) return c.json({ ok: true });
+    const drawIds = (await all<{ id: number }>(c.env.DB, "SELECT id FROM draws WHERE card_design_id = ?", id)).map((r) => r.id);
     await run(c.env.DB, "UPDATE draws SET card_design_id = NULL WHERE card_design_id = ?", id);
     await run(c.env.DB, "DELETE FROM card_designs WHERE id = ?", id);
+    await recordUndo(c.env.DB, c.get("session").username, "design.delete", `design:${id}`, `حذف تصميم التهنئة «${prev.name}»`, { row: prev, draw_ids: drawIds });
     return c.json({ ok: true });
   });
   api.put("/draws/:id/card-design", async (c) => {
@@ -1441,8 +1492,17 @@ export function createApp() {
         return apiError(c, 422, "validation", "منطقة زمنية غير صحيحة");
       }
     }
+    const prev: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(p.data)) {
+      if (v === undefined) continue;
+      const old = await first<{ value: string }>(c.env.DB, "SELECT value FROM app_settings WHERE key = ?", k);
+      prev[k] = old ? JSON.parse(old.value) : null;
+    }
     for (const [k, v] of Object.entries(p.data)) if (v !== undefined) await setSetting(c.env.DB, k, v);
     await audit(c.env.DB, c.get("session").username, "settings.updated", undefined, p.data);
+    if (Object.keys(prev).some((k) => JSON.stringify(prev[k]) !== JSON.stringify((p.data as Record<string, unknown>)[k]))) {
+      await recordUndo(c.env.DB, c.get("session").username, "settings.update", "settings", "تعديل الإعدادات", { prev });
+    }
     return c.json({ ok: true });
   });
 
@@ -1552,19 +1612,6 @@ export function createApp() {
   });
 
   return app;
-}
-
-async function stopCampaignWork(db: D1Database, campaignId: number, now: number, reason: string): Promise<number> {
-  const cancelled = await cancelJobsWhere(db, "campaign_id = ? AND is_demo = 0", now, campaignId);
-  await run(
-    db,
-    `UPDATE conversation_flows SET state = 'cancelled', state_reason = ?, updated_at = ?
-     WHERE campaign_id = ? AND is_demo = 0 AND state NOT IN ('content_sent','verification_unavailable','expired','failed','cancelled')`,
-    reason,
-    now,
-    campaignId,
-  );
-  return cancelled;
 }
 
 function logFilters(c: C, timeCol: string, eq: string[], prefix = "") {

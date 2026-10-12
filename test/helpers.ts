@@ -128,6 +128,7 @@ export function makeCtx(meta: MockMeta, clock?: { t: number }): EngineContext {
 }
 
 const TABLES = [
+  "undo_ops",
   "action_attempts",
   "action_jobs",
   "follow_checks",

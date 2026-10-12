@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Alert, Card, Field, Spinner, Toggle, toast } from "./ui";
+import { Icon } from "./Icon";
 
 /**
  * Telegram notifications: the owner creates a bot with @BotFather, pastes its token here (stored encrypted on the
@@ -47,11 +48,15 @@ export function NotificationsCard() {
     }
   };
 
-  if (!s) return <Card title="🔔 الإشعارات والتقرير اليومي"><Spinner /></Card>;
+  if (!s) return <Card title="إشعارات تيليجرام"><Spinner /></Card>;
   const ready = hasToken && !!s.chat_id;
 
   return (
-    <Card title="🔔 الإشعارات والتقرير اليومي (تيليجرام)">
+    <Card
+      title="إشعارات تيليجرام"
+      className="h-full"
+      action={hasToken ? <span className={`chip ${ready ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{ready ? "البوت مضبوط" : "حدّد المحادثة"}</span> : <span className="chip surface-2 muted">غير مضبوط</span>}
+    >
       {!hasToken ? (
         <div className="space-y-3">
           <Alert tone="info">
@@ -69,20 +74,10 @@ export function NotificationsCard() {
         </div>
       ) : (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span>✅ البوت مضبوط</span>
-            <span className="muted">·</span>
-            {s.chat_id ? <span>✅ المحادثة محددة</span> : <span className="text-amber-600">⚠️ لم تُحدَّد المحادثة بعد — افتح البوت واضغط Start ثم «اكتشاف المحادثة»</span>}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button className="btn btn-ghost" disabled={busy} onClick={() => run("/api/notifications/detect", {}, "تم ربط المحادثة")}>🔎 اكتشاف المحادثة</button>
-            <button className="btn btn-ghost" disabled={busy || !ready} onClick={() => run("/api/notifications/test", { kind: "test" }, "أُرسلت رسالة تجريبية")}>📨 رسالة تجريبية</button>
-            <button className="btn btn-ghost" disabled={busy || !ready} onClick={() => run("/api/notifications/test", { kind: "report" }, "أُرسل التقرير")}>📊 أرسل التقرير الآن</button>
-            <button className="btn btn-ghost text-red-600" disabled={busy} onClick={() => confirm("إزالة البوت وإيقاف الإشعارات؟") && save({ bot_token: "", enabled: false }, "أُزيل البوت")}>إزالة البوت</button>
-          </div>
-          <Toggle checked={!!s.enabled} onChange={(v) => save({ enabled: v })} label="تفعيل الإشعارات" disabled={!ready || busy} />
+          {!s.chat_id && <Alert tone="warn">لم تُحدَّد المحادثة بعد — افتح البوت واضغط Start ثم «اكتشاف المحادثة».</Alert>}
+          <Toggle checked={!!s.enabled} onChange={(v) => save({ enabled: v })} label="تفعيل الإشعارات" description="رئيسي: بدونه لا يُرسل أي إشعار" disabled={!ready || busy} />
           {s.enabled && (
-            <div className="space-y-3 border-t border-[var(--border)] pt-3">
+            <div className="divide-y divide-[var(--border)] border-t border-[var(--border)] [&>*]:py-2">
               <Toggle checked={s.daily_report} onChange={(v) => save({ daily_report: v })} label="التقرير اليومي" description="ملخص آخر 24 ساعة: تعليقات، أشخاص، متابعون جدد، من استلم المحتوى، من ضغط الرابط، وأنشط الحملات." />
               {s.daily_report && (
                 <Field label="ساعة إرسال التقرير">
@@ -104,6 +99,12 @@ export function NotificationsCard() {
               <Toggle checked={s.notify_delivery} onChange={(v) => save({ notify_delivery: v })} label="إشعار لكل تسليم محتوى" description="رسالة عند كل شخص يستلم المحتوى (قد تكون كثيرة جدًا)." />
             </div>
           )}
+          <div className="flex flex-wrap gap-2 border-t border-[var(--border)] pt-4">
+            <button className="btn btn-ghost text-sm" disabled={busy || !ready} onClick={() => run("/api/notifications/test", { kind: "test" }, "أُرسلت رسالة تجريبية")}><Icon name="send" size={16} />رسالة تجريبية</button>
+            <button className="btn btn-ghost text-sm" disabled={busy || !ready} onClick={() => run("/api/notifications/test", { kind: "report" }, "أُرسل التقرير")}>أرسل التقرير الآن</button>
+            <button className="btn btn-ghost text-sm" disabled={busy} onClick={() => run("/api/notifications/detect", {}, "تم ربط المحادثة")}><Icon name="search" size={16} />اكتشاف المحادثة</button>
+            <button className="btn btn-ghost text-sm text-red-600" disabled={busy} onClick={() => confirm("إزالة البوت وإيقاف الإشعارات؟") && save({ bot_token: "", enabled: false }, "أُزيل البوت")}>إزالة البوت</button>
+          </div>
         </div>
       )}
     </Card>

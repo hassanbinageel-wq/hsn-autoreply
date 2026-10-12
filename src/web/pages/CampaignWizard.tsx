@@ -4,8 +4,9 @@ import { navigate } from "../App";
 import { renderTemplate, claimsDelivery, contentLinkButton, publicReplyVariants, pickVariant, SAFE_PUBLIC_REPLIES, MAX_PUBLIC_VARIANTS, TEMPLATE_VARIABLES } from "../../shared/template";
 import { evaluateMatch } from "../../shared/match";
 import { AR_LABELS } from "../../shared/states";
-import { Alert, Card, Field, PageHeader, Spinner, Toggle, currentTz, toast } from "../components/ui";
+import { Alert, Card, Field, Spinner, Toggle, currentTz, toast } from "../components/ui";
 import { PhonePreview, type ChatMsg, type CommentMsg } from "../components/PhonePreview";
+import { Icon } from "../components/Icon";
 
 type Keyword = { keyword: string; kind: "include" | "exclude"; match_type: "exact" | "word" | "contains" };
 type Form = {
@@ -208,9 +209,9 @@ function KeywordEditor({ kind, keywords, onChange }: { kind: "include" | "exclud
       </div>
       <div className="flex flex-wrap gap-2">
         {list.map((k) => (
-          <span key={k.i} className="surface-2 inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm">
-            {k.keyword} <span className="muted text-xs">({{ contains: "يحتوي", word: "كلمة كاملة", exact: "كامل" }[k.match_type]})</span>
-            <button type="button" aria-label="حذف" onClick={() => onChange(keywords.filter((_, j) => j !== k.i))}>✕</button>
+          <span key={k.i} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-bold ${kind === "include" ? "border-violet-300 bg-violet-500/10 text-violet-700 dark:border-violet-700 dark:text-violet-200" : "border-red-300 bg-red-500/10 text-red-700 dark:border-red-800 dark:text-red-300"}`}>
+            {k.keyword} <span className="text-xs font-medium opacity-70">{{ contains: "يحتوي", word: "كلمة كاملة", exact: "مطابق تمامًا" }[k.match_type]}</span>
+            <button type="button" aria-label="حذف" className="opacity-70 hover:opacity-100" onClick={() => onChange(keywords.filter((_, j) => j !== k.i))}>✕</button>
           </span>
         ))}
       </div>
@@ -438,16 +439,30 @@ export function CampaignWizard({ id }: { id: number | null }) {
       case 3:
         return (
           <div className="space-y-3">
-            <Toggle checked={form.match_all} onChange={(v) => set("match_all", v)} label={isComment ? "تشغيل على جميع التعليقات" : "تشغيل على جميع الردود"} description="خيار صريح: أي نص يطابق (مع احترام الاستثناءات)." />
+            <div>
+              <div className="font-display mb-2 text-[15px] font-bold">متى يرد النظام؟</div>
+              <div className="flex flex-wrap gap-2">
+                {([[false, "عند كلمات محددة"], [true, isComment ? "على كل التعليقات" : "على كل الردود"]] as const).map(([v, l]) => (
+                  <button key={String(v)} type="button" onClick={() => set("match_all", v)} className={`rounded-2xl border px-5 py-3 text-sm font-bold transition ${form.match_all === v ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-200" : "border-[var(--border)] hover:bg-[var(--surface-2)]"}`}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+              {form.match_all && <p className="muted mt-2 text-[13px]">أي نص يطابق، مع احترام كلمات الاستثناء.</p>}
+            </div>
+            {!form.match_all && <div className="font-display -mb-1 text-[15px] font-bold">كلمات التشغيل</div>}
             {!form.match_all && <KeywordEditor kind="include" keywords={form.keywords} onChange={(k) => set("keywords", k)} />}
-            <Toggle checked={form.unify_alef} onChange={(v) => set("unify_alef", v)} label="توحيد أشكال الألف (أ إ آ → ا)" description="التشكيل والتطويل والمسافات الزائدة وحالة الأحرف الإنجليزية تُتجاهل دائمًا." />
-            {isComment && <Toggle checked={form.include_replies} onChange={(v) => set("include_replies", v)} label="تشمل الردود المتفرعة داخل التعليقات" description="افتراضيًا تُتجاهل الردود على تعليقات أخرى." />}
-            <Card className="surface-2">
-              <Field label="اختبار المطابقة محليًا">
-                <input className="input" value={testText} onChange={(e) => setTestText(e.target.value)} />
-              </Field>
-              <div className="mt-2 text-sm">{localMatch.matched ? `✅ يطابق (${localMatch.keyword ?? "الكل"})` : `❌ لا يطابق (${localMatch.reason})`}</div>
-            </Card>
+            <p className="muted text-[13px]">المطابقة تتجاهل التشكيل والتطويل والإيموجي والمسافات الزائدة وحالة الأحرف الإنجليزية.</p>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+              <div className="rounded-2xl border border-[var(--border)] px-4 py-1">
+                <Toggle checked={form.unify_alef} onChange={(v) => set("unify_alef", v)} label="توحيد أشكال الألف" description="أ إ آ → ا" />
+              </div>
+              {isComment && (
+                <div className="rounded-2xl border border-[var(--border)] px-4 py-1">
+                  <Toggle checked={form.include_replies} onChange={(v) => set("include_replies", v)} label="تشمل الردود المتفرعة" description="افتراضيًا تُتجاهل الردود على تعليقات أخرى" />
+                </div>
+              )}
+            </div>
           </div>
         );
       case 4:
@@ -681,7 +696,9 @@ export function CampaignWizard({ id }: { id: number | null }) {
       dm.push({ from: "bot", text: opening, buttons: ["ابدأ"], note: "رد خاص على التعليق" });
       dm.push({ from: "user", text: "ابدأ" });
     }
-    dm.push({ from: "bot", text: strip(renderTemplate(form.follow_request_text, vars)), buttons: ["تحقّق من المتابعة"] });
+    // The account link is sent as an «افتح حسابنا» button (see sendAccountButtons), not as text.
+    const followText = strip(renderTemplate(form.follow_request_text, vars)).split(vars.account_link).join("").replace(/[ \t]{2,}/g, " ").trim();
+    dm.push({ from: "bot", text: followText, buttons: ["👤 افتح حسابنا", "تحقّق من المتابعة"] });
     dm.push({ from: "user", text: "تحقّق من المتابعة" });
     dm.push(contentMsg("بعد تأكيد المتابعة من Meta"));
   } else {
@@ -710,26 +727,106 @@ export function CampaignWizard({ id }: { id: number | null }) {
     />
   );
 
+  // Match test samples: a sentence with each trigger word, and each exclusion word as a question.
+  const includes = form.keywords.filter((k) => k.kind === "include").slice(0, 3).map((k) => `أبغى ${k.keyword}`);
+  const excludes = form.keywords.filter((k) => k.kind === "exclude").slice(0, 2).map((k) => `${k.keyword}؟`);
+  const samples = [...includes, ...excludes].map((t) => ({
+    t,
+    ok: evaluateMatch(t, {
+      matchAll: form.match_all,
+      keywords: form.keywords.map((k) => ({ keyword: k.keyword, kind: k.kind, matchType: k.match_type })),
+      normalize: { unifyAlef: form.unify_alef },
+    }).matched,
+  }));
+  const tryInSimulator = async () => {
+    const cid = await save();
+    if (cid) navigate(`/simulator?campaign=${cid}`);
+  };
+  const next = () => setStep((st) => Math.min(STEPS.length - 1, st + 1));
+
   return (
-    <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-      <aside className="order-last lg:order-first lg:sticky lg:top-4 lg:self-start">{preview}</aside>
-      <div className="min-w-0 space-y-4">
-      <PageHeader title={id ? "تعديل حملة" : "حملة جديدة"} subtitle={`الخطوة ${step + 1} من ${STEPS.length}: ${STEPS[step]}`} actions={<button className="btn btn-ghost" onClick={save} disabled={saving}>حفظ</button>} />
-      <div className="flex gap-1" aria-hidden>
-        {STEPS.map((_, i) => (
-          <button key={i} onClick={() => setStep(i)} className={`h-2 flex-1 rounded-full ${i <= step ? "bg-brand-600" : "surface-2"}`} title={STEPS[i]} />
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <nav className="muted flex items-center gap-1.5 text-sm" aria-label="المسار">
+            <button className="hover:underline" onClick={() => navigate("/campaigns")}>الحملات</button>
+            <Icon name="chev" size={14} className="rotate-90" />
+            <span>{id ? "تعديل حملة" : "حملة جديدة"}</span>
+          </nav>
+          <h1 className="mt-1 truncate text-2xl font-extrabold leading-tight sm:text-[28px]">{form.name.trim() || (id ? "تعديل حملة" : "حملة جديدة")}</h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="btn btn-ghost" onClick={save} disabled={saving}>{saving ? "جارٍ الحفظ…" : "حفظ كمسودة"}</button>
+          <button className="btn btn-ghost" onClick={tryInSimulator} disabled={saving}><Icon name="flask" size={18} />جرّب في المحاكاة</button>
+          {step < STEPS.length - 1 ? (
+            <button className="btn btn-primary max-lg:!hidden" onClick={next}>التالي<Icon name="arrowL" size={18} /></button>
+          ) : null}
+        </div>
+      </header>
+
+      {/* phones: compact horizontal step list */}
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden" role="tablist" aria-label="الخطوات">
+        {STEPS.map((label, i) => (
+          <button key={i} role="tab" aria-selected={i === step} onClick={() => setStep(i)} className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${i === step ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-200" : "border-[var(--border)] muted"}`}>
+            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${i === step ? "grad text-white" : i < step ? "bg-emerald-500/15 text-emerald-600" : "surface-2"}`}>{i < step ? "✓" : i + 1}</span>
+            {label}
+          </button>
         ))}
       </div>
-      {errors.length > 0 && (
-        <Alert tone="bad">
-          <ul className="list-inside list-disc">{errors.map((e, i) => <li key={i}>{e.message}{e.path ? ` (${e.path})` : ""}</li>)}</ul>
-        </Alert>
-      )}
-      <Card title={STEPS[step]}>{stepBody()}</Card>
-      <div className="flex justify-between gap-2">
-        <button className="btn btn-ghost" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>→ السابق</button>
-        {step < STEPS.length - 1 && <button className="btn btn-primary" onClick={() => setStep((s) => s + 1)}>التالي ←</button>}
-      </div>
+
+      <div className="grid gap-5 lg:grid-cols-[250px_minmax(0,1fr)] xl:grid-cols-[250px_minmax(0,1fr)_330px]">
+        <nav className="card hidden h-fit p-3 lg:sticky lg:top-20 lg:block" aria-label="الخطوات">
+          <ol className="space-y-1">
+            {STEPS.map((label, i) => (
+              <li key={i}>
+                <button onClick={() => setStep(i)} className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-right text-sm font-bold transition ${i === step ? "bg-violet-500/10 text-violet-700 dark:text-violet-200" : i < step ? "" : "muted hover:bg-[var(--surface-2)]"}`}>
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs ${i === step ? "grad text-white shadow-md shadow-violet-500/30" : i < step ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "surface-2 muted"}`}>
+                    {i < step ? <Icon name="check" size={14} /> : i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </nav>
+
+        <div className="min-w-0 space-y-5">
+          {errors.length > 0 && (
+            <Alert tone="bad">
+              <ul className="list-inside list-disc">{errors.map((e, i) => <li key={i}>{e.message}{e.path ? ` (${e.path})` : ""}</li>)}</ul>
+            </Alert>
+          )}
+          <Card title={STEPS[step]} action={<span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">الخطوة {step + 1} من {STEPS.length}</span>}>
+            {stepBody()}
+          </Card>
+          {(step === 3 || step === 4) && (
+            <Card title={<span className="flex flex-wrap items-baseline gap-x-3">اختبار المطابقة <span className="muted text-[13px] font-normal">اكتب تعليقًا وشوف النتيجة فورًا</span></span>}>
+              <div className="relative">
+                <input className="input pl-36" value={testText} onChange={(e) => setTestText(e.target.value)} aria-label="نص التجربة" />
+                <span className={`chip absolute left-3 top-1/2 -translate-y-1/2 ${localMatch.matched ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"}`}>
+                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                  {localMatch.matched ? `يطابق «${localMatch.keyword ?? "الكل"}»` : "لا يطابق"}
+                </span>
+              </div>
+              {!localMatch.matched && localMatch.reason && <div className="muted mt-2 text-xs">السبب: {localMatch.reason}</div>}
+              {samples.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {samples.map((x) => (
+                    <button key={x.t} type="button" onClick={() => setTestText(x.t)} className={`chip ${x.ok ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"}`}>
+                      {x.ok ? "✓" : "✗"} «{x.t}»
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+          <div className="flex justify-between gap-2">
+            <button className="btn btn-ghost" disabled={step === 0} onClick={() => setStep((st) => st - 1)}><Icon name="arrowL" size={18} className="rotate-180" />السابق</button>
+            {step < STEPS.length - 1 && <button className="btn btn-primary" onClick={next}>التالي<Icon name="arrowL" size={18} /></button>}
+          </div>
+        </div>
+
+        <aside className="lg:col-span-2 xl:sticky xl:top-20 xl:col-span-1 xl:self-start">{preview}</aside>
       </div>
     </div>
   );

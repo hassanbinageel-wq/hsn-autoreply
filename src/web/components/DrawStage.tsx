@@ -6,16 +6,31 @@ import { Sfx } from "../lib/sfx";
 import { saveFile } from "../lib/save";
 
 /**
- * Full-screen winner reveal, drawn entirely on one 1080×1920 canvas (story format) so it can be recorded as a video:
+ * Full-screen winner reveal, drawn entirely on one canvas so it can be recorded as a video — 1080×1920 (story format)
+ * on phones, 1920×1080 (wide) on computer screens:
  * a reel of all participant names moves up and down (a different motion for each winner) and stops with the
  * winner under the arrows, then the winner is revealed with fireworks. The winner was already chosen on the server.
  */
-const W = 1080;
-const H = 1920;
 const FONT = `"IBM Plex Sans Arabic", "Segoe UI", Tahoma, Arial, sans-serif`;
 const ROW = 118;
-const WIN = { x: 80, y: 560, w: 920, h: 900 };
-const CY = WIN.y + WIN.h / 2;
+
+/** Positions for the tall (story) and wide (computer screen) layouts. */
+function layoutFor(wide: boolean) {
+  if (!wide) {
+    const WIN = { x: 80, y: 560, w: 920, h: 900 };
+    return {
+      W: 1080, H: 1920, WIN, CY: WIN.y + WIN.h / 2, pillY: 150, titleY: 320, subY: 415, dateY: 1920 - 150, accY: 1920 - 95,
+      // reveal: avatar centre, and the text column (centre x, width, top y)
+      av: { x: 540, y: 760, r: 150 }, badgeY: 760 - 284, nameY: 760 + 260, congratsY: 760 + 370, textTop: 760 + 440, textX: 540, textW: 880,
+    };
+  }
+  const WIN = { x: 1920 / 2 - 560, y: 290, w: 1120, h: 640 };
+  return {
+    W: 1920, H: 1080, WIN, CY: WIN.y + WIN.h / 2, pillY: 50, titleY: 170, subY: 240, dateY: 1080 - 80, accY: 1080 - 38,
+    av: { x: 1920 / 2 + 470, y: 520, r: 200 }, badgeY: 330, nameY: 470, congratsY: 570, textTop: 630, textX: 1920 / 2 - 190, textW: 960,
+  };
+}
+const isWideScreen = () => typeof window !== "undefined" && window.innerWidth > window.innerHeight && window.innerWidth >= 900;
 const INTRO = 2.1; // 3-2-1
 const HOLD = 1.0; // winner glows under the arrow before the reveal
 const REC_AFTER_REVEAL = 5.5;
@@ -119,10 +134,14 @@ export function DrawStage({
   const [rec, setRec] = useState<"off" | "rec" | "done" | "unsupported">(record ? "rec" : "off");
   const [recSecs, setRecSecs] = useState(0);
   const [video, setVideo] = useState<{ blob: Blob; name: string } | null>(null);
+  // Chosen once when the stage opens (the canvas size cannot change while recording).
+  const [wide] = useState(isWideScreen);
+  const L = layoutFor(wide);
 
   useEffect(() => {
     const canvas = ref.current!;
     const ctx = canvas.getContext("2d")!;
+    const { W, H, WIN, CY } = L;
     const reduce = !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const winName = winner.author_username ?? "مشارك";
     const { list, target } = reelNames(names, winName);
@@ -181,7 +200,7 @@ export function DrawStage({
       g.addColorStop(1, "#070311");
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, W, H);
-      const rg = ctx.createRadialGradient(W / 2, CY, 0, W / 2, CY, 900);
+      const rg = ctx.createRadialGradient(W / 2, CY, 0, W / 2, CY, Math.max(W, H) * 0.5);
       rg.addColorStop(0, `rgba(139,92,246,${0.35 + 0.15 * reveal})`);
       rg.addColorStop(1, "rgba(139,92,246,0)");
       ctx.fillStyle = rg;
@@ -196,7 +215,7 @@ export function DrawStage({
       if (reveal > 0) {
         // slow light rays behind the winner
         ctx.save();
-        ctx.translate(W / 2, 760);
+        ctx.translate(L.av.x, L.av.y);
         ctx.rotate(t * 0.15);
         ctx.globalAlpha = 0.09 * reveal;
         const rayFill = ctx.createRadialGradient(0, 0, 80, 0, 0, 1100);
@@ -226,7 +245,7 @@ export function DrawStage({
       ctx.font = `600 34px ${FONT}`;
       const pill = `🎁 ${drawName}`;
       const pw = Math.min(900, ctx.measureText(pill).width + 70);
-      roundRect(ctx, W / 2 - pw / 2, 150, pw, 70, 35);
+      roundRect(ctx, W / 2 - pw / 2, L.pillY, pw, 70, 35);
       ctx.fillStyle = "rgba(255,255,255,0.08)";
       ctx.fill();
       ctx.strokeStyle = "rgba(252,211,77,0.45)";
@@ -234,13 +253,13 @@ export function DrawStage({
       ctx.stroke();
       ctx.fillStyle = "#fde68a";
       fitText(ctx, pill, 600, 34, pw - 50, 22);
-      ctx.fillText(pill, W / 2, 186);
+      ctx.fillText(pill, W / 2, L.pillY + 36);
       ctx.fillStyle = "#fff";
       fitText(ctx, `اختيار ${title}`, 700, 84, 960);
-      ctx.fillText(`اختيار ${title}`, W / 2, 320);
+      ctx.fillText(`اختيار ${title}`, W / 2, L.titleY);
       ctx.fillStyle = "rgba(255,255,255,0.65)";
       ctx.font = `400 38px ${FONT}`;
-      ctx.fillText(`من بين ${total.toLocaleString("en-US")} مشارك`, W / 2, 415);
+      ctx.fillText(`من بين ${total.toLocaleString("en-US")} مشارك`, W / 2, L.subY);
       ctx.restore();
     };
 
@@ -344,50 +363,51 @@ export function DrawStage({
 
     const revealPanel = (k: number, t: number) => {
       const a = easeOut(k);
+      const dy = (1 - a) * 60;
+      const tx = L.textX;
       ctx.save();
       ctx.globalAlpha = a;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.direction = "rtl";
-      const cy = 760 + (1 - a) * 60;
       // winner badge
       ctx.font = `700 44px ${FONT}`;
       const badge = `🏆 ${title}`;
       const bw = ctx.measureText(badge).width + 90;
-      roundRect(ctx, W / 2 - bw / 2, cy - 330, bw, 88, 44);
-      const gg = ctx.createLinearGradient(W / 2 - bw / 2, 0, W / 2 + bw / 2, 0);
+      roundRect(ctx, tx - bw / 2, L.badgeY + dy - 46, bw, 88, 44);
+      const gg = ctx.createLinearGradient(tx - bw / 2, 0, tx + bw / 2, 0);
       gg.addColorStop(0, "#f59e0b");
       gg.addColorStop(1, "#fde68a");
       ctx.fillStyle = gg;
       ctx.fill();
       ctx.fillStyle = "#3b1d00";
-      ctx.fillText(badge, W / 2, cy - 284);
+      ctx.fillText(badge, tx, L.badgeY + dy);
       // avatar with a pulsing ring
       const pulse = 1 + 0.03 * Math.sin(t * 4);
       ctx.beginPath();
-      ctx.arc(W / 2, cy, 150 * pulse + 18, 0, Math.PI * 2);
+      ctx.arc(L.av.x, L.av.y + dy, L.av.r * pulse + 18, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(251,191,36,0.18)";
       ctx.fill();
-      avatar(ctx, winName, W / 2, cy, 150 * pulse, "#fbbf24");
+      avatar(ctx, winName, L.av.x, L.av.y + dy, L.av.r * pulse, "#fbbf24");
       // name
       const handle = ltr(winner.author_username ? `@${winner.author_username}` : "مشارك");
       ctx.fillStyle = "#fff";
       ctx.shadowColor = "rgba(0,0,0,0.5)";
       ctx.shadowBlur = 20;
-      fitText(ctx, handle, 700, 104, 960, 48);
-      ctx.fillText(handle, W / 2, cy + 260);
+      fitText(ctx, handle, 700, 104, L.textW, 48);
+      ctx.fillText(handle, tx, L.nameY + dy);
       ctx.shadowBlur = 0;
       ctx.font = `600 52px ${FONT}`;
       ctx.fillStyle = "#fde68a";
-      ctx.fillText("مبروك الفوز! 🎉", W / 2, cy + 370);
+      ctx.fillText("مبروك الفوز! 🎉", tx, L.congratsY + dy);
       if (winner.text) {
         ctx.font = `400 40px ${FONT}`;
-        const lines = wrapLines(ctx, `«${winner.text}»`, 880, 3);
-        roundRect(ctx, 100, cy + 440, W - 200, 60 + lines.length * 58, 36);
+        const lines = wrapLines(ctx, `«${winner.text}»`, L.textW - 80, 3);
+        roundRect(ctx, tx - L.textW / 2 - 10, L.textTop + dy, L.textW + 20, 60 + lines.length * 58, 36);
         ctx.fillStyle = "rgba(255,255,255,0.07)";
         ctx.fill();
         ctx.fillStyle = "rgba(255,255,255,0.85)";
-        lines.forEach((l, i) => ctx.fillText(l, W / 2, cy + 470 + 29 + i * 58));
+        lines.forEach((l, i) => ctx.fillText(l, tx, L.textTop + dy + 59 + i * 58));
       }
       ctx.restore();
     };
@@ -399,11 +419,11 @@ export function DrawStage({
       ctx.direction = "rtl";
       ctx.fillStyle = "rgba(255,255,255,0.55)";
       ctx.font = `400 34px ${FONT}`;
-      ctx.fillText(date, W / 2, H - 150);
+      ctx.fillText(date, W / 2, L.dateY);
       if (account) {
         ctx.fillStyle = "rgba(255,255,255,0.8)";
         ctx.font = `600 38px ${FONT}`;
-        ctx.fillText(ltr(`@${account}`), W / 2, H - 95);
+        ctx.fillText(ltr(`@${account}`), W / 2, L.accY);
       }
       ctx.restore();
     };
@@ -455,7 +475,7 @@ export function DrawStage({
           revealedOnce = true;
           setRevealed(true);
           sfx.fanfare();
-          if (!reduce) fw.burstAt(W / 2, 520, 45);
+          if (!reduce) fw.burstAt(L.av.x, wide ? 300 : 520, 45);
         }
         if (!reduce) {
           while (fired < shows.length && t - tReveal >= shows[fired]) {
@@ -502,7 +522,14 @@ export function DrawStage({
   const side = "flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-2xl text-white backdrop-blur hover:bg-white/20 disabled:opacity-40";
   return createPortal(
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#05020d]">
-      <canvas ref={ref} width={W} height={H} className="h-auto max-h-[100dvh] w-auto max-w-[100vw]" style={{ aspectRatio: "9 / 16", height: "min(100dvh, calc(100vw * 16 / 9))" }} aria-label={`اختيار ${title}`} />
+      <canvas
+        ref={ref}
+        width={L.W}
+        height={L.H}
+        className="h-auto max-h-[100dvh] w-auto max-w-[100vw]"
+        style={wide ? { aspectRatio: "16 / 9", width: "min(100vw, calc(100dvh * 16 / 9))" } : { aspectRatio: "9 / 16", height: "min(100dvh, calc(100vw * 16 / 9))" }}
+        aria-label={`اختيار ${title}`}
+      />
       <div className="absolute right-3 top-1/2 flex -translate-y-1/2 flex-col items-center gap-3">
         <button className={side} title={muted ? "تشغيل الصوت" : "كتم الصوت"} onClick={() => setMuted((m) => !m)}>
           {muted ? "🔇" : "🔊"}

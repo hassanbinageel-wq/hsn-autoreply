@@ -214,3 +214,8 @@ textarea.input {
   100% { transform: scale(1); opacity: 1; }
 }
 .count-pop { animation: count-pop 0.6s ease-out both; }
+
+/* Range slider (campaign card size) */
+.size-range { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; background: var(--border); outline: none; }
+.size-range::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 999px; background: var(--grad); border: 2px solid #fff; box-shadow: 0 2px 6px rgb(124 58 237 / .4); cursor: pointer; }
+.size-range::-moz-range-thumb { width: 18px; height: 18px; border-radius: 999px; background: #7c3aed; border: 2px solid #fff; cursor: pointer; }
