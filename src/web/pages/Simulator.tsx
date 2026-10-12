@@ -61,8 +61,8 @@ export function SimulatorPage() {
           const lb = j.result.link_button;
           nextDm.push({
             from: "bot",
-            text: lb?.text ?? j.result.text,
-            buttons: lb ? [lb.title] : j.result.quick_replies?.map((q: any) => q.title),
+            text: lb?.text ?? (j.result.account_button ? String(j.result.text).split(j.result.account_button.url).join("").replace(/[ \t]{2,}/g, " ").trim() : j.result.text),
+            buttons: lb ? [lb.title] : [...(j.result.account_button ? [j.result.account_button.title] : []), ...(j.result.quick_replies?.map((q: any) => q.title) ?? [])],
             note: j.result.channel === "private_reply" ? "رد خاص على التعليق" : undefined,
           });
         } else if (j.kind === "send_message" && j.status !== "accepted" && j.status !== "pending") {

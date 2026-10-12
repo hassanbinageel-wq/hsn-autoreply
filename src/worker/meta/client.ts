@@ -281,6 +281,7 @@ export class HttpMetaClient implements MetaClient {
     const textOnly = () =>
       this.request<{ message_id?: string }>(url, this.authJson(token, { recipient: { comment_id: commentId }, message: { text: msg.text } }), true);
     if (msg.linkButton) return this.sendLinkButton(token, url, { comment_id: commentId }, msg.linkButton, textOnly);
+    if (msg.accountButton) return this.sendAccountButtons(token, url, { comment_id: commentId }, msg, textOnly);
     if (!msg.quickReplies?.length) return textOnly();
     const r = await this.request<{ message_id?: string }>(
       url,
@@ -315,7 +316,35 @@ export class HttpMetaClient implements MetaClient {
     const url = `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`;
     const plain = () => this.request<{ message_id?: string }>(url, this.authJson(token, { recipient: { id: recipientId }, message: this.messageBody(msg) }), true);
     if (msg.linkButton) return this.sendLinkButton(token, url, { id: recipientId }, msg.linkButton, plain);
+    if (msg.accountButton) return this.sendAccountButtons(token, url, { id: recipientId }, msg, plain);
     return plain();
+  }
+
+  /**
+   * Button template: «open our account» (web_url) + the postback buttons (e.g. «تحقّق من المتابعة»).
+   * The raw profile link is dropped from the template text because the button replaces it.
+   * Falls back once to the plain message (with the link in the text) only on a definitive rejection.
+   */
+  private async sendAccountButtons(
+    token: string,
+    url: string,
+    recipient: Record<string, string>,
+    msg: OutgoingMessage,
+    fallback: () => Promise<MetaResult<{ message_id?: string }>>,
+  ) {
+    const b = msg.accountButton!;
+    const text = msg.text.split(b.url).join("").replace(/[ \t]{2,}/g, " ").trim();
+    const buttons = [
+      { type: "web_url", url: b.url, title: b.title.slice(0, 20) },
+      ...(msg.quickReplies ?? []).slice(0, 2).map((q) => ({ type: "postback", title: q.title.slice(0, 20), payload: q.payload })),
+    ];
+    const r = await this.request<{ message_id?: string }>(
+      url,
+      this.authJson(token, { recipient, message: { attachment: { type: "template", payload: { template_type: "button", text: text.slice(0, 640), buttons } } } }),
+      true,
+    );
+    if (!r.ok && (r.error.kind === "permanent" || r.error.kind === "permission")) return fallback();
+    return r;
   }
 
   /**

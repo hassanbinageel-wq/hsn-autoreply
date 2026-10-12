@@ -41,6 +41,11 @@ export interface OutgoingMessage {
    * so the content link is sent as a web_url button, which always opens.
    */
   linkButton?: LinkButton;
+  /**
+   * Button to the business profile (follow request / reminder). Sent with the postback buttons as one button
+   * template (Meta allows up to 3 buttons: web_url + postback), so the person can open the account in one tap.
+   */
+  accountButton?: { title: string; url: string };
 }
 
 export interface MeProfile {

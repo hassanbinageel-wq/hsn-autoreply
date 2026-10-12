@@ -93,3 +93,36 @@ describe("content link as a tappable button", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("follow request: «open our account» button + «تحقّق» in one message", () => {
+  const fr = {
+    text: "باقي خطوة 🔥 تابع حسابنا https://www.instagram.com/hsn.pmt ثم اضغط «تحقّق من المتابعة»",
+    quickReplies: [{ title: "تحقّق من المتابعة", payload: "hsn:v1:verify:vt_x" }],
+    accountButton: { title: "👤 افتح حسابنا", url: "https://www.instagram.com/hsn.pmt" },
+  };
+
+  it("DM: button template with web_url to the account and the verify postback; the raw link leaves the text", async () => {
+    const { f, calls } = fakeFetch([{ status: 200, body: { message_id: "m1" } }]);
+    const r = await client(f).sendMessage("t", "ig1", "u1", fr);
+    expect(r.ok).toBe(true);
+    const p = calls[0].body.message.attachment.payload;
+    expect(p.template_type).toBe("button");
+    expect(p.text).toBe("باقي خطوة 🔥 تابع حسابنا ثم اضغط «تحقّق من المتابعة»");
+    expect(p.buttons).toEqual([
+      { type: "web_url", url: "https://www.instagram.com/hsn.pmt", title: "👤 افتح حسابنا" },
+      { type: "postback", title: "تحقّق من المتابعة", payload: "hsn:v1:verify:vt_x" },
+    ]);
+  });
+
+  it("falls back once to the plain message (link in text + quick reply) if Meta rejects the template", async () => {
+    const { f, calls } = fakeFetch([
+      { status: 400, body: { error: { code: 100, message: "Invalid parameter" } } },
+      { status: 200, body: { message_id: "m2" } },
+    ]);
+    const r = await client(f).sendMessage("t", "ig1", "u1", fr);
+    expect(r.ok).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].body.message.text).toContain("https://www.instagram.com/hsn.pmt");
+    expect(calls[1].body.message.quick_replies[0].payload).toBe("hsn:v1:verify:vt_x");
+  });
+});

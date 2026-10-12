@@ -148,7 +148,10 @@ export function buildMessage(
   }
   // The protected content never leaves the server before eligibility.
   text = stripContent(text, c.final_url);
-  return { text, quickReplies: quickReplies.length ? quickReplies : undefined };
+  // Follow request / reminder: a tap opens the account instead of a long link in the text.
+  const link = accountLink(l.account);
+  const accountButton = link && (purpose === "follow_request" || purpose === "reminder") ? { title: "👤 افتح حسابنا", url: link } : undefined;
+  return { text, quickReplies: quickReplies.length ? quickReplies : undefined, accountButton };
 }
 
 /** First message of a comment flow goes out as the (single) private reply; later ones as DMs. */
@@ -442,7 +445,7 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
 
   if (r.ok) {
     await recordAttempt(ctx.db, job, started, now, "accepted", { httpStatus: r.httpStatus });
-    await finishJob(ctx.db, job, owner, "accepted", now, { result: { message_id: r.data.message_id, channel, text: l.flow.is_demo ? msg.text : undefined, quick_replies: l.flow.is_demo ? msg.quickReplies : undefined, link_button: l.flow.is_demo ? msg.linkButton : undefined } });
+    await finishJob(ctx.db, job, owner, "accepted", now, { result: { message_id: r.data.message_id, channel, text: l.flow.is_demo ? msg.text : undefined, quick_replies: l.flow.is_demo ? msg.quickReplies : undefined, link_button: l.flow.is_demo ? msg.linkButton : undefined, account_button: l.flow.is_demo ? msg.accountButton : undefined } });
     if (channel === "private_reply") {
       await run(ctx.db, "UPDATE conversation_flows SET private_reply_status = 'accepted', updated_at = ? WHERE id = ?", now, l.flow.id);
       l.flow.private_reply_status = "accepted";
