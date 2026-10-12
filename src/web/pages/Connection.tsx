@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
 import { isNative, openOAuth } from "../platform";
+import { AccountAvatar } from "../components/UserAvatar";
 import { Alert, Badge, Card, PageHeader, Spinner, fmtTime, toast, useAsync } from "../components/ui";
 
 const SCOPE_AR: Record<string, string> = {
@@ -50,11 +51,7 @@ export function ConnectionPage() {
         {connected ? (
           <div className="space-y-3">
             <div className="flex items-center gap-3">
-              {a.profile_picture_url ? (
-                <img src={a.profile_picture_url} alt="" className="h-16 w-16 rounded-full" referrerPolicy="no-referrer" />
-              ) : (
-                <div className="surface-2 flex h-16 w-16 items-center justify-center rounded-full text-2xl">👤</div>
-              )}
+              <AccountAvatar url={a.profile_picture_url} name={a.username} size={64} />
               <div>
                 <div className="text-lg font-bold">@{a.username ?? "—"}</div>
                 <div className="muted text-sm">{a.name ?? ""} {a.account_type ? `· ${a.account_type}` : ""}</div>

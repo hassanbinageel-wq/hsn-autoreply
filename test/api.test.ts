@@ -242,11 +242,13 @@ describe("campaign stats", () => {
     const meta = new MockMeta();
     const clock = { t: Date.now() };
     // media_A: user 1 was already following → content right after "ابدأ"
+    meta.follow = [{ result: "needs_interaction", fieldPresent: false }]; // first contact: Instagram gives no answer yet
     await deliver(commentPayload({ text: "كورس", mediaId: "media_A", from: "u1", time: clock.t }), meta, clock);
     meta.follow = [following()];
     clock.t += 1000;
     await deliver(messagePayload({ from: "u1", text: "ابدأ", time: clock.t }), meta, clock);
     // media_A: user 2 was not following, followed, verified → new follower + delivered
+    meta.follow = [{ result: "needs_interaction", fieldPresent: false }]; // first contact: Instagram gives no answer yet
     await deliver(commentPayload({ text: "كورس", mediaId: "media_A", from: "u2", time: clock.t }), meta, clock);
     meta.follow = [notFollowing()];
     clock.t += 1000;
@@ -256,6 +258,7 @@ describe("campaign stats", () => {
     await deliver(messagePayload({ from: "u2", text: "تحقق", time: clock.t }), meta, clock);
     // media_A: a non-matching comment; media_B: one person who never replied
     await deliver(commentPayload({ text: "مرحبا", mediaId: "media_A", from: "u3", time: clock.t }), meta, clock);
+    meta.follow = [{ result: "needs_interaction", fieldPresent: false }]; // first contact: Instagram gives no answer yet
     await deliver(commentPayload({ text: "كورس", mediaId: "media_B", from: "u4", time: clock.t }), meta, clock);
 
     const r = await call(`/api/campaigns/${cid}/stats`, auth);

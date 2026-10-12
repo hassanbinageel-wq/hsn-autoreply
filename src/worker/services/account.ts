@@ -154,6 +154,32 @@ export async function subscribeWebhooks(env: Env, accountId: number, token?: str
   return { ok: false, error: r.error.message };
 }
 
+/**
+ * Re-reads the connected account's profile (username, name, picture). Instagram profile-picture URLs are signed
+ * CDN links that expire, so the stored one is refreshed daily and whenever the app sees it broken.
+ */
+export async function refreshAccountProfiles(env: Env): Promise<number> {
+  const rows = await env.DB.prepare("SELECT * FROM instagram_accounts WHERE is_demo = 0 AND status = 'active' AND token_ciphertext IS NOT NULL").all<AccountRow>();
+  let n = 0;
+  for (const acc of rows.results ?? []) {
+    const token = await getAccessToken(env, env.DB, acc);
+    if (!token) continue;
+    const me = await metaClient(env).getMe(token);
+    if (!me.ok) continue;
+    await run(
+      env.DB,
+      "UPDATE instagram_accounts SET username = COALESCE(?, username), name = COALESCE(?, name), profile_picture_url = ?, updated_at = ? WHERE id = ?",
+      me.data.username ?? null,
+      me.data.name ?? null,
+      me.data.profile_picture_url ?? null,
+      Date.now(),
+      acc.id,
+    );
+    n++;
+  }
+  return n;
+}
+
 /** Refreshes long-lived tokens that expire within 15 days (tokens must be ≥ 24h old to refresh). */
 export async function refreshExpiringTokens(env: Env): Promise<number> {
   const now = Date.now();

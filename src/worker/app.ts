@@ -20,7 +20,7 @@ import {
   WEB_SESSION_TTL,
   type AppEnv,
 } from "./services/auth";
-import {
+import { refreshAccountProfiles,
   completeOAuth,
   DEFAULT_API_VERSION,
   disconnectAccount,
@@ -402,6 +402,12 @@ export function createApp() {
   });
 
   // ---- Instagram account connection
+  // The stored profile picture link expired (the app saw a broken image): read the profile again.
+  api.post("/account/refresh-profile", async (c) => {
+    if (!(await rateLimit(c.env.DB, `profile:${c.get("session").username}`, 6, 3_600_000))) return c.json({ ok: false });
+    await refreshAccountProfiles(c.env);
+    return c.json({ ok: true, account: publicAccount(await currentAccount(c.env.DB)) });
+  });
   api.get("/account", async (c) => {
     const a = await currentAccount(c.env.DB);
     return c.json({
@@ -579,7 +585,8 @@ export function createApp() {
     // One row per flow with the facts we aggregate on (first follow result, did we reach them, did they convert).
     const perFlow = `
       SELECT f.id, f.participant_id, COALESCE(f.source_media_id, '') AS media_id, f.state, f.public_reply_status, f.created_at, f.link_clicks,
-             (SELECT fc.result FROM follow_checks fc WHERE fc.flow_id = f.id ORDER BY fc.id LIMIT 1) AS first_follow,
+             (SELECT fc.result FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result IN ('following','not_following') ORDER BY fc.id LIMIT 1) AS first_follow,
+             EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result <> 'needs_interaction') AS checked,
              EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'not_following') AS saw_not_following,
              EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'following') AS saw_following,
              (f.private_reply_status = 'accepted' OR EXISTS (
@@ -590,7 +597,7 @@ export function createApp() {
       COUNT(*) AS triggers,
       COUNT(DISTINCT participant_id) AS people,
       COUNT(DISTINCT CASE WHEN reached THEN participant_id END) AS reached,
-      COUNT(DISTINCT CASE WHEN first_follow IS NOT NULL THEN participant_id END) AS interacted,
+      COUNT(DISTINCT CASE WHEN checked THEN participant_id END) AS interacted,
       COUNT(DISTINCT CASE WHEN first_follow = 'following' THEN participant_id END) AS already_following,
       COUNT(DISTINCT CASE WHEN saw_not_following AND saw_following THEN participant_id END) AS new_followers,
       COUNT(DISTINCT CASE WHEN saw_not_following AND NOT saw_following THEN participant_id END) AS not_followed,
@@ -656,7 +663,8 @@ export function createApp() {
       c.env.DB,
       `SELECT f.id, f.participant_id, p.username, f.trigger_type, COALESCE(f.source_media_id, '') AS media_id, f.state, f.state_reason,
               f.created_at, f.updated_at, f.content_delivered_at, e.text AS trigger_text, p.last_follow_status, f.link_clicks, f.link_first_click_at,
-              (SELECT fc.result FROM follow_checks fc WHERE fc.flow_id = f.id ORDER BY fc.id LIMIT 1) AS first_follow,
+              (SELECT fc.result FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result IN ('following','not_following') ORDER BY fc.id LIMIT 1) AS first_follow,
+             EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result <> 'needs_interaction') AS checked,
               EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'not_following') AS saw_not_following,
               EXISTS (SELECT 1 FROM follow_checks fc WHERE fc.flow_id = f.id AND fc.result = 'following') AS saw_following,
               (f.private_reply_status = 'accepted' OR EXISTS (
@@ -684,7 +692,7 @@ export function createApp() {
       }
       p.first_at = Math.min(p.first_at, r.created_at);
       p.reached ||= !!r.reached;
-      p.interacted ||= r.first_follow != null;
+      p.interacted ||= !!r.checked;
       p.already_following ||= r.first_follow === "following";
       p.new_follower ||= !!(r.saw_not_following && r.saw_following);
       p.delivered ||= r.state === "content_sent";

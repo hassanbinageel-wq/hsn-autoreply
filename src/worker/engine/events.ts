@@ -14,7 +14,7 @@ import {
   type FlowRow,
   type ParticipantRow,
 } from "./context";
-import { enqueue, VERIFY_CHECK } from "./jobs";
+import { PROBE_CHECK, enqueue, VERIFY_CHECK } from "./jobs";
 import { recordMessage } from "../services/inbox";
 import { cacheMediaStmt } from "../services/media";
 
@@ -336,9 +336,10 @@ async function triggerCampaign(
     await transitionFlow(ctx, flow, "checking_follow");
     await enqueue(ctx.db, { ...common, kind: "follow_check", dedupKey: `follow:${flowId}:initial` }, now);
   } else {
-    // A public comment alone does not grant User Profile consent → one private reply asking to reply "ابدأ".
-    await transitionFlow(ctx, flow, "awaiting_user_interaction");
-    await enqueue(ctx.db, { ...common, kind: "send_message", purpose: "opening", dedupKey: `opening:${flowId}` }, now);
+    // A public comment alone usually does not grant User Profile consent, but someone who messaged the account
+    // before has it: try the check first. If Instagram cannot answer, the probe falls back to the «ابدأ» message.
+    await transitionFlow(ctx, flow, "checking_follow");
+    await enqueue(ctx.db, { ...common, kind: "follow_check", purpose: PROBE_CHECK, dedupKey: `follow:${flowId}:probe` }, now);
   }
   return { status: "processed", reason: "campaign_matched", campaignId: chosen.id, flowId };
 }

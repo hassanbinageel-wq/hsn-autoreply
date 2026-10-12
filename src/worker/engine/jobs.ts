@@ -9,6 +9,12 @@ export const AUTO_RECHECK_DELAY_MS = 15_000;
 /** Campaign option: re-check and remind once, N minutes after a "not following" result (inside the 24h window). */
 export const AUTO_REMINDER = "auto_reminder";
 export const MAX_REMINDER_MINUTES = 23 * 60;
+/**
+ * First check for a commenter, before any message: Instagram answers only if the person already gave consent
+ * (messaged the account before). Following → the content goes straight into the single private reply;
+ * not following → the follow request with «افتح حسابنا» + «تحقّق»; anything else → the usual «ابدأ» message.
+ */
+export const PROBE_CHECK = "probe";
 
 /** Jobs whose Meta call has side effects: an interrupted call means an uncertain outcome. */
 export const SIDE_EFFECT_KINDS: readonly JobKind[] = ["send_message", "public_reply"];

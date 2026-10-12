@@ -76,6 +76,13 @@ export class DemoMetaClient implements MetaClient {
   }
 
   async checkFollow(_t: string, igsid: string): Promise<FollowCheckOutcome> {
+    // Like Instagram: no answer before the person ever messaged the account (no consent) — the script is not consumed.
+    const consent = await first<{ consent_at: number | null }>(
+      this.db,
+      "SELECT p.consent_at FROM participants p JOIN instagram_accounts a ON a.id = p.account_id WHERE a.is_demo = 1 AND p.igsid = ?",
+      igsid,
+    );
+    if (consent && !consent.consent_at) return { result: "needs_interaction", fieldPresent: false, httpStatus: 400, errorCode: "230" };
     const sc = await this.script(igsid);
     const list = sc?.s.follow?.length ? sc.s.follow : (["following"] as FollowResult[]);
     const idx = sc?.s.idx ?? 0;

@@ -32,6 +32,7 @@ import {
   recoverStaleLeases,
   scheduleRetry,
   VERIFY_CHECK,
+  PROBE_CHECK,
   type JobRow,
 } from "./jobs";
 
@@ -246,7 +247,8 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
 
   if (outcome.error?.kind === "auth") await ctx.onAuthError?.(l.account, outcome.error.message);
   // Short transient errors are retried silently a couple of times before telling the user.
-  if (!silent && outcome.result === "temporary_error" && outcome.error && ["rate_limited", "retryable"].includes(outcome.error.kind) && job.attempts < 3) {
+  const probe = job.purpose === PROBE_CHECK;
+  if (!silent && !probe && outcome.result === "temporary_error" && outcome.error && ["rate_limited", "retryable"].includes(outcome.error.kind) && job.attempts < 3) {
     await scheduleRetry(ctx.db, job, owner, now, outcome.error.message, outcome.error.retryAfterMs);
     return { outcome: "retry_scheduled", error: outcome.error };
   }
@@ -302,6 +304,13 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
       await enqueue(ctx.db, { ...common, kind: "send_message", purpose: "reminder", dedupKey: `msg:${l.flow.id}:auto_reminder` }, now);
     }
     await finishJob(ctx.db, job, owner, "accepted", now, { result: { follow: outcome.result, field_present: outcome.fieldPresent, silent: true } });
+    return { outcome: outcome.result };
+  }
+  if (probe && outcome.result !== "following" && outcome.result !== "not_following") {
+    // Instagram could not answer before any interaction (no consent yet, error, …): the usual «ابدأ» private reply.
+    await transitionFlow(ctx, l.flow, "awaiting_user_interaction", {}, `probe_${outcome.result}`);
+    await enqueue(ctx.db, { ...common, kind: "send_message", purpose: "opening", dedupKey: `opening:${l.flow.id}` }, now);
+    await finishJob(ctx.db, job, owner, "accepted", now, { result: { follow: outcome.result, field_present: outcome.fieldPresent, probe: true } });
     return { outcome: outcome.result };
   }
   switch (outcome.result) {

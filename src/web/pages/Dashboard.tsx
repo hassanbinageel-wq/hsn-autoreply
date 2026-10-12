@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { Link } from "../App";
 import { Alert, Badge, Card, PageHeader, Spinner, Stat, Toggle, toast, useAsync, fmtTime } from "../components/ui";
+import { AccountAvatar } from "../components/UserAvatar";
 import { UsageCard } from "../components/UsageCard";
 
 type Row = { n: number; [k: string]: any };
@@ -62,7 +63,7 @@ export function DashboardPage() {
       <Card title="حالة الربط" action={<Link to="/connection" className="btn btn-ghost min-h-10 text-sm">إدارة</Link>}>
         {acc && acc.status !== "disconnected" ? (
           <div className="flex flex-wrap items-center gap-3">
-            {acc.profile_picture_url && <img src={acc.profile_picture_url} alt="" className="h-12 w-12 rounded-full" referrerPolicy="no-referrer" />}
+            <AccountAvatar url={acc.profile_picture_url} name={acc.username} size={48} />
             <div>
               <div className="font-bold">@{acc.username}</div>
               <div className="flex flex-wrap gap-2 text-sm">

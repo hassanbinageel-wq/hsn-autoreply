@@ -14,3 +14,32 @@ export function UserAvatar({ url, name, size = 36 }: { url?: string | null; name
     </div>
   );
 }
+
+let profileRefresh: Promise<string | null> | null = null;
+
+/**
+ * The connected account's own picture. Instagram picture links expire; when the image fails to load,
+ * the profile is re-read once per session through the official API and the fresh link is used.
+ */
+export function AccountAvatar({ url, name, size = 48 }: { url?: string | null; name?: string | null; size?: number }) {
+  const [src, setSrc] = useState(url ?? null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setSrc(url ?? null);
+    setFailed(false);
+  }, [url]);
+  const onError = async () => {
+    if (!profileRefresh) {
+      profileRefresh = import("../api")
+        .then(({ api }) => api<{ account?: { profile_picture_url?: string | null } }>("/api/account/refresh-profile", { body: {} }))
+        .then((r) => r.account?.profile_picture_url ?? null)
+        .catch(() => null);
+      const fresh = await profileRefresh;
+      if (fresh && fresh !== src) return setSrc(fresh);
+    }
+    setFailed(true);
+  };
+  if (src && !failed)
+    return <img src={src} alt="" referrerPolicy="no-referrer" onError={onError} className="shrink-0 rounded-full object-cover" style={{ width: size, height: size }} />;
+  return <UserAvatar name={name} size={size} />;
+}

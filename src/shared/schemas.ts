@@ -129,6 +129,8 @@ export const simulateSchema = z.object({
       privateReply: z.enum(["ok", "fail", "uncertain"]).optional(),
       dm: z.enum(["ok", "window_closed", "fail", "uncertain"]).optional(),
       publicReply: z.enum(["ok", "fail"]).optional(),
+      /** The demo person messaged the account days ago (consent exists, 24h window closed). */
+      known: z.boolean().optional(),
     })
     .optional(),
   reset: z.boolean().default(false),

@@ -2,7 +2,7 @@ import { createApp } from "./app";
 import type { Env } from "./env";
 import { getSetting, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
-import { engineContext, refreshExpiringTokens } from "./services/account";
+import { engineContext, refreshAccountProfiles, refreshExpiringTokens } from "./services/account";
 import { sanitize } from "./meta/client";
 import { runNotifications } from "./services/notify";
 import { autoRecover } from "./services/recover";
@@ -67,6 +67,7 @@ export default {
       ctx.waitUntil(
         (async () => {
           await refreshExpiringTokens(env).catch((e) => console.error("token refresh", sanitize(String(e))));
+          await refreshAccountProfiles(env).catch((e) => console.error("profile refresh", sanitize(String(e))));
           await cleanup(env.DB).catch((e) => console.error("cleanup", sanitize(String(e))));
         })(),
       );

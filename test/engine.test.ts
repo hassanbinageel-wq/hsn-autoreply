@@ -152,13 +152,14 @@ describe("follow-gated comment flow", () => {
     const meta = new MockMeta();
     const clock = { t: Date.now() };
 
-    // 1) comment → one private reply asking to reply "ابدأ" (no content), public reply must not claim delivery
+    // 1) comment → one quiet probe (Instagram: no consent yet) → one private reply asking to reply "ابدأ" (no content)
+    meta.follow = [{ result: "needs_interaction", fieldPresent: false }];
     await deliver(commentPayload({ text: "ابغى الكورس", commentId: "c_follow", time: clock.t }), meta, clock);
     expect(meta.sends().map((s) => s.kind)).toEqual(["private_reply", "public_reply"]);
     expect(meta.sends()[0].text).toContain("ابدأ");
     expect(meta.sends()[0].text).not.toContain(SECRET);
     expect(SAFE_PUBLIC_REPLIES).toContain(meta.sends()[1].text); // the "sent" phrasing is never used before delivery
-    expect(meta.calls.some((c) => c.kind === "follow_check")).toBe(false); // no consent yet
+    expect(meta.calls.filter((c) => c.kind === "follow_check")).toHaveLength(1); // the probe only; no consent yet
     expect((await flowsOf())[0].state).toBe("awaiting_user_interaction");
 
     // 2) user replies "ابدأ" → follow check → not following → follow request DM with a verify button, still no content
@@ -202,7 +203,7 @@ describe("follow-gated comment flow", () => {
     await deliver(messagePayload({ text: "تحقق", quickReply: qr.payload, time: clock.t }), meta, clock);
     expect(meta.sends().filter((s) => s.text?.includes(SECRET))).toHaveLength(1);
     const checks = await DB.prepare("SELECT result FROM follow_checks ORDER BY id").all<any>();
-    expect(checks.results.map((r) => r.result)).toEqual(["not_following", "not_following", "not_following", "following"]);
+    expect(checks.results.map((r) => r.result)).toEqual(["needs_interaction", "not_following", "not_following", "not_following", "following"]);
   });
 
   it("follower who already messaged us: checks immediately and sends content in the single private reply", async () => {
@@ -605,5 +606,46 @@ describe("public reply phrasings", () => {
     const replies = meta.calls.filter((c) => c.kind === "public_reply").map((c) => c.text);
     expect(replies.length).toBe(4);
     expect(replies.every((t) => t === "كمّل معنا في الخاص 💬")).toBe(true);
+  });
+});
+
+describe("commenter who already gave consent (probe before «ابدأ»)", () => {
+  it("already follows → the content goes straight into the single private reply, no «ابدأ»", async () => {
+    await seedCampaign({ require_follow: true });
+    const meta = new MockMeta();
+    meta.follow = [following()];
+    await deliver(commentPayload({ text: "ابغى الكورس", commentId: "c_probe_f" }), meta);
+    const s = meta.sends();
+    expect(s).toHaveLength(1);
+    expect(s[0].kind).toBe("private_reply");
+    expect(s[0].text).toContain(SECRET);
+    expect(s[0].text).not.toContain("ابدأ");
+    expect((await flowsOf())[0].state).toBe("content_sent");
+  });
+
+  it("does not follow → the private reply is the follow request with «افتح حسابنا» + «تحقّق»; never the content", async () => {
+    await seedCampaign({ require_follow: true });
+    const meta = new MockMeta();
+    meta.follow = [notFollowing()];
+    await deliver(commentPayload({ text: "ابغى الكورس", commentId: "c_probe_n" }), meta);
+    const s = meta.sends();
+    expect(s).toHaveLength(1);
+    expect(s[0].kind).toBe("private_reply");
+    expect(s[0].text).not.toContain(SECRET);
+    expect(s[0].msg!.accountButton).toMatchObject({ title: "👤 افتح حسابنا" });
+    expect(s[0].msg!.quickReplies![0].payload).toMatch(/^hsn:v1:verify:/);
+    expect((await flowsOf())[0].state).toBe("awaiting_follow");
+  });
+
+  it("Instagram error on the probe is never treated as «not following»: the usual «ابدأ» message", async () => {
+    await seedCampaign({ require_follow: true });
+    const meta = new MockMeta();
+    meta.follow = [{ result: "temporary_error", fieldPresent: false }];
+    await deliver(commentPayload({ text: "ابغى الكورس", commentId: "c_probe_e" }), meta);
+    const s = meta.sends();
+    expect(s).toHaveLength(1);
+    expect(s[0].text).toContain("ابدأ");
+    expect(s[0].text).not.toContain(SECRET);
+    expect((await flowsOf())[0].state).toBe("awaiting_user_interaction");
   });
 });

@@ -7,10 +7,11 @@ import { openExternal } from "../platform";
 import { REASONS } from "./Logs";
 
 const SCENARIOS: Record<string, { label: string; script: any }> = {
-  follower: { label: "متابع", script: { follow: ["following"] } },
-  non_follower_then_follow: { label: "غير متابع ثم يتابع", script: { follow: ["not_following", "following"] } },
+  non_follower_then_follow: { label: "أول مرة يتواصل · غير متابع ثم يتابع", script: { follow: ["not_following", "following"] } },
+  follower: { label: "أول مرة يتواصل · متابع", script: { follow: ["following"] } },
+  known_follower: { label: "سبق وراسلك · متابع (يوصله المحتوى مباشرة)", script: { follow: ["following"], known: true } },
+  known_non_follower: { label: "سبق وراسلك · غير متابع ثم يتابع", script: { follow: ["not_following", "following"], known: true } },
   never_follows: { label: "يضغط «تابعت» دون متابعة", script: { follow: ["not_following"] } },
-  needs_interaction: { label: "يلزم تفاعل أولي", script: { follow: ["needs_interaction", "following"] } },
   verify_fails: { label: "فشل التحقق (خطأ API)", script: { follow: ["temporary_error"] } },
   verify_delayed: { label: "تأخر تحديث الحالة (غير معروف ثم متابع)", script: { follow: ["unknown", "following"] } },
   unsupported: { label: "الميزة غير متاحة", script: { follow: ["unsupported"] } },

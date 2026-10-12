@@ -55,6 +55,9 @@ export async function simulate(env: Env, input: z.infer<typeof simulateSchema>) 
   if (input.script) {
     await run(db, "UPDATE participants SET demo_follow_script = ? WHERE account_id = ? AND igsid = ?", JSON.stringify({ ...input.script, idx: 0 }), accountId, igsid);
   }
+  if (input.script?.known) {
+    await run(db, "UPDATE participants SET consent_at = ?, last_user_message_at = ? WHERE account_id = ? AND igsid = ?", now - 3 * 86_400_000, now - 3 * 86_400_000, accountId, igsid);
+  }
   if (input.script?.dm === "window_closed") {
     // Simulate an expired messaging window: last user message 25h ago.
     await run(db, "UPDATE participants SET last_user_message_at = ? WHERE account_id = ? AND igsid = ?", now - 25 * 3_600_000, accountId, igsid);
