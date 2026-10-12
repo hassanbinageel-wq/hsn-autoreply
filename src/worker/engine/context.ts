@@ -27,6 +27,16 @@ export interface AccountRow {
   is_demo: number;
   status: string;
   follow_check_support: string;
+  /** The owner allowed the follow REQUIREMENT on this account (admin panel only). */
+  follow_gate_allowed?: number;
+}
+
+/**
+ * Whether a campaign's follow requirement is in effect: only on accounts the owner explicitly allowed
+ * (the simulator's demo account follows the campaign setting). Everyone else gets the optional invitation.
+ */
+export function followGated(c: { require_follow: number }, a: { is_demo: number; follow_gate_allowed?: number }): boolean {
+  return !!c.require_follow && (a.is_demo === 1 || a.follow_gate_allowed === 1);
 }
 
 export interface CampaignRow {
@@ -40,6 +50,8 @@ export interface CampaignRow {
   unify_alef: number;
   include_replies: number;
   require_follow: number;
+  follow_invite: number;
+  follow_invite_text: string | null;
   opening_text: string | null;
   follow_request_text: string | null;
   follow_reminder_text: string | null;

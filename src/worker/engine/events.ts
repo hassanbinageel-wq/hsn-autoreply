@@ -4,6 +4,7 @@ import { all, first, getSetting, isUniqueViolation, run } from "../lib/db";
 import { randomToken } from "../lib/crypto";
 import type { NormalizedEvent } from "../meta/webhook-parse";
 import {
+  followGated,
   FLOW_TTL_MS,
   loadFlow,
   transitionFlow,
@@ -328,7 +329,7 @@ async function triggerCampaign(
   const flow = (await loadFlow(ctx.db, flowId))!;
   const common = { accountId: account.id, flowId, campaignId: chosen.id, isDemo: row.is_demo === 1 };
 
-  if (!chosen.require_follow) {
+  if (!followGated(chosen, account)) {
     await transitionFlow(ctx, flow, "delivering");
     await enqueue(ctx.db, { ...common, kind: "send_message", purpose: "content", dedupKey: `deliver:${flowId}` }, now);
   } else if (ev.kind !== "comment" || (participant.consent_at && windowOpen(participant, now))) {

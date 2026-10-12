@@ -30,7 +30,10 @@ export const campaignInputSchema = z
     unify_alef: z.boolean().default(true),
     include_replies: z.boolean().default(false),
     keywords: z.array(keywordSchema).max(100).default([]),
+    // Kept for older clients only: the follow requirement is no longer offered and is always saved as off.
     require_follow: z.boolean().default(false),
+    follow_invite: z.boolean().default(false),
+    follow_invite_text: optText(300),
     opening_text: optText(900),
     follow_request_text: optText(900),
     follow_reminder_text: optText(900),

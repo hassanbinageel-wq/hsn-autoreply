@@ -160,13 +160,14 @@ export async function resetDb() {
   await DB.prepare("UPDATE app_settings SET value = '10' WHERE key = 'global_user_hourly_limit'").run();
 }
 
-export async function seedAccount(opts: { username?: string } = {}) {
+/** The owner's account: the follow requirement is allowed unless `followGate: false`. */
+export async function seedAccount(opts: { username?: string; followGate?: boolean } = {}) {
   const now = Date.now();
   await DB.prepare(
-    `INSERT INTO instagram_accounts (ig_user_id, app_scoped_id, username, status, token_ciphertext, token_iv, created_at, updated_at)
-     VALUES (?, 'app_scoped_1', ?, 'active', 'x', 'y', ?, ?)`,
+    `INSERT INTO instagram_accounts (ig_user_id, app_scoped_id, username, status, token_ciphertext, token_iv, follow_gate_allowed, created_at, updated_at)
+     VALUES (?, 'app_scoped_1', ?, 'active', 'x', 'y', ?, ?, ?)`,
   )
-    .bind(IG_ID, opts.username ?? "hsn_shop", now, now)
+    .bind(IG_ID, opts.username ?? "hsn_shop", opts.followGate === false ? 0 : 1, now, now)
     .run();
   return (await DB.prepare("SELECT id FROM instagram_accounts WHERE ig_user_id = ?").bind(IG_ID).first<{ id: number }>())!.id;
 }

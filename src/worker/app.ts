@@ -45,7 +45,7 @@ import {
   simulateSchema,
   templateInputSchema,
 } from "../shared/schemas";
-import { claimsDelivery, publicReplyVariants } from "../shared/template";
+import { claimsDelivery, claimsFollowRequired, publicReplyVariants } from "../shared/template";
 import { cacheMediaStmt } from "./services/media";
 import { markRead, recordMessage, refreshAvatars } from "./services/inbox";
 import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
@@ -427,6 +427,16 @@ export function createApp() {
     await refreshAccountProfiles(c.env);
     return c.json({ ok: true, account: publicAccount(await currentAccount(c.env.DB)) });
   });
+  // Owner-only switch: allow the follow REQUIREMENT on this account (everyone else gets the optional invitation).
+  api.post("/account/follow-gate", async (c) => {
+    const p = await parseBody(c, z.object({ allowed: z.boolean() }));
+    if (!p.ok) return p.res;
+    const a = await currentAccount(c.env.DB);
+    if (!a) return apiError(c, 404, "not_found", "لا يوجد حساب متصل");
+    await run(c.env.DB, "UPDATE instagram_accounts SET follow_gate_allowed = ?, updated_at = ? WHERE id = ?", p.data.allowed ? 1 : 0, Date.now(), a.id);
+    await audit(c.env.DB, c.get("session").username, p.data.allowed ? "follow_gate.allowed" : "follow_gate.disallowed", String(a.id));
+    return c.json({ ok: true });
+  });
   api.get("/account", async (c) => {
     const a = await currentAccount(c.env.DB);
     return c.json({
@@ -731,12 +741,20 @@ export function createApp() {
     const d = p.data;
     const now = Date.now();
     const warnings: string[] = [];
+    if (d.require_follow && !(await followGateAllowed(c.env.DB))) {
+      warnings.push("شرط المتابعة غير مسموح لهذا الحساب — حُفظت الحملة بدونه. يمكنك إضافة دعوة اختيارية للمتابعة.");
+    }
     if (d.require_follow && d.public_reply_enabled && publicReplyVariants(d.public_reply_text).some((v) => claimsDelivery(v))) {
       warnings.push("بعض صيغ الرد العام تدّعي الإرسال قبل التسليم الفعلي؛ لن تُستخدم قبل التسليم (تُستخدم الصيغ الأخرى أو صيغ محايدة تلقائيًا).");
     }
+    if (d.follow_invite && d.follow_invite_text && claimsFollowRequired(d.follow_invite_text)) {
+      warnings.push("نص الدعوة يوحي أن المتابعة شرط للحصول على المحتوى — سياسة Meta تمنع ذلك. اجعلها دعوة اختيارية (المحتوى يُرسل للجميع).");
+    }
     const cols = {
       name: d.name, type: d.type, priority: d.priority, scope: d.scope, match_all: d.match_all ? 1 : 0, unify_alef: d.unify_alef ? 1 : 0,
-      include_replies: d.include_replies ? 1 : 0, require_follow: d.require_follow ? 1 : 0, opening_text: d.opening_text ?? null,
+      // The follow requirement only on accounts the owner allowed (Meta Spam policy); others get the optional invitation.
+      include_replies: d.include_replies ? 1 : 0, require_follow: d.require_follow && (await followGateAllowed(c.env.DB)) ? 1 : 0, follow_invite: d.follow_invite ? 1 : 0, follow_invite_text: d.follow_invite_text ?? null,
+      opening_text: d.opening_text ?? null,
       follow_request_text: d.follow_request_text ?? null, follow_reminder_text: d.follow_reminder_text ?? null, verify_error_text: d.verify_error_text ?? null,
       final_text: d.final_text, final_url: d.final_url || null, public_reply_enabled: d.public_reply_enabled ? 1 : 0, public_reply_text: d.public_reply_text ?? null,
       public_reply_on_dm_fail: d.public_reply_on_dm_fail, public_reply_fallback_text: d.public_reply_fallback_text ?? null,
@@ -1544,17 +1562,17 @@ export function createApp() {
       const bool = (v: unknown) => v === 1 || v === true;
       const parsed = campaignInputSchema.safeParse({
         ...raw, keywords: kw, media_ids: md, match_all: bool(raw.match_all), unify_alef: bool(raw.unify_alef), include_replies: bool(raw.include_replies),
-        require_follow: bool(raw.require_follow), public_reply_enabled: bool(raw.public_reply_enabled), process_old_events: bool(raw.process_old_events),
+        require_follow: bool(raw.require_follow), follow_invite: bool(raw.follow_invite), public_reply_enabled: bool(raw.public_reply_enabled), process_old_events: bool(raw.process_old_events),
       });
       if (!parsed.success) continue;
       const d = parsed.data;
       const r = await first<{ id: number }>(
         c.env.DB,
-        `INSERT INTO campaigns (name, type, status, priority, scope, match_all, unify_alef, include_replies, require_follow, opening_text, follow_request_text,
+        `INSERT INTO campaigns (name, type, status, priority, scope, match_all, unify_alef, include_replies, require_follow, follow_invite, follow_invite_text, opening_text, follow_request_text,
            follow_reminder_text, verify_error_text, final_text, final_url, public_reply_enabled, public_reply_text, public_reply_on_dm_fail, public_reply_fallback_text,
            schedule_start, schedule_end, timezone, per_user_cooldown_hours, max_deliveries_per_user, max_verify_attempts, verify_cooldown_seconds, process_old_events, created_at, updated_at)
-         VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        d.name, d.type, d.priority, d.scope, +d.match_all, +d.unify_alef, +d.include_replies, +d.require_follow, d.opening_text ?? null, d.follow_request_text ?? null,
+         VALUES (?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        d.name, d.type, d.priority, d.scope, +d.match_all, +d.unify_alef, +d.include_replies, +(d.require_follow && (await followGateAllowed(c.env.DB))), +d.follow_invite, d.follow_invite_text ?? null, d.opening_text ?? null, d.follow_request_text ?? null,
         d.follow_reminder_text ?? null, d.verify_error_text ?? null, d.final_text, d.final_url || null, +d.public_reply_enabled, d.public_reply_text ?? null, d.public_reply_on_dm_fail,
         d.public_reply_fallback_text ?? null, d.schedule_start ?? null, d.schedule_end ?? null, d.timezone, d.per_user_cooldown_hours, d.max_deliveries_per_user,
         d.max_verify_attempts, d.verify_cooldown_seconds, +d.process_old_events, now, now,
@@ -1612,6 +1630,12 @@ export function createApp() {
   });
 
   return app;
+}
+
+/** The follow requirement is allowed only when the owner enabled it on a connected (non-demo) account. */
+async function followGateAllowed(db: D1Database): Promise<boolean> {
+  const r = await first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM instagram_accounts WHERE is_demo = 0 AND follow_gate_allowed = 1 AND status != 'disconnected'");
+  return (r?.n ?? 0) > 0;
 }
 
 function logFilters(c: C, timeCol: string, eq: string[], prefix = "") {

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { isNative, openOAuth } from "../platform";
 import { AccountAvatar } from "../components/UserAvatar";
-import { Alert, Badge, Card, PageHeader, Spinner, fmtTime, toast, useAsync } from "../components/ui";
+import { Toggle, Alert, Badge, Card, PageHeader, Spinner, fmtTime, toast, useAsync } from "../components/ui";
 
 const SCOPE_AR: Record<string, string> = {
   instagram_business_basic: "الملف الأساسي والمنشورات",
@@ -67,6 +67,22 @@ export function ConnectionPage() {
               <div><dt className="muted">آخر تجديد للتوكن</dt><dd>{fmtTime(a.token_refreshed_at)}</dd></div>
             </dl>
             {a.follow_check_note && <Alert tone="warn">سبب تعذر التحقق من المتابعة: {a.follow_check_note}</Alert>}
+            <div className="rounded-2xl border border-amber-300/60 px-4 py-1 dark:border-amber-800/60">
+              <Toggle
+                checked={!!a.follow_gate_allowed}
+                disabled={!!busy}
+                onChange={(v) =>
+                  run("gate", async () => {
+                    if (v && !confirm("تفعيل «شرط المتابعة الإلزامي» لهذا الحساب؟\n\nمعيار Meta للسبام يمنع ربط المحتوى بالمتابعة، والمخاطرة على هذا الحساب تتحملها أنت. لا تعرضه في مراجعة Meta ولا تفعّله لحسابات العملاء.")) return;
+                    await api("/api/account/follow-gate", { body: { allowed: v } });
+                    toast(v ? "تم السماح بشرط المتابعة لهذا الحساب" : "أُوقف شرط المتابعة — الحملات تُرسل المحتوى للجميع");
+                    reload();
+                  })
+                }
+                label="السماح بشرط المتابعة الإلزامي (لحساباتك فقط)"
+                description="عند الإيقاف: أي حملة عليها الشرط ترسل المحتوى للجميع مباشرة. باقي الحملات تستخدم الدعوة الاختيارية."
+              />
+            </div>
             {a.last_error && <Alert tone="warn">آخر خطأ: {a.last_error}</Alert>}
           </div>
         ) : (

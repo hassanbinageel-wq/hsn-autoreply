@@ -231,7 +231,7 @@ export function CampaignsPage() {
                   </div>
                   <span className="absolute left-3 top-3 flex h-9 w-9 items-center justify-center rounded-xl bg-white/20 text-white backdrop-blur"><Icon name={TYPE_ICON[c.type]} size={18} /></span>
                   <div className="absolute bottom-3 right-3 flex flex-wrap gap-1.5">
-                    {c.require_follow && !compact ? <span className="chip bg-black/40 text-white"><Icon name="lock" size={12} />شرط المتابعة</span> : null}
+                    {c.follow_invite && !compact ? <span className="chip bg-black/40 text-white"><Icon name="userplus" size={12} />دعوة للمتابعة</span> : null}
                     {c.media_count > 1 && !compact && <span className="chip bg-black/40 text-white">{c.media_count} منشورات</span>}
                   </div>
                 </div>

@@ -6,6 +6,7 @@ import { recordMessage } from "../services/inbox";
 import type { MetaError, OutgoingMessage, QuickReply } from "../meta/types";
 import {
   loadAccount,
+  followGated,
   loadCampaign,
   loadFlow,
   loadParticipant,
@@ -46,7 +47,11 @@ const DEFAULTS = {
   verify_unavailable: "نعتذر 🙏 التحقق من المتابعة غير متاح حاليًا، ولن نتمكن من إرسال المحتوى تلقائيًا.",
   verify_limit: "وصلت للحد الأعلى من محاولات التحقق حاليًا 🙏 جرّب مرة ثانية لاحقًا بكتابة «تحقق».",
   start_prompt: "للمتابعة اضغط «ابدأ» أو اكتب: ابدأ",
+  follow_invite: "ونسعد بمتابعتك لحسابنا 💜",
 };
+
+/** Messages that only exist for the old follow requirement; never sent once a campaign no longer requires it. */
+const GATE_PURPOSES = new Set(["opening", "follow_request", "reminder", "verify_error", "verify_unavailable", "verify_limit", "start_prompt"]);
 
 interface Loaded {
   flow: FlowRow;
@@ -115,6 +120,15 @@ export function buildMessage(
       const body = c.final_text?.trim() ? c.final_text : "تفضل 🎁 {{content_url}}";
       text = renderTemplate(body, { ...vars, content_url: c.final_url ?? "" });
       if (c.final_url && !text.includes(c.final_url)) text = `${text}\n${c.final_url}`.trim();
+      // Optional invitation to follow: a line + an «open our account» button. The content is sent either way.
+      const link = accountLink(l.account);
+      if (c.follow_invite && link) {
+        const invite = renderTemplate(c.follow_invite_text?.trim() || DEFAULTS.follow_invite, vars).split(link).join("").trim();
+        const linkButton = contentLinkButton(text, c.final_url);
+        if (linkButton) linkButton.text = `${linkButton.text}\n\n${invite}`.trim();
+        // The plain-text fallback keeps the profile link; the button templates drop it from the text.
+        return { text: `${text}\n\n${invite} ${link}`.trim(), linkButton, accountButton: { title: "👤 تابعنا", url: link } };
+      }
       return { text, linkButton: contentLinkButton(text, c.final_url) };
     }
     case "opening":
@@ -212,6 +226,23 @@ async function cancelFlowAndJob(ctx: EngineContext, job: JobRow, owner: string, 
   return { outcome: "cancelled" };
 }
 
+/** Moves a flow left over from the old follow requirement straight to content delivery. */
+async function deliverWithoutGate(ctx: EngineContext, job: JobRow, owner: string, l: Loaded, from: string): Promise<ExecResult> {
+  const now = ctx.now();
+  let flow = l.flow;
+  if (flow.state !== "checking_follow") {
+    if (!(await transitionFlow(ctx, flow, "checking_follow", {}, "follow_gate_removed"))) {
+      await finishJob(ctx.db, job, owner, "cancelled", now, { error: `flow state is ${flow.state} (expected ${from})` });
+      return { outcome: "cancelled" };
+    }
+    flow = (await loadFlow(ctx.db, flow.id))!;
+  }
+  await transitionFlow(ctx, flow, "ready_to_deliver", {}, "follow_gate_removed");
+  await enqueue(ctx.db, { accountId: l.account.id, flowId: flow.id, campaignId: l.campaign.id, isDemo: flow.is_demo === 1, kind: "send_message", purpose: "content", dedupKey: `deliver:${flow.id}` }, now);
+  await finishJob(ctx.db, job, owner, "accepted", now, { result: { follow_gate_removed: true } });
+  return { outcome: "accepted" };
+}
+
 async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): Promise<ExecResult> {
   const l = await loadAll(ctx, job);
   if (!l) return cancelFlowAndJob(ctx, job, owner, null, "flow_missing");
@@ -228,6 +259,14 @@ async function execFollowCheck(ctx: EngineContext, job: JobRow, owner: string): 
   }
   const g = await guard(ctx, l);
   if (g) return cancelFlowAndJob(ctx, job, owner, l, g);
+  // The campaign no longer requires a follow (flows started under the old requirement): deliver the content.
+  if (!followGated(l.campaign, l.account)) {
+    if (silent && !windowOpen(l.participant, ctx.now())) {
+      await finishJob(ctx.db, job, owner, "cancelled", ctx.now(), { error: "follow no longer required; window closed" });
+      return { outcome: "cancelled" };
+    }
+    return deliverWithoutGate(ctx, job, owner, l, silent ? "awaiting_follow" : "checking_follow");
+  }
   if (silent && !(await transitionFlow(ctx, l.flow, "checking_follow", {}, "auto_recheck"))) {
     await finishJob(ctx.db, job, owner, "cancelled", ctx.now(), { error: "flow changed" });
     return { outcome: "cancelled" };
@@ -388,6 +427,12 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
   const purpose = job.purpose ?? "";
   let now = ctx.now();
   const isContent = purpose === "content";
+  if (GATE_PURPOSES.has(purpose) && !followGated(l.campaign, l.account)) {
+    // A follow-gate message queued before the requirement was removed: send the content instead.
+    if (l.flow.state === "awaiting_user_interaction" || l.flow.state === "awaiting_follow") return deliverWithoutGate(ctx, job, owner, l, l.flow.state);
+    await finishJob(ctx.db, job, owner, "cancelled", now, { error: "follow no longer required" });
+    return { outcome: "cancelled" };
+  }
 
   if (isContent) {
     // Re-check delivery limits and follow eligibility right before sending the protected content.
@@ -400,7 +445,7 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
       );
       if ((d?.n ?? 0) >= l.campaign.max_deliveries_per_user) return cancelFlowAndJob(ctx, job, owner, l, "max_deliveries_reached");
     }
-    if (l.campaign.require_follow) {
+    if (followGated(l.campaign, l.account)) {
       const fresh = l.flow.last_follow_result === "following" && !!l.participant.last_follow_checked_at && now - l.participant.last_follow_checked_at < FOLLOW_FRESHNESS_MS;
       if (!fresh) {
         if (l.flow.state === "delivering") await transitionFlow(ctx, l.flow, "ready_to_deliver", {}, "recheck_before_delivery");
@@ -540,7 +585,7 @@ async function execPublicReply(ctx: EngineContext, job: JobRow, owner: string): 
     text = pool.length ? renderTemplate(pickVariant(pool, l.flow.id), vars) : "";
   } else {
     // A follow-gated campaign must not publicly claim delivery before the content was actually sent.
-    const mustNotClaim = !!l.campaign.require_follow && l.flow.state !== "content_sent";
+    const mustNotClaim = followGated(l.campaign, l.account) && l.flow.state !== "content_sent";
     let pool = publicReplyVariants(l.campaign.public_reply_text);
     if (mustNotClaim) pool = pool.filter((v) => !claimsDelivery(v));
     if (!pool.length) pool = SAFE_PUBLIC_REPLIES;

@@ -33,6 +33,12 @@ export function claimsDelivery(text: string): boolean {
   return DELIVERY_CLAIMS.some((re) => re.test(text ?? ""));
 }
 
+/** Wording that makes following a condition for the content (forbidden follow-gating). */
+const FOLLOW_REQUIRED_CLAIMS = [/(?:لازم|يجب|شرط|بشرط)\s*(?:ال)?(?:تتابع|متابعة|تابع)/, /(?:المتابعة|متابعتك|متابعة\s+الحساب)\s*(?:شرط|مطلوبة|إلزامية|ضرورية)/, /(?:تابع|تابعنا|بعد\s+المتابعة)[^.\n]{0,40}(?:عشان|حتى|كي|لكي)\s*(?:يوصلك|نرسل|أرسل|ارسل|توصلك|تحصل|تستلم)/, /\bfollow\b[^.\n]{0,30}\b(?:to\s+get|to\s+receive|to\s+unlock|required)\b/i];
+export function claimsFollowRequired(text: string): boolean {
+  return FOLLOW_REQUIRED_CLAIMS.some((re) => re.test(text ?? ""));
+}
+
 export const LINK_BUTTON_TITLE = "فتح الرابط 🔗";
 
 /** The content link as a tappable button: the campaign URL, or else the first web link written in the text. */

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
 import { navigate } from "../App";
-import { renderTemplate, claimsDelivery, contentLinkButton, publicReplyVariants, pickVariant, SAFE_PUBLIC_REPLIES, MAX_PUBLIC_VARIANTS, TEMPLATE_VARIABLES } from "../../shared/template";
+import { renderTemplate, claimsDelivery, claimsFollowRequired, contentLinkButton, publicReplyVariants, pickVariant, SAFE_PUBLIC_REPLIES, MAX_PUBLIC_VARIANTS, TEMPLATE_VARIABLES } from "../../shared/template";
 import { evaluateMatch } from "../../shared/match";
 import { AR_LABELS } from "../../shared/states";
 import { Alert, Card, Field, Spinner, Toggle, currentTz, toast } from "../components/ui";
@@ -20,6 +20,8 @@ type Form = {
   include_replies: boolean;
   keywords: Keyword[];
   require_follow: boolean;
+  follow_invite: boolean;
+  follow_invite_text: string;
   opening_text: string;
   follow_request_text: string;
   follow_reminder_text: string;
@@ -56,6 +58,8 @@ const EMPTY: Form = {
   include_replies: false,
   keywords: [],
   require_follow: false,
+  follow_invite: false,
+  follow_invite_text: "ونسعد بمتابعتك لحسابنا 💜",
   opening_text: "حياك الله 🙌 رد بكلمة ابدأ عشان أتحقق من المتابعة وأرسل لك المحتوى.",
   follow_request_text: "باقي خطوة بسيطة 🔥 تابع حسابنا {{account_link}} ثم ارجع هنا واضغط «تحقّق من المتابعة» عشان أوصلك المحتوى.",
   follow_reminder_text: "لسا ما ظهرت لنا متابعتك 🙏 تأكد إنك تابعت {{account_link}} ثم جرّب «تحقق» بعد دقيقة.",
@@ -97,7 +101,7 @@ const STEPS = [
   "نطاق التشغيل",
   "الكلمات والشروط",
   "استثناءات المطابقة",
-  "شرط المتابعة",
+  "المتابعة",
   "الرسالة التمهيدية",
   "طلب المتابعة وإعادة التحقق",
   "المحتوى النهائي",
@@ -219,6 +223,9 @@ function KeywordEditor({ kind, keywords, onChange }: { kind: "include" | "exclud
   );
 }
 
+/** Step ids shown: the follow-requirement messages (6, 7) only when the requirement is on. */
+const stepIds = (gated: boolean) => (gated ? STEPS.map((_, i) => i) : STEPS.map((_, i) => i).filter((i) => i !== 6 && i !== 7));
+
 export function CampaignWizard({ id }: { id: number | null }) {
   const [form, setForm] = useState<Form>({ ...EMPTY, timezone: currentTz() });
   const [step, setStep] = useState(0);
@@ -244,6 +251,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
             unify_alef: !!c.unify_alef,
             include_replies: !!c.include_replies,
             require_follow: !!c.require_follow,
+            follow_invite: !!c.follow_invite,
             public_reply_enabled: !!c.public_reply_enabled,
             process_old_events: !!c.process_old_events,
             track_clicks: c.track_clicks === undefined ? true : !!c.track_clicks,
@@ -267,6 +275,8 @@ export function CampaignWizard({ id }: { id: number | null }) {
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
   const vars = { username: "sara_test", account_username: account?.username ?? "your_account", account_link: `https://www.instagram.com/${account?.username ?? "your_account"}` };
   const isComment = form.type === "comment";
+  const ids = stepIds(form.require_follow);
+  const labels = ids.map((i) => STEPS[i]);
 
   const payload = () => ({
     ...form,
@@ -360,7 +370,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
   };
 
   const stepBody = () => {
-    switch (step) {
+    switch (ids[step]) {
       case 0:
         return (
           <Field label="اسم الحملة" hint="اسم داخلي يساعدك على التمييز بين الحملات.">
@@ -472,22 +482,41 @@ export function CampaignWizard({ id }: { id: number | null }) {
             <KeywordEditor kind="exclude" keywords={form.keywords} onChange={(k) => set("keywords", k)} />
           </div>
         );
-      case 5:
+      case 5: {
+        const gateOk = !!account?.follow_gate_allowed;
+        const mode = form.require_follow ? "required" : form.follow_invite ? "invite" : "none";
+        const setMode = (m: string) => setForm((f) => ({ ...f, require_follow: m === "required", follow_invite: m === "invite" }));
         return (
           <div className="space-y-3">
-            <Toggle checked={form.require_follow} onChange={(v) => set("require_follow", v)} label="اشترط متابعة حسابي قبل إرسال المحتوى" description="لا يُرسل الرابط أو الكود أو المحتوى النهائي قبل تحقق فعلي عبر User Profile API (الحقل is_user_follow_business)." />
-            {form.require_follow && (
-              <Alert tone="info">
-                • التعليق العام وحده لا يمنح إذن قراءة ملف المستخدم؛ لذلك يُرسل رد خاص تمهيدي واحد ويُطلب من الشخص الرد بـ «ابدأ».<br />
-                • الضغط على «تابعت» أو فتح رابط الحساب ليس دليلًا — يُنفَّذ استعلام جديد في كل مرة.<br />
-                • «غير معروف» أو خطأ API لا يعني «غير متابع» — ولا يُسلَّم المحتوى.<br />
-                • لا يوجد إشعار رسمي عند المتابعة؛ الشخص يعود ويضغط «تحقّق».<br />
-                • اشتراط المتابعة لا يمنع مشاركة الرابط بعد استلامه.
+            <div className="flex flex-wrap gap-2">
+              {([["none", "بدون"], ["invite", "دعوة اختيارية"], ...(gateOk || form.require_follow ? [["required", "شرط إلزامي (حساباتك فقط)"]] : [])] as Array<[string, string]>).map(([k, l]) => (
+                <button key={k} type="button" onClick={() => setMode(k)} className={`rounded-2xl border px-4 py-2.5 text-sm font-bold transition ${mode === k ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-200" : "border-[var(--border)] hover:bg-[var(--surface-2)]"}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            {mode === "invite" && (
+              <>
+                <p className="muted text-sm">يُضاف سطر دعوة وزر «👤 تابعنا» داخل رسالة المحتوى نفسها. المحتوى يوصل للجميع سواء تابع أو لا.</p>
+                <Field label="نص الدعوة" hint="اكتبها كدعوة لطيفة، لا كشرط. ممنوع مثل: «تابع عشان يوصلك» أو «المتابعة شرط».">
+                  <input className="input" value={form.follow_invite_text} maxLength={300} onChange={(e) => set("follow_invite_text", e.target.value)} />
+                </Field>
+                {claimsFollowRequired(form.follow_invite_text) && <Alert tone="warn">النص يوحي أن المتابعة شرط للحصول على المحتوى — سياسة Meta تمنع ذلك. اجعلها دعوة اختيارية.</Alert>}
+              </>
+            )}
+            {mode === "required" && !gateOk && <Alert tone="bad">شرط المتابعة غير مسموح لهذا الحساب — سيُحفظ بدونه. فعّله من «الربط» إذا كان حسابك.</Alert>}
+            {mode === "required" && (
+              <Alert tone="warn">
+                ⚠️ معيار Meta للسبام يمنع إلزام الناس بالمتابعة للوصول لمحتوى. هذا الخيار لحساباتك فقط وعلى مسؤوليتك، ولا يظهر لحسابات العملاء.<br />
+                • التعليق العام وحده لا يمنح إذن قراءة ملف المستخدم؛ لذلك يُرسل رد خاص تمهيدي ويُطلب من الشخص الرد بـ «ابدأ».<br />
+                • «غير معروف» أو خطأ API لا يعني «غير متابع» — ولا يُسلَّم المحتوى.
                 {account?.follow_check_support === "unsupported" && <><br /><b>⚠️ التحقق غير متاح حاليًا لهذا الربط: {account.follow_check_note}</b></>}
               </Alert>
             )}
+            {mode !== "required" && <Alert tone="info">الدعوة الاختيارية مسموحة في سياسة Meta، وما تحتاج رسائل إضافية ولا تحقق.</Alert>}
           </div>
         );
+      }
       case 6:
         if (!form.require_follow || !isComment)
           return <Alert tone="info">{!isComment ? "في ردود/منشن الستوري الشخص راسلك بالفعل، فيتم التحقق مباشرة دون رسالة تمهيدية." : "الرسالة التمهيدية تُستخدم فقط عند اشتراط المتابعة. بدونها يُرسل المحتوى مباشرة في الرد الخاص."}</Alert>;
@@ -686,7 +715,13 @@ export function CampaignWizard({ id }: { id: number | null }) {
   const sampleText = testText || "أبغى الكورس";
   // The content link is delivered as a tappable button (Instagram does not open bare links in a first message).
   const contentBtn = contentLinkButton(contentText, form.final_url || null);
-  const contentMsg = (note?: string): ChatMsg => ({ from: "bot", text: contentBtn?.text ?? contentText, buttons: contentBtn ? [contentBtn.title] : undefined, note });
+  const invite = !form.require_follow && form.follow_invite ? form.follow_invite_text.trim() || "ونسعد بمتابعتك لحسابنا 💜" : "";
+  const contentMsg = (note?: string): ChatMsg => ({
+    from: "bot",
+    text: [contentBtn?.text ?? contentText, invite].filter(Boolean).join("\n\n"),
+    buttons: [...(contentBtn ? [contentBtn.title] : []), ...(invite ? ["👤 تابعنا"] : [])],
+    note,
+  });
   const dm: ChatMsg[] = [];
   if (form.type === "story_reply") dm.push({ from: "user", text: `↩️ ردّ على قصتك\n${sampleText}` });
   if (form.type === "story_mention") dm.push({ from: "user", text: "📣 أشار إليك في قصته" });
@@ -742,7 +777,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
     const cid = await save();
     if (cid) navigate(`/simulator?campaign=${cid}`);
   };
-  const next = () => setStep((st) => Math.min(STEPS.length - 1, st + 1));
+  const next = () => setStep((st) => Math.min(labels.length - 1, st + 1));
 
   return (
     <div className="space-y-5">
@@ -758,7 +793,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
         <div className="flex flex-wrap gap-2">
           <button className="btn btn-ghost" onClick={save} disabled={saving}>{saving ? "جارٍ الحفظ…" : "حفظ كمسودة"}</button>
           <button className="btn btn-ghost" onClick={tryInSimulator} disabled={saving}><Icon name="flask" size={18} />جرّب في المحاكاة</button>
-          {step < STEPS.length - 1 ? (
+          {step < labels.length - 1 ? (
             <button className="btn btn-primary max-lg:!hidden" onClick={next}>التالي<Icon name="arrowL" size={18} /></button>
           ) : null}
         </div>
@@ -766,7 +801,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
 
       {/* phones: compact horizontal step list */}
       <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden" role="tablist" aria-label="الخطوات">
-        {STEPS.map((label, i) => (
+        {labels.map((label, i) => (
           <button key={i} role="tab" aria-selected={i === step} onClick={() => setStep(i)} className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${i === step ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-200" : "border-[var(--border)] muted"}`}>
             <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${i === step ? "grad text-white" : i < step ? "bg-emerald-500/15 text-emerald-600" : "surface-2"}`}>{i < step ? "✓" : i + 1}</span>
             {label}
@@ -777,7 +812,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
       <div className="grid gap-5 lg:grid-cols-[250px_minmax(0,1fr)] xl:grid-cols-[250px_minmax(0,1fr)_330px]">
         <nav className="card hidden h-fit p-3 lg:sticky lg:top-20 lg:block" aria-label="الخطوات">
           <ol className="space-y-1">
-            {STEPS.map((label, i) => (
+            {labels.map((label, i) => (
               <li key={i}>
                 <button onClick={() => setStep(i)} className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-right text-sm font-bold transition ${i === step ? "bg-violet-500/10 text-violet-700 dark:text-violet-200" : i < step ? "" : "muted hover:bg-[var(--surface-2)]"}`}>
                   <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs ${i === step ? "grad text-white shadow-md shadow-violet-500/30" : i < step ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "surface-2 muted"}`}>
@@ -796,7 +831,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
               <ul className="list-inside list-disc">{errors.map((e, i) => <li key={i}>{e.message}{e.path ? ` (${e.path})` : ""}</li>)}</ul>
             </Alert>
           )}
-          <Card title={STEPS[step]} action={<span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">الخطوة {step + 1} من {STEPS.length}</span>}>
+          <Card title={labels[step]} action={<span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">الخطوة {step + 1} من {labels.length}</span>}>
             {stepBody()}
           </Card>
           {(step === 3 || step === 4) && (
@@ -822,7 +857,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
           )}
           <div className="flex justify-between gap-2">
             <button className="btn btn-ghost" disabled={step === 0} onClick={() => setStep((st) => st - 1)}><Icon name="arrowL" size={18} className="rotate-180" />السابق</button>
-            {step < STEPS.length - 1 && <button className="btn btn-primary" onClick={next}>التالي<Icon name="arrowL" size={18} /></button>}
+            {step < labels.length - 1 && <button className="btn btn-primary" onClick={next}>التالي<Icon name="arrowL" size={18} /></button>}
           </div>
         </div>
 

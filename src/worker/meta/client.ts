@@ -280,7 +280,7 @@ export class HttpMetaClient implements MetaClient {
     const url = `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`;
     const textOnly = () =>
       this.request<{ message_id?: string }>(url, this.authJson(token, { recipient: { comment_id: commentId }, message: { text: msg.text } }), true);
-    if (msg.linkButton) return this.sendLinkButton(token, url, { comment_id: commentId }, msg.linkButton, textOnly);
+    if (msg.linkButton) return this.sendLinkButton(token, url, { comment_id: commentId }, msg.linkButton, textOnly, msg.accountButton);
     if (msg.accountButton) return this.sendAccountButtons(token, url, { comment_id: commentId }, msg, textOnly);
     if (!msg.quickReplies?.length) return textOnly();
     const r = await this.request<{ message_id?: string }>(
@@ -315,7 +315,7 @@ export class HttpMetaClient implements MetaClient {
   sendMessage(token: string, igUserId: string, recipientId: string, msg: OutgoingMessage) {
     const url = `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`;
     const plain = () => this.request<{ message_id?: string }>(url, this.authJson(token, { recipient: { id: recipientId }, message: this.messageBody(msg) }), true);
-    if (msg.linkButton) return this.sendLinkButton(token, url, { id: recipientId }, msg.linkButton, plain);
+    if (msg.linkButton) return this.sendLinkButton(token, url, { id: recipientId }, msg.linkButton, plain, msg.accountButton);
     if (msg.accountButton) return this.sendAccountButtons(token, url, { id: recipientId }, msg, plain);
     return plain();
   }
@@ -348,7 +348,8 @@ export class HttpMetaClient implements MetaClient {
   }
 
   /**
-   * Button template with one web_url button (always tappable, unlike a bare link in a first message).
+   * Button template with one web_url button (always tappable, unlike a bare link in a first message), plus an
+   * optional second web_url button (the optional «follow us» invitation).
    * Falls back once to the plain-text message only on a definitive rejection — never after an uncertain outcome.
    */
   private async sendLinkButton(
@@ -357,7 +358,9 @@ export class HttpMetaClient implements MetaClient {
     recipient: Record<string, string>,
     b: LinkButton,
     fallback: () => Promise<MetaResult<{ message_id?: string }>>,
+    extra?: { title: string; url: string },
   ) {
+    const buttons = [{ type: "web_url", url: b.url, title: b.title.slice(0, 20) }, ...(extra ? [{ type: "web_url", url: extra.url, title: extra.title.slice(0, 20) }] : [])];
     const r = await this.request<{ message_id?: string }>(
       url,
       this.authJson(token, {
@@ -365,7 +368,7 @@ export class HttpMetaClient implements MetaClient {
         message: {
           attachment: {
             type: "template",
-            payload: { template_type: "button", text: b.text.slice(0, 640), buttons: [{ type: "web_url", url: b.url, title: b.title.slice(0, 20) }] },
+            payload: { template_type: "button", text: b.text.slice(0, 640), buttons },
           },
         },
       }),

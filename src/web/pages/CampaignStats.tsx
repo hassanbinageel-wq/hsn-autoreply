@@ -201,9 +201,10 @@ export function CampaignStatsPage({ id }: { id: number }) {
   };
   const { data: campaign } = useAsync(() => api<any>(`/api/campaigns/${id}`), [id]);
   const { data, loading, error } = useAsync(() => api<any>(`/api/campaigns/${id}/stats?days=${days}`), [id, days]);
-  const gated = !!campaign?.require_follow;
   const isComment = campaign?.type === "comment";
   const t = data?.totals;
+  // Follow numbers only exist for flows from the old follow requirement; shown when there is such data.
+  const gated = !!campaign?.require_follow || !!(t && (t.new_followers > 0 || t.already_following > 0));
   const mediaById = useMemo(() => new Map<string, any>((data?.media ?? []).filter((m: any) => m.media).map((m: any) => [m.media_id, m.media])), [data]);
 
   return (
