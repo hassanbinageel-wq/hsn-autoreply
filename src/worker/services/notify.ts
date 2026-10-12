@@ -4,6 +4,7 @@ import { decryptSecret, encryptSecret } from "../lib/crypto";
 import { all, first, getSetting, OWNER_TENANT, setSetting, settingKey } from "../lib/db";
 import { sanitize } from "../meta/client";
 import { estimateUsage } from "./usage";
+import { getEntitlement } from "./plans";
 
 /**
  * Owner notifications through a Telegram bot the owner creates (free, no extra account needed).
@@ -131,6 +132,7 @@ export async function notify(env: Env, tenantId: number, kind: NotifyKind, text:
       usage: s.alert_usage,
       report: s.daily_report,
       test: true,
+      expiry: true,
     };
     if (!on[kind]) return;
     const throttle = THROTTLE_MS[kind];
@@ -213,7 +215,31 @@ export async function buildDailyReport(db: D1Database, tenantId: number, now = D
 /** Called every minute by the cron: notifications of every active customer. */
 export async function runNotifications(env: Env, now = Date.now()): Promise<void> {
   const tenants = await all<{ id: number }>(env.DB, "SELECT id FROM tenants WHERE status = 'active' ORDER BY id");
-  for (const t of tenants) await runTenantNotifications(env, t.id, now);
+  for (const t of tenants) {
+    if (!(await getEntitlement(env.DB, t.id, now)).limits.telegram) continue; // not in the customer's plan
+    await runTenantNotifications(env, t.id, now);
+  }
+}
+
+/**
+ * Daily: reminds customers whose subscription ends within 3 days (Telegram when they set it up; the app always
+ * shows a banner). At most one reminder per customer per day.
+ */
+export async function remindExpiringSubscriptions(env: Env, now = Date.now()): Promise<number> {
+  const rows = await all<{ id: number; plan_expires_at: number }>(
+    env.DB,
+    `SELECT id, plan_expires_at FROM tenants WHERE is_owner = 0 AND status = 'active' AND plan_expires_at > ? AND plan_expires_at <= ?
+       AND (expiry_notice_at IS NULL OR expiry_notice_at < ?)`,
+    now,
+    now + 3 * 86_400_000,
+    now - 20 * 3_600_000,
+  );
+  for (const r of rows) {
+    const days = Math.max(1, Math.ceil((r.plan_expires_at - now) / 86_400_000));
+    await env.DB.prepare("UPDATE tenants SET expiry_notice_at = ? WHERE id = ?").bind(now, r.id).run();
+    await notify(env, r.id, "expiry", `⏳ اشتراكك في HSN AutoReply ينتهي خلال ${days} ${days === 1 ? "يوم" : "أيام"}. جدّده بكود تفعيل جديد من صفحة «اشتراكي» حتى لا تتوقف الردود.`);
+  }
+  return rows.length;
 }
 
 /** Daily report at the chosen local hour, failure and spike alerts (usage alerts: owner only). */

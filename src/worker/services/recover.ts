@@ -3,6 +3,7 @@ import type { AccountRow, EngineContext } from "../engine/context";
 import { all, first, getSetting, setSetting } from "../lib/db";
 import type { NormalizedEvent } from "../meta/webhook-parse";
 import { storeEvents } from "./webhook";
+import { getEntitlement } from "./plans";
 
 /** Private replies are only allowed for 7 days after the comment, so older comments are never recovered. */
 const RECOVER_WINDOW_MS = 7 * 24 * 3_600_000;
@@ -133,6 +134,7 @@ export async function autoRecover(env: Env, ctx: EngineContext, minute: number):
   );
   for (const t of tenants) {
     if (!(await getSetting(env.DB, t.id, "auto_recover_comments", true))) continue;
+    if (!(await getEntitlement(env.DB, t.id)).limits.recover) continue; // not in the customer's plan
     const r = await recoverMissedComments(ctx, t.id, { maxMedia: 10 });
     await setSetting(env.DB, t.id, "recover_last", { at: Date.now(), ...r, auto: true });
   }

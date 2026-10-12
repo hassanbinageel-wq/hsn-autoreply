@@ -158,6 +158,8 @@ export async function resetDb() {
   await DB.batch([
     ...TABLES.map((t) => DB.prepare(`DELETE FROM ${t}`)),
     DB.prepare("DELETE FROM tenants WHERE id != 1"),
+    DB.prepare("DELETE FROM activation_codes"),
+    DB.prepare("DELETE FROM usage_counters"),
     DB.prepare("UPDATE tenants SET status = 'active' WHERE id = 1"),
     DB.prepare("DELETE FROM app_settings WHERE key LIKE 't%:%'"),
   ]);

@@ -30,6 +30,8 @@ beforeEach(async () => {
   OWNER = await login("admin", "a-very-strong-password");
   const r = await call("/api/owner/tenants", OWNER, "POST", { name: "متجر ب", username: "shop_b", password: "another-strong-password" });
   tenantB = r.body.id;
+  // B has the full plan for 30 days (subscriptions are covered in subscriptions.test.ts).
+  await call(`/api/owner/tenants/${tenantB}/plan`, OWNER, "POST", { plan_id: "max", days: 30 });
   B = await login("shop_b", "another-strong-password");
   // Customer B's own Instagram account.
   const now = Date.now();

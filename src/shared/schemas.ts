@@ -117,6 +117,35 @@ export const tenantCreateSchema = z.object({
   notes: text(500).optional(),
 });
 
+export const registerSchema = z.object({
+  name: text(80).min(2, "اكتب اسمك أو اسم متجرك"),
+  username: text(64).regex(/^[A-Za-z0-9_.-]{3,64}$/, "اسم المستخدم: أحرف إنجليزية وأرقام فقط"),
+  password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
+  code: z.string().trim().min(4, "أدخل كود التفعيل").max(40),
+});
+
+const limitNum = z.number().int().min(0).max(10_000_000).nullable();
+export const planUpdateSchema = z.object({
+  name: text(40).min(1),
+  price_label: text(60).optional(),
+  description: text(200).optional(),
+  active: z.boolean().default(true),
+  limits: z.object({
+    active_campaigns: limitNum,
+    monthly_messages: limitNum,
+    events: z.array(z.enum(["comment", "story_reply", "story_mention"])).max(3),
+    public_reply: z.boolean(),
+    link_tracking: z.boolean(),
+    inbox_manual: z.boolean(),
+    telegram: z.boolean(),
+    recover: z.boolean(),
+    csv_export: z.boolean(),
+    draws_per_month: limitNum,
+    draw_video: z.boolean(),
+    cards: z.boolean(),
+  }),
+});
+
 export const settingsSchema = z.object({
   timezone: text(64).optional(),
   retention_days: z.number().int().min(7).max(3650).optional(),

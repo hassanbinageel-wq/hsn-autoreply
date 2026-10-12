@@ -38,6 +38,8 @@ import { cancelJobsWhere } from "./engine/jobs";
 import type { AccountRow } from "./engine/context";
 import {
   tenantCreateSchema,
+  registerSchema,
+  planUpdateSchema,
   campaignInputSchema,
   drawInputSchema,
   loginSchema,
@@ -60,8 +62,10 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 import { toCsv } from "../shared/csv";
+import { EVENT_LABELS, FEATURE_LABELS, type PlanLimits } from "../shared/plans";
+import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
-import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, termsPage } from "./pages";
+import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, pricingPage, privacyPage, termsPage } from "./pages";
 
 type C = Context<AppEnv>;
 
@@ -124,8 +128,40 @@ async function publicSettings(db: D1Database, tenantId: number): Promise<Record<
   return out;
 }
 
+/** Starter templates for a new customer (no follow-requirement texts: customers only get the optional invitation). */
+async function seedStarterTemplates(db: D1Database, tenantId: number, now: number): Promise<void> {
+  await db.batch(
+    [
+      ["public", "رد عام — شيّك الخاص", "شيّك الخاص 🙌"],
+      ["final", "المحتوى النهائي", "تفضل 🎁 {{content_url}}"],
+      ["mention", "شكر على المنشن", "تسلم على المنشن 🙌 هذه هديتنا لك: {{content_url}}"],
+    ].map(([kind, name, body]) => db.prepare("INSERT INTO templates (tenant_id, kind, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(tenantId, kind, name, body, now, now)),
+  );
+}
+
 /** The tenant of the logged-in user: every query below is scoped to it. */
 const T = (c: C): number => c.get("session").tenant_id;
+
+/** The caller's subscription (the owner always has everything). */
+const ENT = (c: C) => getEntitlement(c.env.DB, T(c));
+/** 403 with a clear message when the caller's plan does not include a feature. */
+async function planBlock(c: C, feature: keyof PlanLimits): Promise<Response | null> {
+  const e = await ENT(c);
+  if (!e.active) return apiError(c, 403, "subscription_inactive", "اشتراكك غير فعّال — أدخل كود التفعيل من صفحة «اشتراكي»");
+  if (!e.limits[feature]) return apiError(c, 403, "plan_feature", `باقتك لا تشمل: ${FEATURE_LABELS[feature] ?? feature} — رقِّ باقتك من صفحة «اشتراكي»`);
+  return null;
+}
+/** Can one more campaign of this type be active? (excludeId: the campaign being activated). */
+async function activationBlock(c: C, type: string, excludeId: number | null): Promise<Response | null> {
+  const e = await ENT(c);
+  if (!e.active) return apiError(c, 403, "subscription_inactive", "اشتراكك غير فعّال — أدخل كود التفعيل من صفحة «اشتراكي»");
+  if (!e.limits.events.includes(type as any)) return apiError(c, 403, "plan_event", `باقتك لا تشمل حملات «${EVENT_LABELS[type] ?? type}»`);
+  if (e.limits.active_campaigns !== null) {
+    const n = await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM campaigns WHERE tenant_id = ? AND status = 'active' AND deleted_at IS NULL AND id != ?", T(c), excludeId ?? 0);
+    if ((n?.n ?? 0) >= e.limits.active_campaigns) return apiError(c, 403, "plan_campaigns", `وصلت للحد الأعلى من الحملات النشطة في باقتك (${e.limits.active_campaigns}) — أوقف حملة أو رقِّ باقتك`);
+  }
+  return null;
+}
 
 export function createApp() {
   const app = new Hono<AppEnv>();
@@ -200,6 +236,11 @@ export function createApp() {
   });
 
   app.get("/privacy", (c) => html(c, privacyPage(c.env.PUBLIC_BASE_URL)));
+  app.get("/pricing", async (c) => {
+    const plans = (await listPlans(c.env.DB)).filter((p) => p.active);
+    const contact = await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", "");
+    return html(c, pricingPage(plans, contact || null, c.env.PUBLIC_BASE_URL.replace(/\/+$/, "")));
+  });
   app.get("/terms", (c) => html(c, termsPage()));
   app.get("/data-deletion", (c) => html(c, dataDeletionPage()));
   app.get("/meta/deletion-status", (c) => html(c, deletionStatusPage(c.req.query("code") ?? "")));
@@ -383,6 +424,32 @@ export function createApp() {
     return c.json({ ok: true, username: user.username, token: s.token, expires_at: s.expiresAt });
   });
 
+  // Self sign-up with an activation code (no code = no account, so the form cannot be used for spam).
+  app.post("/api/auth/register", async (c) => {
+    if (!(await rateLimit(c.env.DB, `register:${clientIp(c)}`, 5, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
+    const p = await parseBody(c, registerSchema);
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    // Check the code first (without using it) so a typo never creates an empty account.
+    const code = await first<{ id: number }>(c.env.DB, "SELECT id FROM activation_codes WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL", await codeHash(p.data.code));
+    if (!code) return apiError(c, 422, "invalid_code", "كود التفعيل غير صحيح أو مستخدم");
+    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ?", p.data.username)) return apiError(c, 409, "username_taken", "اسم المستخدم مستخدم — اختر غيره");
+    const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
+    const t = await first<{ id: number }>(c.env.DB, "INSERT INTO tenants (name, created_at, updated_at) VALUES (?, ?, ?) RETURNING id", p.data.name, now, now);
+    const tid = t!.id;
+    try {
+      await run(c.env.DB, "INSERT INTO admin_users (username, password_hash, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", p.data.username, hash, tid, now, now);
+      await redeemCode(c.env.DB, tid, p.data.code, now);
+    } catch (e) {
+      await deleteTenantData(c.env.DB, tid);
+      if (e instanceof RedeemError) return apiError(c, 422, e.code, e.message);
+      return apiError(c, 409, "username_taken", "اسم المستخدم مستخدم — اختر غيره");
+    }
+    await seedStarterTemplates(c.env.DB, tid, now);
+    await audit(c.env.DB, tid, p.data.username, "tenant.registered", String(tid));
+    return c.json({ ok: true });
+  });
+
   // ------------------------------------------------------------------ Authenticated API
   const api = new Hono<AppEnv>();
   api.use("*", requireAuth);
@@ -430,6 +497,38 @@ export function createApp() {
     return c.json({ ok: true });
   });
 
+  // ---- Subscription of the logged-in customer
+  api.get("/subscription", async (c) => {
+    const e = await ENT(c);
+    const [plans, messages, activeCampaigns, draws] = await Promise.all([
+      listPlans(c.env.DB),
+      monthlyMessages(c.env.DB, T(c)),
+      first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM campaigns WHERE tenant_id = ? AND status = 'active' AND deleted_at IS NULL", T(c)),
+      drawsThisMonth(c.env.DB, T(c)),
+    ]);
+    const contact = await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", "");
+    return c.json({
+      ...e,
+      usage: { messages, active_campaigns: activeCampaigns?.n ?? 0, draws_this_month: draws },
+      plans: plans.filter((p) => p.active).map(({ id, name, price_label, description, limits }) => ({ id, name, price_label, description, limits })),
+      sales_contact: contact || null,
+    });
+  });
+  api.post("/subscription/redeem", async (c) => {
+    if (!(await rateLimit(c.env.DB, `redeem:${T(c)}`, 10, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
+    const p = await parseBody(c, z.object({ code: z.string().trim().min(4).max(40) }));
+    if (!p.ok) return p.res;
+    if (c.get("session").is_owner) return apiError(c, 409, "owner", "حساب المالك لا يحتاج اشتراكًا");
+    try {
+      const r = await redeemCode(c.env.DB, T(c), p.data.code);
+      await audit(c.env.DB, T(c), c.get("session").username, "subscription.redeemed", r.plan_id, { expires_at: r.expires_at });
+      return c.json({ ok: true, ...r });
+    } catch (e) {
+      if (e instanceof RedeemError) return apiError(c, 422, e.code, e.message);
+      throw e;
+    }
+  });
+
   // ---- Owner panel (customers). Owner tenant only.
   const owner = new Hono<AppEnv>();
   owner.use("*", async (c, next) => {
@@ -440,7 +539,9 @@ export function createApp() {
     const since = Date.now() - 30 * 86_400_000;
     const rows = await all<any>(
       c.env.DB,
-      `SELECT t.id, t.name, t.is_owner, t.status, t.notes, t.created_at,
+      `SELECT t.id, t.name, t.is_owner, t.status, t.notes, t.created_at, t.plan_id, t.plan_expires_at,
+              (SELECT p.name FROM plans p WHERE p.id = t.plan_id) AS plan_name,
+              (SELECT u.messages FROM usage_counters u WHERE u.tenant_id = t.id AND u.month = ?) AS messages_month,
               (SELECT u.username FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS username,
               (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS ig_username,
               (SELECT a.status FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS ig_status,
@@ -450,6 +551,7 @@ export function createApp() {
               (SELECT COUNT(*) FROM conversation_flows f WHERE f.is_demo = 0 AND f.created_at > ? AND f.account_id IN (SELECT id FROM instagram_accounts WHERE tenant_id = t.id)) AS flows_30d,
               (SELECT MAX(s.last_seen_at) FROM sessions s JOIN admin_users u ON u.id = s.user_id WHERE u.tenant_id = t.id) AS last_seen_at
          FROM tenants t ORDER BY t.is_owner DESC, t.id DESC`,
+      new Date().toISOString().slice(0, 7),
       since,
     );
     return c.json(rows);
@@ -468,14 +570,7 @@ export function createApp() {
       await run(c.env.DB, "DELETE FROM tenants WHERE id = ?", tid);
       return apiError(c, 409, "username_taken", "اسم المستخدم مستخدم — اختر غيره");
     }
-    // Starter templates (no follow-requirement texts: customers only get the optional invitation).
-    await c.env.DB.batch(
-      [
-        ["public", "رد عام — شيّك الخاص", "شيّك الخاص 🙌"],
-        ["final", "المحتوى النهائي", "تفضل 🎁 {{content_url}}"],
-        ["mention", "شكر على المنشن", "تسلم على المنشن 🙌 هذه هديتنا لك: {{content_url}}"],
-      ].map(([kind, name, body]) => c.env.DB.prepare("INSERT INTO templates (tenant_id, kind, name, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").bind(tid, kind, name, body, now, now)),
-    );
+    await seedStarterTemplates(c.env.DB, tid, now);
     await audit(c.env.DB, T(c), c.get("session").username, "tenant.created", String(tid), { name: p.data.name, username: p.data.username });
     return c.json({ id: tid });
   });
@@ -522,6 +617,97 @@ export function createApp() {
     await audit(c.env.DB, T(c), c.get("session").username, p.data.allowed ? "follow_gate.allowed" : "follow_gate.disallowed", `tenant:${t.id}`);
     return c.json({ ok: true });
   });
+  // Plan of one customer, set by hand (e.g. a payment received outside the codes).
+  owner.post("/tenants/:tid/plan", async (c) => {
+    const t = await tenantParam(c);
+    if (!t) return apiError(c, 404, "not_found", "العميل غير موجود");
+    if (t.is_owner) return apiError(c, 409, "owner", "حساب المالك لا يحتاج اشتراكًا");
+    const p = await parseBody(c, z.object({ plan_id: z.string().max(20).nullable(), days: z.number().int().min(0).max(3650).optional(), expires_at: z.number().int().nullable().optional() }));
+    if (!p.ok) return p.res;
+    if (p.data.plan_id && !(await first(c.env.DB, "SELECT 1 FROM plans WHERE id = ?", p.data.plan_id))) return apiError(c, 422, "validation", "باقة غير موجودة");
+    const now = Date.now();
+    const cur = await first<{ plan_expires_at: number | null }>(c.env.DB, "SELECT plan_expires_at FROM tenants WHERE id = ?", t.id);
+    const expires = p.data.expires_at !== undefined ? p.data.expires_at : p.data.days !== undefined ? Math.max(now, cur?.plan_expires_at ?? 0) + p.data.days * 86_400_000 : cur?.plan_expires_at ?? null;
+    await run(c.env.DB, "UPDATE tenants SET plan_id = ?, plan_expires_at = ?, expiry_notice_at = NULL, updated_at = ? WHERE id = ?", p.data.plan_id, expires, now, t.id);
+    await audit(c.env.DB, T(c), c.get("session").username, "tenant.plan_set", String(t.id), { plan: p.data.plan_id, expires_at: expires });
+    return c.json({ ok: true, plan_id: p.data.plan_id, expires_at: expires });
+  });
+  // Deletes a customer and all of its data (irreversible; the customer's exact name must be typed).
+  owner.delete("/tenants/:tid", async (c) => {
+    const t = await tenantParam(c);
+    if (!t) return apiError(c, 404, "not_found", "العميل غير موجود");
+    if (t.is_owner) return apiError(c, 409, "owner", "لا يمكن حذف حساب المالك");
+    const p = await parseBody(c, z.object({ confirm: z.string() }));
+    if (!p.ok) return p.res;
+    if (p.data.confirm.trim() !== t.name.trim()) return apiError(c, 422, "confirm", "اكتب اسم العميل كما هو للتأكيد");
+    // Stop Instagram webhooks for the customer's account(s) first, then remove everything.
+    const accounts = await all<{ id: number }>(c.env.DB, "SELECT id FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0", t.id);
+    for (const a of accounts) await disconnectAccount(c.env, a.id, { purge: true, actor: c.get("session").username }).catch(() => undefined);
+    await deleteTenantData(c.env.DB, t.id);
+    await audit(c.env.DB, T(c), c.get("session").username, "tenant.deleted", String(t.id), { name: t.name });
+    return c.json({ ok: true });
+  });
+
+  owner.get("/plans", async (c) => c.json(await listPlans(c.env.DB)));
+  owner.put("/plans/:pid", async (c) => {
+    const pid = c.req.param("pid");
+    if (!(await first(c.env.DB, "SELECT 1 FROM plans WHERE id = ?", pid))) return apiError(c, 404, "not_found", "الباقة غير موجودة");
+    const p = await parseBody(c, planUpdateSchema);
+    if (!p.ok) return p.res;
+    await run(
+      c.env.DB,
+      "UPDATE plans SET name = ?, price_label = ?, description = ?, limits = ?, active = ?, updated_at = ? WHERE id = ?",
+      p.data.name, p.data.price_label ?? null, p.data.description ?? null, JSON.stringify(p.data.limits), p.data.active ? 1 : 0, Date.now(), pid,
+    );
+    await audit(c.env.DB, T(c), c.get("session").username, "plan.updated", pid);
+    return c.json({ ok: true });
+  });
+
+  owner.get("/codes", async (c) =>
+    c.json(
+      await all(
+        c.env.DB,
+        `SELECT a.id, a.hint, a.plan_id, p.name AS plan_name, a.days, a.note, a.created_at, a.used_at, a.revoked_at, t.name AS used_by
+           FROM activation_codes a LEFT JOIN plans p ON p.id = a.plan_id LEFT JOIN tenants t ON t.id = a.used_by_tenant
+          ORDER BY a.id DESC LIMIT 300`,
+      ),
+    ),
+  );
+  owner.post("/codes", async (c) => {
+    const p = await parseBody(c, z.object({ plan_id: z.string().max(20), days: z.number().int().min(1).max(3650), count: z.number().int().min(1).max(50).default(1), note: z.string().trim().max(200).optional() }));
+    if (!p.ok) return p.res;
+    if (!(await first(c.env.DB, "SELECT 1 FROM plans WHERE id = ?", p.data.plan_id))) return apiError(c, 422, "validation", "باقة غير موجودة");
+    const now = Date.now();
+    const codes: string[] = [];
+    const stmts: D1PreparedStatement[] = [];
+    for (let i = 0; i < p.data.count; i++) {
+      const code = newCode();
+      codes.push(code);
+      stmts.push(
+        c.env.DB.prepare("INSERT INTO activation_codes (code_hash, hint, plan_id, days, note, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(await codeHash(code), code.slice(-4), p.data.plan_id, p.data.days, p.data.note ?? null, now),
+      );
+    }
+    await c.env.DB.batch(stmts);
+    await audit(c.env.DB, T(c), c.get("session").username, "codes.created", p.data.plan_id, { count: p.data.count, days: p.data.days });
+    // The codes themselves are returned once and never stored.
+    return c.json({ codes });
+  });
+  owner.post("/codes/:cid/revoke", async (c) => {
+    const cid = Number(c.req.param("cid"));
+    const r = await run(c.env.DB, "UPDATE activation_codes SET revoked_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL", Date.now(), cid);
+    if (!r.meta.changes) return apiError(c, 409, "not_revocable", "الكود مستخدم أو ملغى مسبقًا");
+    await audit(c.env.DB, T(c), c.get("session").username, "codes.revoked", String(cid));
+    return c.json({ ok: true });
+  });
+
+  owner.get("/settings", async (c) => c.json({ sales_contact: await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", "") }));
+  owner.put("/settings", async (c) => {
+    const p = await parseBody(c, z.object({ sales_contact: z.string().trim().max(300).refine((v) => v === "" || /^https:\/\//.test(v), "الرابط يجب أن يبدأ بـ https://") }));
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "sales_contact", p.data.sales_contact);
+    return c.json({ ok: true });
+  });
+
   api.route("/owner", owner);
 
   // ---- Dashboard
@@ -892,6 +1078,13 @@ export function createApp() {
     const d = p.data;
     const now = Date.now();
     const warnings: string[] = [];
+    // Plan: features the plan does not include are saved switched off (with a note).
+    const ent = await ENT(c);
+    if (d.public_reply_enabled && !ent.limits.public_reply) {
+      d.public_reply_enabled = false;
+      warnings.push("الرد العام غير متاح في باقتك — حُفظت الحملة بدونه.");
+    }
+    if (d.track_clicks && !ent.limits.link_tracking) d.track_clicks = false;
     if (d.require_follow && !(await followGateAllowed(c.env.DB, T(c)))) {
       warnings.push("شرط المتابعة غير مسموح لهذا الحساب — حُفظت الحملة بدونه. يمكنك إضافة دعوة اختيارية للمتابعة.");
     }
@@ -971,6 +1164,10 @@ export function createApp() {
     const src = id && (await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
     if (!src) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     const now = Date.now();
+    if (p.data.activate) {
+      const blocked = await activationBlock(c, String(src.type), null);
+      if (blocked) return blocked;
+    }
     const { id: _id, status: _s, activated_at: _a, created_at: _c, updated_at: _u, deleted_at: _d, name, ...rest } = src;
     if (p.data.media_ids) {
       rest.scope = "selected";
@@ -1004,8 +1201,12 @@ export function createApp() {
     const id = idParam(c);
     const p = await parseBody(c, z.object({ status: z.enum(["active", "paused", "archived", "draft"]) }));
     if (!p.ok) return p.res;
-    const row = id && (await first<{ status: string; activated_at: number | null; name: string }>(c.env.DB, "SELECT status, activated_at, name FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
+    const row = id && (await first<{ status: string; activated_at: number | null; name: string; type: string }>(c.env.DB, "SELECT status, activated_at, name, type FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
     if (!row) return apiError(c, 404, "not_found", "الحملة غير موجودة");
+    if (p.data.status === "active" && row.status !== "active") {
+      const blocked = await activationBlock(c, row.type, id!);
+      if (blocked) return blocked;
+    }
     const now = Date.now();
     // activated_at is reset on every (re)activation so events that arrived while paused are not replayed.
     await run(
@@ -1155,6 +1356,8 @@ export function createApp() {
   });
 
   api.get("/logs/export", async (c) => {
+    const blocked = await planBlock(c, "csv_export");
+    if (blocked) return blocked;
     const type = c.req.query("type") ?? "events";
     let headers: string[];
     let rows: any[];
@@ -1200,6 +1403,8 @@ export function createApp() {
     return c.json({ usage, recover_last, auto_recover });
   });
   api.post("/recover", async (c) => {
+    const blocked = await planBlock(c, "recover");
+    if (blocked) return blocked;
     if (!(await rateLimit(c.env.DB, `recover:${c.get("session").username}`, 6, 3_600_000))) return apiError(c, 429, "rate_limited", "انتظر قليلًا قبل تشغيل الاسترجاع مرة أخرى");
     let used = 0;
     const ctx = engineContext(c.env, () => used++);
@@ -1326,6 +1531,11 @@ export function createApp() {
     const p = await parseBody(c, drawInputSchema);
     if (!p.ok) return p.res;
     const d = p.data;
+    const ent = await ENT(c);
+    if (!ent.active) return apiError(c, 403, "subscription_inactive", "اشتراكك غير فعّال — أدخل كود التفعيل من صفحة «اشتراكي»");
+    if (ent.limits.draws_per_month !== null && (await drawsThisMonth(c.env.DB, T(c))) >= ent.limits.draws_per_month) {
+      return apiError(c, 403, "plan_draws", ent.limits.draws_per_month === 0 ? "السحوبات غير متاحة في باقتك — رقِّ باقتك" : `وصلت لحد السحوبات الشهري في باقتك (${ent.limits.draws_per_month})`);
+    }
     try {
       const m = await resolveDrawMedia(c, d);
       const now = Date.now();
@@ -1442,6 +1652,8 @@ export function createApp() {
   api.get("/card-designs", async (c) => c.json(await all(c.env.DB, "SELECT id, name, design, updated_at FROM card_designs WHERE tenant_id = ? ORDER BY id DESC", T(c))));
   const designBody = z.object({ name: z.string().trim().min(1, "اكتب اسم التصميم").max(80), design: cardDesignInputSchema });
   api.post("/card-designs", async (c) => {
+    const blocked = await planBlock(c, "cards");
+    if (blocked) return blocked;
     const p = await parseBody(c, designBody);
     if (!p.ok) return p.res;
     const now = Date.now();
@@ -1488,6 +1700,8 @@ export function createApp() {
     }
   });
   api.post("/draws/:id/winners/:wid/card", async (c) => {
+    const blocked = await planBlock(c, "cards");
+    if (blocked) return blocked;
     const p = await parseBody(c, z.object({ image: z.string().max(2_100_000) }));
     if (!p.ok) return p.res;
     try {
@@ -1498,6 +1712,8 @@ export function createApp() {
     }
   });
   api.post("/draws/:id/winners/:wid/send", async (c) => {
+    const blocked = await planBlock(c, "cards");
+    if (blocked) return blocked;
     const id = idParam(c)!;
     const wid = Number(c.req.param("wid"));
     try {
@@ -1529,6 +1745,8 @@ export function createApp() {
     return c.json({ settings, has_token });
   });
   api.put("/notifications", async (c) => {
+    const blocked = await planBlock(c, "telegram");
+    if (blocked) return blocked;
     const p = await parseBody(
       c,
       z.object({
@@ -1568,6 +1786,8 @@ export function createApp() {
     return c.json({ settings: next, has_token: await hasBotToken(c.env.DB, T(c)) });
   });
   api.post("/notifications/detect", async (c) => {
+    const blocked = await planBlock(c, "telegram");
+    if (blocked) return blocked;
     const r = await detectChat(c.env, T(c));
     if (!r.ok) return apiError(c, 422, "telegram", r.error ?? "تعذر العثور على المحادثة");
     const next = { ...(await getNotifySettings(c.env.DB, T(c))), chat_id: r.chat_id!, enabled: true };
@@ -1575,6 +1795,8 @@ export function createApp() {
     return c.json({ settings: next, name: r.name ?? null });
   });
   api.post("/notifications/test", async (c) => {
+    const blocked = await planBlock(c, "telegram");
+    if (blocked) return blocked;
     const p = await parseBody(c, z.object({ kind: z.enum(["test", "report"]).default("test") }));
     if (!p.ok) return p.res;
     const text = p.data.kind === "report" ? await buildDailyReport(c.env.DB, T(c)) : "✅ تم ربط إشعارات HSN AutoReply بنجاح. ستصلك التنبيهات والتقرير اليومي هنا.";
@@ -1628,6 +1850,8 @@ export function createApp() {
     return c.json({ participant: p, messages: messages.reverse(), flows, window_open: !!expires && expires > now, window_expires_at: expires });
   });
   api.post("/inbox/:id/send", async (c) => {
+    const blocked = await planBlock(c, "inbox_manual");
+    if (blocked) return blocked;
     const id = idParam(c);
     const body = await parseBody(c, z.object({ text: z.string().trim().min(1).max(1000) }));
     if (!body.ok) return body.res;

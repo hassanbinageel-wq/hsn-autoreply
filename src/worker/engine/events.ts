@@ -17,6 +17,7 @@ import {
 } from "./context";
 import { PROBE_CHECK, enqueue, VERIFY_CHECK } from "./jobs";
 import { recordMessage } from "../services/inbox";
+import { getEntitlement, monthlyMessages } from "../services/plans";
 import { cacheMediaStmt } from "../services/media";
 
 export interface EventRow {
@@ -244,6 +245,16 @@ async function triggerCampaign(
   forcedCampaignId?: number,
 ): Promise<ProcessOutcome> {
   const type = ev.kind as CampaignRow["type"];
+  // Subscription: no valid plan → nothing runs; plan events and the monthly message allowance apply
+  // (the simulator is never limited — it sends nothing).
+  if (row.is_demo !== 1) {
+    const ent = await getEntitlement(ctx.db, account.tenant_id, ctx.now());
+    if (!ent.active) return { status: "ignored", reason: "subscription_inactive" };
+    if (!ent.limits.events.includes(type)) return { status: "ignored", reason: "plan_event_not_included" };
+    if (ent.limits.monthly_messages !== null && (await monthlyMessages(ctx.db, account.tenant_id, ctx.now())) >= ent.limits.monthly_messages) {
+      return { status: "ignored", reason: "monthly_limit_reached" };
+    }
+  }
   const candidates = forcedCampaignId
     ? await all<CampaignRow>(ctx.db, "SELECT * FROM campaigns WHERE id = ? AND tenant_id = ? AND type = ? AND deleted_at IS NULL", forcedCampaignId, account.tenant_id, type)
     : await all<CampaignRow>(

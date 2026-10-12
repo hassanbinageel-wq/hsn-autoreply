@@ -3,6 +3,7 @@ import { TERMINAL_FLOW_STATES } from "../../shared/states";
 import { first, getSetting, run } from "../lib/db";
 import { randomToken } from "../lib/crypto";
 import { recordMessage } from "../services/inbox";
+import { countMessage, getEntitlement } from "../services/plans";
 import type { MetaError, OutgoingMessage, QuickReply } from "../meta/types";
 import {
   loadAccount,
@@ -77,6 +78,7 @@ async function loadAll(ctx: EngineContext, job: JobRow): Promise<Loaded | null> 
 async function guard(ctx: EngineContext, l: Loaded): Promise<string | null> {
   if (l.account.status !== "active") return "account_not_active";
   if (l.account.tenant_status && l.account.tenant_status !== "active") return "customer_suspended";
+  if (!l.flow.is_demo && !(await getEntitlement(ctx.db, l.account.tenant_id, ctx.now())).active) return "subscription_inactive";
   if (l.flow.is_demo) return null; // demo flows ignore production switches
   if (!(await getSetting(ctx.db, l.account.tenant_id, "automation_enabled", true))) return "automation_paused";
   if (l.campaign.deleted_at) return "campaign_deleted";
@@ -500,6 +502,7 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
 
   if (r.ok) {
     await recordAttempt(ctx.db, job, started, now, "accepted", { httpStatus: r.httpStatus });
+    if (!l.flow.is_demo) await countMessage(ctx.db, l.account.tenant_id, now);
     await finishJob(ctx.db, job, owner, "accepted", now, { result: { message_id: r.data.message_id, channel, text: l.flow.is_demo ? msg.text : undefined, quick_replies: l.flow.is_demo ? msg.quickReplies : undefined, link_button: l.flow.is_demo ? msg.linkButton : undefined, account_button: l.flow.is_demo ? msg.accountButton : undefined } });
     if (channel === "private_reply") {
       await run(ctx.db, "UPDATE conversation_flows SET private_reply_status = 'accepted', updated_at = ? WHERE id = ?", now, l.flow.id);
@@ -610,6 +613,7 @@ async function execPublicReply(ctx: EngineContext, job: JobRow, owner: string): 
   now = ctx.now();
   if (r.ok) {
     await recordAttempt(ctx.db, job, started, now, "accepted", { httpStatus: r.httpStatus });
+    if (!l.flow.is_demo) await countMessage(ctx.db, l.account.tenant_id, now);
     await finishJob(ctx.db, job, owner, "accepted", now, { result: { id: r.data.id, text: l.flow.is_demo ? text : undefined } });
     await run(ctx.db, "UPDATE conversation_flows SET public_reply_status = 'accepted', updated_at = ? WHERE id = ?", now, l.flow.id);
     return { outcome: "accepted" };

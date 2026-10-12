@@ -18,6 +18,7 @@ import { TemplatesPage } from "./pages/Templates";
 import { LogsPage } from "./pages/Logs";
 import { SimulatorPage } from "./pages/Simulator";
 import { OwnerPage } from "./pages/Owner";
+import { SubscriptionPage } from "./pages/Subscription";
 import { SettingsPage } from "./pages/Settings";
 import { DownloadPage } from "./pages/Download";
 
@@ -92,9 +93,11 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ to: string; label: strin
     { to: "/download", label: "تنزيل التطبيق", icon: "smartphone" },
   ] },
 ];
+/** Customers only: their subscription page. */
+const SUBSCRIPTION_ITEM = { to: "/subscription", label: "اشتراكي", icon: "zap" };
 /** Owner-only section (customers management). */
 const OWNER_GROUP = { title: "الإدارة", items: [{ to: "/owner", label: "العملاء", icon: "users" }] };
-const NAV = [...NAV_GROUPS, OWNER_GROUP].flatMap((g) => g.items);
+const NAV = [...NAV_GROUPS, OWNER_GROUP].flatMap((g) => g.items).concat(SUBSCRIPTION_ITEM);
 const MOBILE_TABS = ["/", "/campaigns", "/inbox"];
 
 export function App() {
@@ -103,6 +106,7 @@ export function App() {
   const [auth, setAuth] = useState<"loading" | "in" | "out">("loading");
   const [username, setUsername] = useState("");
   const [isOwner, setIsOwner] = useState(false);
+  const [sub, setSub] = useState<{ active: boolean; expires_at: number | null; reason?: string } | null>(null);
   const [online, setOnline] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(false);
@@ -116,6 +120,8 @@ export function App() {
       setCsrf(me.csrf_token);
       setUsername(me.username);
       setIsOwner(!!me.is_owner);
+      if (!me.is_owner) api<any>("/api/subscription").then((x) => setSub({ active: x.active, expires_at: x.expires_at, reason: x.reason })).catch(() => undefined);
+      else setSub(null);
       setAuth("in");
       api<{ settings: { timezone?: string } }>("/api/settings")
         .then((s) => setTz(s.settings.timezone ?? "Asia/Aden"))
@@ -204,6 +210,7 @@ export function App() {
       case "/settings": page = <SettingsPage theme={theme} setTheme={setTheme} onLogout={logout} username={username} />; break;
       case "/download": page = <DownloadPage />; break;
       case "/owner": page = isOwner ? <OwnerPage /> : <DashboardPage />; break;
+      case "/subscription": page = <SubscriptionPage />; break;
       default: page = <Alert tone="warn">الصفحة غير موجودة</Alert>;
     }
 
@@ -236,7 +243,10 @@ export function App() {
           </span>
         </Link>
         <nav className="flex-1 overflow-y-auto">
-          {(isOwner ? [NAV_GROUPS[0], OWNER_GROUP, ...NAV_GROUPS.slice(1)] : NAV_GROUPS).map((g) => (
+          {(isOwner
+            ? [NAV_GROUPS[0], OWNER_GROUP, ...NAV_GROUPS.slice(1)]
+            : [...NAV_GROUPS.slice(0, 2), { ...NAV_GROUPS[2], items: [SUBSCRIPTION_ITEM, ...NAV_GROUPS[2].items] }]
+          ).map((g) => (
             <div key={g.title}>
               <div className="muted px-2.5 pb-1.5 pt-3 text-[11px] font-semibold">{g.title}</div>
               {g.items.map((n) => (
@@ -281,6 +291,16 @@ export function App() {
           </div>
         </header>
         <main className="mx-auto w-full max-w-6xl px-4 pb-28 pt-5 lg:px-8 lg:pb-10">
+          {sub && route !== "/subscription" && (!sub.active || (sub.expires_at && sub.expires_at - Date.now() < 3 * 86_400_000)) && (
+            <div className="mb-4">
+              <Alert tone={sub.active ? "warn" : "bad"}>
+                {sub.active
+                  ? `اشتراكك ينتهي خلال ${Math.max(1, Math.ceil(((sub.expires_at ?? 0) - Date.now()) / 86_400_000))} يوم — جدّده حتى لا تتوقف الردود.`
+                  : sub.reason === "expired" ? "انتهى اشتراكك — الردود التلقائية متوقفة." : "لا يوجد اشتراك فعّال — الردود التلقائية لن تعمل قبل التفعيل."}{" "}
+                <Link to="/subscription" className="font-bold underline">أدخل كود التفعيل</Link>
+              </Alert>
+            </div>
+          )}
           {!online && (
             <div className="mb-3">
               <Alert tone="warn">لا يوجد اتصال بالإنترنت. الأتمتة مستمرة على الخادم؛ ستتحدث البيانات عند عودة الاتصال.</Alert>
@@ -325,7 +345,7 @@ export function App() {
           <div className="card safe-bottom absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-b-none p-4" onClick={(e) => e.stopPropagation()} role="menu">
             <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-[var(--border)]" />
             <div className="grid grid-cols-3 gap-2">
-              {NAV.filter((n) => !MOBILE_TABS.includes(n.to) && (isOwner || n.to !== "/owner")).map((n) => (
+              {NAV.filter((n) => !MOBILE_TABS.includes(n.to) && (isOwner ? n.to !== "/subscription" : n.to !== "/owner")).map((n) => (
                 <Link key={n.to} to={n.to} className={`flex flex-col items-center gap-1.5 rounded-2xl border border-[var(--border)] px-2 py-3.5 text-center text-xs font-bold ${isActive(n.to) ? "border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300" : ""}`}>
                   <Icon name={n.icon} size={22} />
                   {n.label}

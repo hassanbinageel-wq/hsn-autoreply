@@ -4,7 +4,7 @@ import { all, getSetting, OWNER_TENANT, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
 import { engineContext, refreshAccountProfiles, refreshExpiringTokens } from "./services/account";
 import { sanitize } from "./meta/client";
-import { runNotifications } from "./services/notify";
+import { remindExpiringSubscriptions, runNotifications } from "./services/notify";
 import { autoRecover } from "./services/recover";
 
 const app = createApp();
@@ -86,6 +86,7 @@ export default {
           await refreshExpiringTokens(env).catch((e) => console.error("token refresh", sanitize(String(e))));
           await refreshAccountProfiles(env).catch((e) => console.error("profile refresh", sanitize(String(e))));
           await cleanup(env.DB).catch((e) => console.error("cleanup", sanitize(String(e))));
+          await remindExpiringSubscriptions(env).catch((e) => console.error("expiry reminders", sanitize(String(e))));
         })(),
       );
       return;
