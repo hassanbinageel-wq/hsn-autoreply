@@ -60,17 +60,24 @@ export async function simulate(env: Env, input: z.infer<typeof simulateSchema>) 
     await run(db, "UPDATE participants SET last_user_message_at = ? WHERE account_id = ? AND igsid = ?", now - 25 * 3_600_000, accountId, igsid);
   }
 
+  // A chosen campaign limited to specific posts/stories: simulate on one of ITS posts, otherwise the test event
+  // would land on a demo post outside the campaign scope and be ignored ("media_not_in_scope").
+  let scopedMedia: string | null = null;
+  if (!input.media_id && input.campaign_id) {
+    const m = await first<{ media_id: string }>(db, "SELECT media_id FROM campaign_media WHERE campaign_id = ? ORDER BY rowid LIMIT 1", input.campaign_id);
+    scopedMedia = m?.media_id ?? null;
+  }
   const uid = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
   const base = { accountIgId: DEMO_IG_ID, senderId: igsid, senderUsername: input.participant, time: now };
   let ev: NormalizedEvent;
   let forced: number | undefined;
   switch (input.event) {
     case "comment":
-      ev = { ...base, kind: "comment", dedupKey: `comment:${uid}`, text: input.text, mediaId: input.media_id || "demo_media_1", commentId: `demo_c_${uid}`, parentId: input.is_reply ? "demo_parent" : undefined };
+      ev = { ...base, kind: "comment", dedupKey: `comment:${uid}`, text: input.text, mediaId: input.media_id || scopedMedia || "demo_media_1", commentId: `demo_c_${uid}`, parentId: input.is_reply ? "demo_parent" : undefined };
       forced = input.campaign_id;
       break;
     case "story_reply":
-      ev = { ...base, kind: "story_reply", dedupKey: `msg:${uid}`, mid: uid, text: input.text, storyId: input.media_id || "demo_story_1" };
+      ev = { ...base, kind: "story_reply", dedupKey: `msg:${uid}`, mid: uid, text: input.text, storyId: input.media_id || scopedMedia || "demo_story_1" };
       forced = input.campaign_id;
       break;
     case "story_mention":
