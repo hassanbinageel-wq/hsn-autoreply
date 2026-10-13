@@ -47,13 +47,28 @@ describe("secure random", () => {
     const n = 7;
     const counts = new Array(n).fill(0);
     const N = 70_000;
-    for (let i = 0; i < N; i++) counts[secureRandomInt(n)]++;
+    // Deterministic, well-distributed 32-bit source (mulberry32, fixed seed): the mapping + rejection logic is
+    // checked for uniformity without the run-to-run chance of a real random source tripping the threshold.
+    let seed = 0x9e3779b9;
+    const rand32 = () => {
+      seed = (seed + 0x6d2b79f5) >>> 0;
+      let t = seed;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return (t ^ (t >>> 14)) >>> 0;
+    };
+    for (let i = 0; i < N; i++) counts[secureRandomInt(n, rand32)]++;
     const exp = N / n;
     const chi = counts.reduce((a, c) => a + (c - exp) ** 2 / exp, 0);
     expect(chi).toBeLessThan(22.46); // p=0.001 critical value for 6 degrees of freedom
     // values in the biased tail (>= floor(2^32/n)*n) are rejected, never folded with modulo
     const seqVals = [0xffffffff, 0xfffffffe, 5];
     expect(secureRandomInt(n, () => seqVals.shift()!)).toBe(5);
+    // the default (crypto) source always stays in range
+    for (let i = 0; i < 2_000; i++) {
+      const v = secureRandomInt(n);
+      expect(v >= 0 && v < n && Number.isInteger(v)).toBe(true);
+    }
   });
 });
 
