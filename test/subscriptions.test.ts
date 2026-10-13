@@ -207,6 +207,7 @@ describe("owner tools", () => {
     expect(page.status).toBe(200);
     expect(page.body).toContain("149 ر.س / شهريًا");
     expect(page.body).toContain("الكامل");
+    expect(page.body).toContain("7042872536");
     expect(page.body).toContain("https://wa.me/966500000000");
     expect(page.body).toContain('role="tooltip"');
     expect(page.body).toContain("المحاكاة");

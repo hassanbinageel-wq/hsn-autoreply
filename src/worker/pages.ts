@@ -8,19 +8,25 @@ export function esc(s: unknown): string {
 export const PAGE_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
+/** The legal operator of the service, exactly as in the commercial registration (Meta business verification matches it). */
+export const OPERATOR = { name: "شركة ارقام المستديرة للدعاية والاعلان", cr: "7042872536", country: "المملكة العربية السعودية" };
+const operatorFooter = () =>
+  `<footer style="margin-top:32px;padding-top:14px;border-top:1px solid rgba(127,127,127,.25);font-size:.85rem;opacity:.75;text-align:center">HSN AutoReply خدمة تقدّمها ${esc(OPERATOR.name)} — الرقم الوطني الموحد (السجل التجاري): ${esc(OPERATOR.cr)} — ${esc(OPERATOR.country)}</footer>`;
+
 function layout(title: string, body: string): string {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} — HSN AutoReply</title>
 <style>body{font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;max-width:760px;margin:0 auto;padding:24px 16px;line-height:1.8;background:#fff;color:#111}
 @media (prefers-color-scheme:dark){body{background:#0b0f14;color:#e7ecf2}a{color:#7cc4ff}}
 h1{font-size:1.5rem}.btn{display:inline-block;padding:14px 22px;border-radius:12px;background:#6d28d9;color:#fff;text-decoration:none;font-weight:700}
-.muted{opacity:.75;font-size:.95rem}</style></head><body>${body}</body></html>`;
+.muted{opacity:.75;font-size:.95rem}</style></head><body>${body}${operatorFooter()}</body></html>`;
 }
 
 export function privacyPage(baseUrl: string): string {
   return layout(
     "سياسة الخصوصية",
     `<h1>سياسة الخصوصية — HSN AutoReply</h1>
+<p>مشغّل الخدمة والمسؤول عن البيانات: ${esc(OPERATOR.name)}، الرقم الوطني الموحد ${esc(OPERATOR.cr)}، ${esc(OPERATOR.country)}.</p>
 <p>HSN AutoReply أداة يستخدمها صاحب الحساب لأتمتة الرد على التعليقات وردود الستوري والإشارات في حسابه الاحترافي على إنستقرام عبر واجهة Meta الرسمية.</p>
 <h2>البيانات التي نعالجها</h2>
 <ul>
@@ -138,5 +144,5 @@ ul{list-style:none;padding:0;margin:12px 0 0}li{padding:4px 0;font-size:.95rem}.
 <div class="steps"><h2>كيف تشترك؟</h2><ol><li>تواصل معنا واختر الباقة والمدة، وبعد الدفع يصلك <b>كود تفعيل</b>.</li>
 <li>أنشئ حسابك بالكود من صفحة التسجيل، أو أدخله من «اشتراكي» إذا عندك حساب.</li><li>اربط حساب إنستقرام الاحترافي عبر تسجيل الدخول الرسمي من Meta وابدأ حملاتك.</li></ol>
 <p style="text-align:center">${contact ? `<a class="btn" href="${esc(contact)}" rel="noopener">تواصل معنا للاشتراك</a>` : ""}<a class="btn ghost" href="${esc(baseUrl)}/#/register">عندي كود — أنشئ حسابي</a></p>
-<p class="muted" style="text-align:center"><a href="${esc(baseUrl)}/privacy">الخصوصية</a> · <a href="${esc(baseUrl)}/terms">الشروط</a></p></div></div></body></html>`;
+<p class="muted" style="text-align:center"><a href="${esc(baseUrl)}/privacy">الخصوصية</a> · <a href="${esc(baseUrl)}/terms">الشروط</a></p>${operatorFooter()}</div></div></body></html>`;
 }

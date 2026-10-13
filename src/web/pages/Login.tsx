@@ -111,6 +111,11 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             <Icon name="shield" size={18} className="text-emerald-500" />
             <span>هذا حساب إدارة التطبيق فقط — لا نطلب كلمة مرور إنستقرام أبدًا. الربط يتم عبر Meta الرسمي.</span>
           </div>
+          <p className="muted text-center text-[11px] leading-relaxed">
+            خدمة تقدّمها شركة ارقام المستديرة للدعاية والاعلان — الرقم الوطني الموحد 7042872536
+            <br />
+            <a className="underline" href={`${API_BASE || ""}/privacy`} target="_blank" rel="noopener">الخصوصية</a> · <a className="underline" href={`${API_BASE || ""}/terms`} target="_blank" rel="noopener">الشروط</a>
+          </p>
         </form>
       </div>
       <div className="relative hidden w-[44%] max-w-[640px] flex-col overflow-hidden p-12 text-white lg:flex" style={{ background: "radial-gradient(circle at 80% 15%,rgba(249,115,22,.55),transparent 45%),radial-gradient(circle at 15% 85%,rgba(219,39,119,.5),transparent 50%),linear-gradient(160deg,#1e0b4b,#4c1d95 50%,#86198f)" }}>
