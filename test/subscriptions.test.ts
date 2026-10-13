@@ -173,15 +173,42 @@ describe("owner tools", () => {
     expect((await DB.prepare("SELECT COUNT(*) AS n FROM instagram_accounts WHERE tenant_id = 1").first<any>()).n).toBe(1);
   });
 
+  it("simulator, campaign stats and undo are in the max plan only (unless the owner turns them on)", async () => {
+    const { h, tid } = await customerWithAccount();
+    await call(`/api/owner/tenants/${tid}/plan`, OWNER, "POST", { plan_id: "pro", days: 30 });
+    const cid = (await call("/api/campaigns", h, "POST", campaign("c"))).body.id;
+    const sim = { campaign_id: cid, event: "comment", text: "أبغى الكورس", participant: "x", reset: true };
+    expect((await call("/api/simulate", h, "POST", sim)).body.error.code).toBe("plan_feature");
+    expect((await call(`/api/campaigns/${cid}/stats`, h)).status).toBe(403);
+    expect((await call(`/api/campaigns/${cid}/people`, h)).status).toBe(403);
+    expect((await call("/api/undo", h)).status).toBe(403);
+    expect([403, 404]).toContain((await call("/api/undo/1", h, "POST", {})).status); // ownership guard may answer first
+    // the owner turns the simulator on for "pro": it works without any code change
+    const pro = (await call("/api/owner/plans", OWNER)).body.find((p: any) => p.id === "pro");
+    const put = await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, active: true, limits: { ...pro.limits, simulator: true } });
+    expect(put.status).toBe(200);
+    expect((await call("/api/simulate", h, "POST", sim)).status).toBe(200);
+    expect((await call(`/api/campaigns/${cid}/stats`, h)).status).toBe(403);
+    await call(`/api/owner/tenants/${tid}/plan`, OWNER, "POST", { plan_id: "max", days: 30 });
+    expect((await call(`/api/campaigns/${cid}/stats`, h)).status).toBe(200);
+    expect((await call(`/api/campaigns/${cid}/people`, h)).status).toBe(200);
+    expect((await call("/api/undo", h)).status).toBe(200);
+    // the owner is never limited
+    expect((await call("/api/undo", OWNER)).status).toBe(200);
+  });
+
   it("plans are editable and the public pricing page shows them", async () => {
     const plans = (await call("/api/owner/plans", OWNER)).body;
     const pro = plans.find((p: any) => p.id === "pro");
-    expect((await call("/api/owner/plans/pro", OWNER, "PUT", { ...pro, price_label: "149 ر.س / شهريًا", active: true })).status).toBe(200);
+    const put = await call("/api/owner/plans/pro", OWNER, "PUT", { ...pro, price_label: "149 ر.س / شهريًا", active: true });
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
     await call("/api/owner/settings", OWNER, "PUT", { sales_contact: "https://wa.me/966500000000" });
     const page = await call("/pricing");
     expect(page.status).toBe(200);
     expect(page.body).toContain("149 ر.س / شهريًا");
     expect(page.body).toContain("الكامل");
     expect(page.body).toContain("https://wa.me/966500000000");
+    expect(page.body).toContain('role="tooltip"');
+    expect(page.body).toContain("المحاكاة");
   });
 });

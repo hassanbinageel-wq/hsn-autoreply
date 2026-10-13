@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { api } from "../api";
 import { Icon } from "../components/Icon";
-import { Alert, Card, Empty, Field, Modal, Spinner, Toggle, fmtTime, toast, useAsync } from "../components/ui";
-import { EVENT_LABELS, FEATURE_LABELS } from "../../shared/plans";
+import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtTime, toast, useAsync } from "../components/ui";
+import { EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS } from "../../shared/plans";
 
 /** A random 16-character password (the owner gives it to the customer, who can change it later). */
 function generatePassword(): string {
@@ -342,12 +342,12 @@ function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
         <Field label="السعر (كما يظهر)" hint="مثل: 99 ر.س / شهريًا"><input className="input" value={f.price_label ?? ""} onChange={(e) => setF({ ...f, price_label: e.target.value })} maxLength={60} /></Field>
         <Field label="وصف قصير"><input className="input" value={f.description ?? ""} onChange={(e) => setF({ ...f, description: e.target.value })} maxLength={200} /></Field>
         {LIMIT_FIELDS.map(([k, label]) => (
-          <Field key={k} label={label} hint="فارغ = غير محدود">
+          <Field key={k} label={<Tip text={LIMIT_HINTS[k]}>{label}</Tip>} hint="فارغ = غير محدود">
             <input className="input" type="number" min={0} value={f.limits[k] ?? ""} onChange={(e) => setL(k, e.target.value === "" ? null : Number(e.target.value))} />
           </Field>
         ))}
         <div>
-          <div className="font-display mb-1.5 text-[13px] font-bold text-[var(--text-2)]">الأحداث</div>
+          <div className="font-display mb-1.5 text-[13px] font-bold text-[var(--text-2)]"><Tip text={LIMIT_HINTS.events}>الأحداث</Tip></div>
           <div className="flex flex-wrap gap-2">
             {Object.entries(EVENT_LABELS).map(([k, label]) => {
               const on = f.limits.events.includes(k);
@@ -360,8 +360,8 @@ function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
           </div>
         </div>
         <div className="divide-y divide-[var(--border)]">
-          {Object.entries(FEATURE_LABELS).map(([k, label]) => <Toggle key={k} checked={!!f.limits[k]} onChange={(v) => setL(k, v)} label={label} />)}
-          <Toggle checked={!!f.active} onChange={(v) => setF({ ...f, active: v })} label="ظاهرة في صفحة الباقات" />
+          {Object.entries(FEATURE_LABELS).map(([k, label]) => <Toggle key={k} checked={!!f.limits[k]} onChange={(v) => setL(k, v)} label={<Tip text={FEATURE_HINTS[k]}>{label}</Tip>} />)}
+          <Toggle checked={!!f.active} onChange={(v) => setF({ ...f, active: v })} label="معروضة للعملاء" description="تظهر في صفحة الأسعار وصفحة «اشتراكي». إخفاؤها لا يوقف المشتركين الحاليين فيها، وتقدر تولّد لها أكواد." />
         </div>
         <button className="btn btn-primary w-full" disabled={busy} onClick={save}>{busy ? "…" : "حفظ الباقة"}</button>
       </div>

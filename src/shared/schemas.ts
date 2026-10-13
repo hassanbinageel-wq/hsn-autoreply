@@ -143,6 +143,9 @@ export const planUpdateSchema = z.object({
     draws_per_month: limitNum,
     draw_video: z.boolean(),
     cards: z.boolean(),
+    simulator: z.boolean().default(false),
+    campaign_stats: z.boolean().default(false),
+    undo: z.boolean().default(false),
   }),
 });
 

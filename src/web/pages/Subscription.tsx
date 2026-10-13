@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { api } from "../api";
 import { Icon } from "../components/Icon";
-import { EVENT_LABELS, FEATURE_LABELS, type PlanLimits } from "../../shared/plans";
-import { Alert, Card, Spinner, fmtTime, toast, useAsync } from "../components/ui";
+import { EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, type PlanLimits } from "../../shared/plans";
+import { Alert, Card, Spinner, Tip, fmtTime, toast, useAsync } from "../components/ui";
 
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
 
@@ -21,12 +21,12 @@ function Meter({ label, used, max }: { label: string; used: number; max: number 
 function Features({ limits }: { limits: PlanLimits }) {
   return (
     <ul className="space-y-1.5 text-sm">
-      <li>✅ {limits.events.map((e) => EVENT_LABELS[e] ?? e).join(" · ") || "—"}</li>
-      <li>✅ الحملات النشطة: {n(limits.active_campaigns)}</li>
-      <li>✅ الرسائل شهريًا: {n(limits.monthly_messages)}</li>
-      <li className={limits.draws_per_month === 0 ? "muted line-through" : ""}>{limits.draws_per_month === 0 ? "—" : "✅"} السحوبات: {limits.draws_per_month === null ? "غير محدودة" : `${limits.draws_per_month} شهريًا`}</li>
+      <li><Tip text={LIMIT_HINTS.events}>✅ {limits.events.map((e) => EVENT_LABELS[e] ?? e).join(" · ") || "—"}</Tip></li>
+      <li><Tip text={LIMIT_HINTS.active_campaigns}>✅ الحملات النشطة: {n(limits.active_campaigns)}</Tip></li>
+      <li><Tip text={LIMIT_HINTS.monthly_messages}>✅ الرسائل شهريًا: {n(limits.monthly_messages)}</Tip></li>
+      <li><Tip text={LIMIT_HINTS.draws_per_month}><span className={limits.draws_per_month === 0 ? "muted line-through" : ""}>{limits.draws_per_month === 0 ? "—" : "✅"} السحوبات: {limits.draws_per_month === null ? "غير محدودة" : `${limits.draws_per_month} شهريًا`}</span></Tip></li>
       {Object.entries(FEATURE_LABELS).map(([k, label]) => (
-        <li key={k} className={(limits as any)[k] ? "" : "muted line-through"}>{(limits as any)[k] ? "✅" : "—"} {label}</li>
+        <li key={k}><Tip text={FEATURE_HINTS[k]}><span className={(limits as any)[k] ? "" : "muted line-through"}>{(limits as any)[k] ? "✅" : "—"} {label}</span></Tip></li>
       ))}
     </ul>
   );

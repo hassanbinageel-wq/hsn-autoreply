@@ -13,6 +13,9 @@ export interface PlanLimits {
   draws_per_month: number | null;
   draw_video: boolean;
   cards: boolean;
+  simulator: boolean;
+  campaign_stats: boolean;
+  undo: boolean;
 }
 
 /** The owner's own workspace: everything, no expiry. */
@@ -29,6 +32,9 @@ export const OWNER_LIMITS: PlanLimits = {
   draws_per_month: null,
   draw_video: true,
   cards: true,
+  simulator: true,
+  campaign_stats: true,
+  undo: true,
 };
 
 export const FEATURE_LABELS: Record<string, string> = {
@@ -37,9 +43,34 @@ export const FEATURE_LABELS: Record<string, string> = {
   inbox_manual: "الرد اليدوي من صندوق الرسائل",
   telegram: "إشعارات تيليجرام والتقرير اليومي",
   recover: "استرجاع التعليقات الفائتة",
-  csv_export: "تصدير السجلات CSV",
+  csv_export: "تصدير ملف CSV للسجلات",
   draw_video: "تسجيل فيديو السحب",
   cards: "بطاقات تهنئة الفائزين بشعارك",
+  simulator: "المحاكاة (تجربة الحملة قبل التفعيل)",
+  campaign_stats: "إحصائيات مفصلة لكل حملة",
+  undo: "التراجع عن آخر العمليات",
+};
+
+/** One-line explanation of each plan point, shown in a hover box on the plans. */
+export const FEATURE_HINTS: Record<string, string> = {
+  public_reply: "رد علني قصير تحت تعليق المتابع (مثل «أرسلنا لك في الخاص») بصيغ متنوعة، إضافةً للرسالة الخاصة.",
+  link_tracking: "يحوّل رابطك لرابط تتبع، وتعرف كم شخص ضغط عليه فعلًا من كل حملة.",
+  inbox_manual: "ترد بنفسك على أي محادثة من صندوق الرسائل داخل اللوحة، ضمن نافذة الرد المسموحة من Meta.",
+  telegram: "تنبيه فوري على تيليجرام عند الأخطاء أو انقطاع الربط، وتقرير يومي بأداء حملاتك.",
+  recover: "يجلب التعليقات اللي فاتت (مثل وقت انقطاع الربط) ويرد عليها تلقائيًا إذا ما زالت ضمن المدة المسموحة.",
+  csv_export: "تنزيل سجل التفاعلات والرسائل كملف Excel/CSV للتحليل أو الحفظ.",
+  draw_video: "تسجيل شاشة السحب كفيديو جاهز تنشره ستوري أو ريلز لإثبات النزاهة.",
+  cards: "بطاقة تهنئة بتصميمك وشعارك تُرسل للفائز أو تنزّلها للنشر.",
+  simulator: "تجرّب الحملة كأنك متابع يعلّق ويرد، وتشوف الرسائل بالضبط قبل ما تفعّلها — بدون إرسال أي شي حقيقي.",
+  campaign_stats: "لكل حملة: عدد التعليقات والأشخاص، من استلم الرسالة، من ضغط الرابط، من تابع، وأداء كل منشور.",
+  undo: "رجوع عن آخر 10 عمليات (حذف حملة، تعديل، إيقاف...) من صفحة السجل.",
+};
+
+export const LIMIT_HINTS: Record<string, string> = {
+  events: "أنواع التفاعل اللي يرد عليها النظام: تعليقات المنشورات والريلز، ردود الستوري، ومنشن حسابك في ستوري.",
+  active_campaigns: "عدد الحملات اللي تقدر تشغّلها بنفس الوقت. الحملات الموقوفة والمسودات ما تنحسب.",
+  monthly_messages: "مجموع الرسائل والردود اللي يرسلها النظام نيابةً عنك خلال الشهر الميلادي. يتجدد أول كل شهر.",
+  draws_per_month: "عدد السحوبات اللي تقدر تسويها على متفاعلين حملاتك كل شهر، مع شاشة السحب الحيّة.",
 };
 
 export const EVENT_LABELS: Record<string, string> = { comment: "تعليقات", story_reply: "ردود الستوري", story_mention: "منشن الستوري" };

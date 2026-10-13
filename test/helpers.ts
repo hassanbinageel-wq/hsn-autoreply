@@ -153,8 +153,13 @@ const TABLES = [
   "audit_logs",
 ];
 
+/** The plans as seeded by the migrations (tests may edit them; every reset restores them). */
+let seededPlans: Array<{ id: string; name: string; price_label: string | null; description: string | null; limits: string; active: number }> | null = null;
+
 export async function resetDb() {
   ctxExtra = {};
+  seededPlans ??= (await DB.prepare("SELECT id, name, price_label, description, limits, active FROM plans").all<any>()).results;
+  await DB.batch(seededPlans.map((p) => DB.prepare("UPDATE plans SET name = ?, price_label = ?, description = ?, limits = ?, active = ? WHERE id = ?").bind(p.name, p.price_label, p.description, p.limits, p.active, p.id)));
   await DB.batch([
     ...TABLES.map((t) => DB.prepare(`DELETE FROM ${t}`)),
     DB.prepare("DELETE FROM tenants WHERE id != 1"),

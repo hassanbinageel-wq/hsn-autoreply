@@ -37,6 +37,9 @@ const NONE: PlanLimits = {
   draws_per_month: 0,
   draw_video: false,
   cards: false,
+  simulator: false,
+  campaign_stats: false,
+  undo: false,
 };
 
 export function parseLimits(raw: string): PlanLimits {

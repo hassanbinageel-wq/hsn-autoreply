@@ -942,6 +942,8 @@ export function createApp() {
 
   // Per-post performance of one campaign: comments, people reached, follow conversions, deliveries.
   api.get("/campaigns/:id/stats", async (c) => {
+    const blocked = await planBlock(c, "campaign_stats");
+    if (blocked) return blocked;
     const id = idParam(c);
     const campaign = id && (await first<{ id: number; type: string; require_follow: number }>(c.env.DB, "SELECT id, type, require_follow FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
     if (!campaign) return apiError(c, 404, "not_found", "الحملة غير موجودة");
@@ -1013,6 +1015,8 @@ export function createApp() {
 
   // Who interacted with a campaign: one row per person (latest interaction), with the same flags as the stats.
   api.get("/campaigns/:id/people", async (c) => {
+    const blocked = await planBlock(c, "campaign_stats");
+    if (blocked) return blocked;
     const id = idParam(c);
     const campaign = id && (await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
     if (!campaign) return apiError(c, 404, "not_found", "الحملة غير موجودة");
@@ -1271,6 +1275,8 @@ export function createApp() {
 
   // ---- Simulation (demo mode: never sends anything to Instagram)
   api.post("/simulate", async (c) => {
+    const blocked = await planBlock(c, "simulator");
+    if (blocked) return blocked;
     const p = await parseBody(c, simulateSchema);
     if (!p.ok) return p.res;
     return c.json(await simulate(c.env, T(c), p.data));
@@ -1377,8 +1383,14 @@ export function createApp() {
     return c.body(toCsv(headers, rows));
   });
 
-  api.get("/undo", async (c) => c.json(await listUndo(c.env.DB, T(c))));
+  api.get("/undo", async (c) => {
+    const blocked = await planBlock(c, "undo");
+    if (blocked) return blocked;
+    return c.json(await listUndo(c.env.DB, T(c)));
+  });
   api.post("/undo/:id", async (c) => {
+    const blocked = await planBlock(c, "undo");
+    if (blocked) return blocked;
     const id = idParam(c);
     if (!id) return apiError(c, 404, "not_found", "غير موجود");
     try {
