@@ -841,19 +841,22 @@ function BrandingTab() {
   const { data, reload } = useAsync(() => api<Branding>("/api/public/branding"), []);
   const [texts, setTexts] = useState<BannerTexts | null>(null);
   const [logo, setLogo] = useState<string | null | undefined>(undefined);
+  const [appIcon, setAppIcon] = useState<string | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   if (!data) return <Spinner />;
+  const icon = appIcon === undefined ? data.app_icon ?? null : appIcon;
   const abs = (p: string | null) => (p ? `${API_BASE || ""}${p}` : null);
   const t = texts ?? data.texts ?? DEFAULT_TEXTS;
   const lg = logo === undefined ? data.logo : logo;
   const setPoint = (i: number, k: "title" | "desc", v: string) => setTexts({ ...t, points: t.points.map((p, j) => (j === i ? { ...p, [k]: v } : p)) });
-  const save = async (body: { texts: BannerTexts | null; logo: string | null }, msg: string) => {
+  const save = async (body: { texts: BannerTexts | null; logo: string | null; app_icon?: string | null }, msg: string) => {
     setBusy(true);
     try {
       await api("/api/owner/branding", { method: "PUT", body });
       toast(msg);
       setTexts(null);
       setLogo(undefined);
+      setAppIcon(undefined);
       reload();
     } catch (e: any) {
       toast(e.message, "bad");
@@ -885,8 +888,11 @@ function BrandingTab() {
                 <input className="input" value={p.desc} onChange={(e) => setPoint(i, "desc", e.target.value)} maxLength={120} placeholder="الوصف" aria-label={`وصف النقطة ${i + 1}`} />
               </div>
             ))}
+            <Field label="أيقونة زر «تنزيل التطبيق للأندرويد»" hint="تظهر جنب النص في أسفل البنر — PNG بدون خلفية. الزر يحمّل التطبيق مباشرة.">
+              <LogoPicker value={icon} onChange={setAppIcon} />
+            </Field>
             <div className="flex flex-wrap gap-2">
-              <button className="btn btn-primary flex-1" disabled={busy} onClick={() => save({ texts: t, logo: lg ?? null }, "تم حفظ النصوص والشعار")}>حفظ</button>
+              <button className="btn btn-primary flex-1" disabled={busy} onClick={() => save({ texts: t, logo: lg ?? null, app_icon: icon }, "تم حفظ النصوص والشعار")}>حفظ</button>
               <button className="btn btn-ghost" disabled={busy} onClick={() => confirm("استرجاع النصوص الافتراضية وإزالة الشعار؟") && save({ texts: null, logo: null }, "رجعت النصوص الافتراضية")}><Icon name="refresh" size={15} />النصوص الافتراضية</button>
             </div>
           </div>
@@ -898,8 +904,8 @@ function BrandingTab() {
           <div>
             <div className="muted mb-1.5 text-xs font-bold">الكمبيوتر</div>
             <div className="relative mx-auto h-[450px] w-[320px] overflow-hidden rounded-2xl ring-1 ring-[var(--border)]">
-              <div className="absolute right-0 top-0 h-[900px] w-[640px] origin-top-right scale-50">
-                <DesktopBanner className="flex h-full w-full" image={desktopImg} texts={t} logo={lg ?? null} />
+              <div className="pointer-events-none absolute right-0 top-0 h-[900px] w-[640px] origin-top-right scale-50">
+                <DesktopBanner className="flex h-full w-full" image={desktopImg} texts={t} logo={lg ?? null} download={data.app_download_url ? { url: "#", icon } : null} />
               </div>
             </div>
           </div>

@@ -10,6 +10,8 @@ export interface Branding {
   login_banner_mobile: string | null;
   texts: BannerTexts | null;
   logo: string | null;
+  app_icon?: string | null;
+  app_download_url?: string | null;
 }
 
 export const DEFAULT_TEXTS: BannerTexts = {
@@ -51,8 +53,32 @@ const lines = (t: string) => t.split("\n").map((l, i, a) => (
   </span>
 ));
 
+/** "تنزيل التطبيق للأندرويد": downloads the APK straight away; the owner's icon (transparent PNG) sits beside the text. */
+export function AppDownloadBox({ url, icon, tone = "dark", className = "" }: { url: string; icon: string | null; tone?: "dark" | "light"; className?: string }) {
+  const dark = tone === "dark";
+  return (
+    <a
+      href={url}
+      download
+      rel="noopener"
+      className={`flex items-center gap-3 rounded-2xl px-4 py-3 transition ${dark ? "border border-white/20 bg-black/35 text-white backdrop-blur-md hover:bg-black/45" : "border border-[var(--border)] bg-[var(--surface)] hover:border-violet-400"} ${className}`}
+    >
+      {icon ? (
+        <img src={icon} alt="" className="h-10 w-10 shrink-0 object-contain" />
+      ) : (
+        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${dark ? "bg-white/15" : "bg-emerald-500/10 text-emerald-600"}`}><Icon name="smartphone" size={20} /></span>
+      )}
+      <span className="flex-1 leading-tight">
+        <b className="block text-sm">تنزيل التطبيق للأندرويد</b>
+        <span className={`text-xs ${dark ? "text-white/75" : "muted"}`}>ملف APK — يبدأ التحميل مباشرة</span>
+      </span>
+      <Icon name="download" size={20} className={dark ? "text-white/80" : "text-emerald-600"} />
+    </a>
+  );
+}
+
 /** Computer: the side panel of the login page. */
-export function DesktopBanner({ image, texts, logo, className = "" }: { image: string | null; texts: BannerTexts | null; logo: string | null; className?: string }) {
+export function DesktopBanner({ image, texts, logo, download, className = "" }: { image: string | null; texts: BannerTexts | null; logo: string | null; download?: { url: string; icon: string | null } | null; className?: string }) {
   const t = texts ?? DEFAULT_TEXTS;
   return (
     <div className={`relative flex-col overflow-hidden p-12 text-white ${className}`} style={{ background: BANNER_GRADIENT }}>
@@ -72,6 +98,7 @@ export function DesktopBanner({ image, texts, logo, className = "" }: { image: s
           ) : null,
         )}
       </div>
+      {download && <AppDownloadBox className="relative mt-auto" url={download.url} icon={download.icon} />}
     </div>
   );
 }

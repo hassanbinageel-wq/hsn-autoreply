@@ -399,17 +399,21 @@ export function createApp() {
   // Login-page look chosen by the owner: banner images (computer / phone, cacheable per version), texts and logo.
   app.get("/api/public/branding", async (c) => {
     const db = c.env.DB;
-    const [d, m, texts, logo] = await Promise.all([
+    const [d, m, texts, logo, appIcon, download] = await Promise.all([
       getSetting<number>(db, OWNER_TENANT, "login_banner_at", 0),
       getSetting<number>(db, OWNER_TENANT, "login_banner_mobile_at", 0),
       getSetting<unknown>(db, OWNER_TENANT, "login_texts", null),
       getSetting<string>(db, OWNER_TENANT, "login_logo", ""),
+      getSetting<string>(db, OWNER_TENANT, "login_app_icon", ""),
+      appDownloadUrl(c),
     ]);
     return c.json({
       login_banner: d ? `/api/public/login-banner?v=${d}` : null,
       login_banner_mobile: m ? `/api/public/login-banner?k=mobile&v=${m}` : null,
       texts,
       logo: logo || null,
+      app_icon: appIcon || null,
+      app_download_url: download,
     });
   });
   app.get("/api/public/login-banner", async (c) => {
@@ -796,6 +800,7 @@ export function createApp() {
     if (!p.ok) return p.res;
     await setSetting(c.env.DB, OWNER_TENANT, "login_texts", p.data.texts);
     await setSetting(c.env.DB, OWNER_TENANT, "login_logo", p.data.logo ?? "");
+    if (p.data.app_icon !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "login_app_icon", p.data.app_icon ?? "");
     return c.json({ ok: true });
   });
   // The highlighted plan and its badge text (plan_id null = no badge).

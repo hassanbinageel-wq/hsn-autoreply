@@ -4,7 +4,7 @@ import { api, ApiError, setCsrf } from "../api";
 import { API_BASE, deviceToken, isNative } from "../platform";
 import { Alert, Field } from "../components/ui";
 import { PlansShowcase, type Catalog } from "../components/PlansShowcase";
-import { DesktopBanner, MobileBanner, type Branding } from "../components/LoginBanner";
+import { AppDownloadBox, DesktopBanner, MobileBanner, type Branding } from "../components/LoginBanner";
 import { Spinner } from "../components/ui";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
@@ -62,6 +62,8 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   };
 
   if (plans && !status?.needs_setup) return <PublicPlansPage />;
+  // Not shown inside the Android app itself (it is already installed).
+  const download = !isNative && brand?.app_download_url ? { url: brand.app_download_url, icon: brand.app_icon ?? null } : null;
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
@@ -127,6 +129,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             <Icon name="shield" size={18} className="text-emerald-500" />
             <span>هذا حساب إدارة التطبيق فقط — لا نطلب كلمة مرور إنستقرام أبدًا. الربط يتم عبر Meta الرسمي.</span>
           </div>
+          {download && <AppDownloadBox className="lg:hidden" tone="light" url={download.url} icon={download.icon} />}
           {register && !status?.needs_setup && (
             <a href="#/plans" className="flex items-center gap-3 rounded-2xl border border-red-500/25 bg-red-500/[0.06] p-3.5 transition hover:bg-red-500/10">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-600 dark:text-red-400"><Icon name="zap" size={20} /></span>
@@ -141,7 +144,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           </p>
         </form>
       </div>
-      <DesktopBanner className="hidden w-[44%] max-w-[640px] lg:flex" image={abs(brand?.login_banner)} texts={brand?.texts ?? null} logo={brand?.logo ?? null} />
+      <DesktopBanner className="hidden w-[44%] max-w-[640px] lg:flex" image={abs(brand?.login_banner)} texts={brand?.texts ?? null} logo={brand?.logo ?? null} download={download} />
     </div>
   );
 }

@@ -141,8 +141,9 @@ export function App() {
           .catch(() => undefined);
       else {
         setSub(null);
-        setDownloadUrl(null);
         setLimits(null);
+        // The owner's "تنزيل التطبيق" downloads the APK directly too.
+        api<{ app_download_url?: string | null }>("/api/public/branding").then((b) => setDownloadUrl(b.app_download_url ?? null), () => setDownloadUrl(null));
       }
       setAuth("in");
       api<{ settings: { timezone?: string } }>("/api/settings")
@@ -255,8 +256,8 @@ export function App() {
           <Icon name="lock" size={14} className="mr-auto opacity-60" />
         </button>
       );
-    return !isOwner && to === "/download" && downloadUrl ? (
-      <a href={downloadUrl} target="_blank" rel="noopener" className={className}>{children}</a>
+    return to === "/download" && downloadUrl ? (
+      <a href={downloadUrl} download rel="noopener" className={className}>{children}</a>
     ) : (
       <Link to={to} className={className}>{children}</Link>
     );

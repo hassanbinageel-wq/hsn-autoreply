@@ -237,5 +237,6 @@ export const brandingSchema = z.object({
     })
     .nullable(),
   logo: logoSchema.nullable(),
+  app_icon: logoSchema.nullable().optional(),
 });
 export const featuredSchema = z.object({ plan_id: z.string().max(20).nullable(), label: shortText(30).min(1, "اكتب نص الشارة") });

@@ -325,8 +325,8 @@ describe("owner tools", () => {
     expect((await SELF.fetch(new Request(BASE + mob))).status).toBe(200);
     // texts + logo, then back to defaults
     const texts = { title: "عنوان", subtitle: "وصف", points: [{ title: "أ", desc: "" }, { title: "ب", desc: "د" }, { title: "", desc: "" }] };
-    expect((await call("/api/owner/branding", OWNER, "PUT", { texts, logo: png })).status).toBe(200);
-    expect((await call("/api/public/branding")).body).toMatchObject({ texts, logo: png });
+    expect((await call("/api/owner/branding", OWNER, "PUT", { texts, logo: png, app_icon: png })).status).toBe(200);
+    expect((await call("/api/public/branding")).body).toMatchObject({ texts, logo: png, app_icon: png, app_download_url: `${BASE}/app.apk` });
     expect((await call("/api/owner/branding", OWNER, "PUT", { texts: { ...texts, points: [] }, logo: null })).status).toBe(422);
     await call("/api/owner/branding", OWNER, "PUT", { texts: null, logo: null });
     expect((await call("/api/public/branding")).body).toMatchObject({ texts: null, logo: null });
