@@ -5,7 +5,7 @@ import { API_BASE, deviceToken, isNative } from "../platform";
 import { Alert, Field } from "../components/ui";
 import { PlansShowcase, type Catalog } from "../components/PlansShowcase";
 import { AppDownloadBox, DesktopBanner, MobileBanner, type Branding } from "../components/LoginBanner";
-import { bioAvailable, bioCredentials, bioUser, disableBio, offerBio } from "../lib/biometric";
+import { bioCredentials, bioUser, disableBio, offerBioLater } from "../lib/biometric";
 import { Spinner } from "../components/ui";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
@@ -88,7 +88,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
       }
       await signIn(username, password);
       // Sign-in is done here; fingerprint sign-in is offered afterwards in the app (never blocks this step).
-      if (isNative && !bioUser() && (await bioAvailable())) offerBio(username, password);
+      offerBioLater(username, password);
       setPassword("");
       onDone();
     } catch (err) {

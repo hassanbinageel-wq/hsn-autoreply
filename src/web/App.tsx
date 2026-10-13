@@ -118,6 +118,14 @@ export function App() {
   const [bioOffer, setBioOffer] = useState<{ username: string; password: string } | null>(null);
   const [bioBusy, setBioBusy] = useState(false);
   useEffect(() => {
+    const on = () => {
+      const offer = takeBioOffer();
+      if (offer) setBioOffer(offer);
+    };
+    window.addEventListener("hsn:bio-offer", on);
+    return () => window.removeEventListener("hsn:bio-offer", on);
+  }, []);
+  useEffect(() => {
     const on = (e: Event) => setBlocked((e as CustomEvent<{ message: string }>).detail.message);
     window.addEventListener("hsn:plan-blocked", on);
     return () => window.removeEventListener("hsn:plan-blocked", on);
@@ -150,8 +158,7 @@ export function App() {
         api<{ app_download_url?: string | null }>("/api/public/branding").then((b) => setDownloadUrl(b.app_download_url ?? null), () => setDownloadUrl(null));
       }
       setAuth("in");
-      const offer = takeBioOffer();
-      if (offer) setBioOffer(offer);
+
       api<{ settings: { timezone?: string } }>("/api/settings")
         .then((s) => setTz(s.settings.timezone ?? "Asia/Aden"))
         .catch(() => undefined);
