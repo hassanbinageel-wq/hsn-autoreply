@@ -4,6 +4,7 @@ import { api, ApiError, setCsrf } from "../api";
 import { API_BASE, deviceToken, isNative } from "../platform";
 import { Alert, Field } from "../components/ui";
 import { PlansShowcase, type Catalog } from "../components/PlansShowcase";
+import { DesktopBanner, MobileBanner, type Branding } from "../components/LoginBanner";
 import { Spinner } from "../components/ui";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
@@ -28,10 +29,10 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
 
-  const [banner, setBanner] = useState<string | null>(null);
+  const [brand, setBrand] = useState<Branding | null>(null);
   useEffect(() => {
     api("/api/auth/status").then(setStatus, (e) => setError(e.message));
-    api<{ login_banner: string | null }>("/api/public/branding").then((b) => setBanner(b.login_banner ? `${API_BASE || ""}${b.login_banner}` : null), () => undefined);
+    api<Branding>("/api/public/branding").then(setBrand, () => undefined);
   }, []);
 
   const submit = async (e: FormEvent) => {
@@ -64,7 +65,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
-      <MobileBanner image={banner} />
+      <MobileBanner className="lg:hidden" image={abs(brand?.login_banner_mobile ?? brand?.login_banner)} texts={brand?.texts ?? null} logo={brand?.logo ?? null} />
       <div className="flex flex-1 items-center justify-center p-5">
         <form onSubmit={submit} className="w-full max-w-[400px] space-y-4">
           <div className="mb-6 flex items-center gap-3">
@@ -140,61 +141,13 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           </p>
         </form>
       </div>
-      <div className="relative hidden w-[44%] max-w-[640px] flex-col overflow-hidden p-12 text-white lg:flex" style={{ background: GRADIENT }}>
-        {image(banner)}
-        <div className="relative">
-          <h2 className="text-[36px] font-extrabold leading-snug drop-shadow">ردود تلقائية أذكى<br />وتفاعل أكبر على إنستقرام</h2>
-          <p className="mt-3 max-w-md leading-loose text-violet-50 drop-shadow">حملات تعليقات وستوري، صندوق رسائل موحّد، سحوبات عادلة وبطاقات تهنئة — كلها عبر واجهة Meta الرسمية.</p>
-        </div>
-        <div className="relative mt-8 grid gap-3">
-          {POINTS.map(([i, t, d]) => (
-            <div key={t} className="flex items-center gap-3 rounded-2xl border border-white/15 bg-black/20 p-4 backdrop-blur-md">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15"><Icon name={i} size={20} /></span>
-              <span><b className="block text-sm">{t}</b><span className="text-xs text-violet-50/90">{d}</span></span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <DesktopBanner className="hidden w-[44%] max-w-[640px] lg:flex" image={abs(brand?.login_banner)} texts={brand?.texts ?? null} logo={brand?.logo ?? null} />
     </div>
   );
 }
 
 
-const GRADIENT = "radial-gradient(circle at 80% 15%,rgba(249,115,22,.55),transparent 45%),radial-gradient(circle at 15% 85%,rgba(219,39,119,.5),transparent 50%),linear-gradient(160deg,#1e0b4b,#4c1d95 50%,#86198f)";
-const POINTS = [
-  ["target", "حملات تعليقات وستوري", "ترد تلقائيًا وتوصل المحتوى كزر يُفتح دائمًا"],
-  ["gift", "سحوبات عادلة", "اختيار آمن على الخادم مع عرض احتفالي وفيديو"],
-  ["shield", "Meta الرسمي فقط", "بدون كلمة مرور، وبدون أي طرق غير رسمية"],
-] as const;
-
-/** The owner's banner image (set from the owner panel) with a dark veil so the text stays readable; the grid pattern otherwise. */
-function image(src: string | null) {
-  return src ? (
-    <>
-      <img src={src} alt="" className="absolute inset-0 h-full w-full object-cover" />
-      <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/25 to-black/55" />
-    </>
-  ) : (
-    <div className="absolute inset-0" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px)", backgroundSize: "48px 48px" }} />
-  );
-}
-
-/** Phones: the banner sits on top at a medium height. */
-function MobileBanner({ image: src }: { image: string | null }) {
-  return (
-    <div className="relative flex h-48 shrink-0 flex-col justify-end overflow-hidden rounded-b-[28px] px-5 pb-5 text-white lg:hidden" style={{ background: GRADIENT }}>
-      {image(src)}
-      <div className="relative">
-        <h2 className="text-[22px] font-extrabold leading-snug drop-shadow">ردود تلقائية أذكى وتفاعل أكبر على إنستقرام</h2>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {POINTS.map(([i, t]) => (
-            <span key={t} className="flex items-center gap-1 rounded-full bg-black/25 px-2.5 py-1 text-[11px] font-bold backdrop-blur"><Icon name={i} size={12} />{t}</span>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+const abs = (path: string | null | undefined) => (path ? `${API_BASE || ""}${path}` : null);
 
 /** Public plans page for visitors (#/plans): plans, prices in four currencies, payment accounts, "send the receipt". */
 function PublicPlansPage() {

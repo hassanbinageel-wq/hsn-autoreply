@@ -211,7 +211,7 @@ const logoSchema = z
   .refine((v) => /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(v), "صيغة الشعار غير مدعومة");
 export const paymentProviderSchema = z.object({
   name: text(80).min(1, "اكتب اسم البنك أو الصرافة"),
-  kind: z.enum(["bank", "exchange"]).default("bank"),
+  kind: z.enum(["bank", "exchange", "wallet"]).default("bank"),
   logo: logoSchema.nullable().optional(),
 });
 export const paymentAccountSchema = z.object({
@@ -225,3 +225,17 @@ export const exchangeRatesSchema = z.object({
   YER: z.number().positive().max(1_000_000),
   YER_SAN: z.number().positive().max(1_000_000),
 });
+
+const shortText = (n: number) => z.string().trim().max(n);
+/** Texts on the login-page banner (owner-editable); null restores the defaults. */
+export const brandingSchema = z.object({
+  texts: z
+    .object({
+      title: shortText(120),
+      subtitle: shortText(300),
+      points: z.array(z.object({ title: shortText(60), desc: shortText(120) })).length(3),
+    })
+    .nullable(),
+  logo: logoSchema.nullable(),
+});
+export const featuredSchema = z.object({ plan_id: z.string().max(20).nullable(), label: shortText(30).min(1, "اكتب نص الشارة") });

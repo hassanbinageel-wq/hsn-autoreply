@@ -6,7 +6,8 @@ import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, P
 export interface Catalog {
   plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits }>;
   rates: ExchangeRates;
-  payment_methods: Array<{ id: number; name: string; kind: "bank" | "exchange"; logo: string | null; accounts: Array<{ id: number; holder: string; number: string; currency: string | null; note: string | null }> }>;
+  featured?: { plan_id: string | null; label: string };
+  payment_methods: Array<{ id: number; name: string; kind: "bank" | "exchange" | "wallet"; logo: string | null; accounts: Array<{ id: number; holder: string; number: string; currency: string | null; note: string | null }> }>;
   sales_contact: string | null;
 }
 
@@ -113,8 +114,13 @@ function ReceiptModal({ catalog, cur, onClose }: { catalog: Catalog; cur: string
   );
 }
 
+const KIND: Record<string, string> = { bank: "بنك", exchange: "صرافة", wallet: "محفظة" };
+/** Arabic-friendly match: ignores case, diacritics and alef / ya / ta-marbuta variants. */
+const norm = (v: string) => v.toLowerCase().replace(/[\u064B-\u0652\u0640]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").trim();
+
 export function PaymentMethods({ catalog, cur }: { catalog: Catalog; cur: string }) {
   const [receipt, setReceipt] = useState(false);
+  const [q, setQ] = useState("");
   if (!catalog.payment_methods.length && !catalog.sales_contact) return null;
   const contact = catalog.sales_contact ? contactKind(catalog.sales_contact) : null;
   return (
@@ -135,9 +141,15 @@ export function PaymentMethods({ catalog, cur }: { catalog: Catalog; cur: string
           </li>
         ))}
       </ol>
+      {catalog.payment_methods.length >= 2 && (
+        <div className="relative mx-auto max-w-md">
+          <Icon name="search" size={18} className="muted absolute right-3.5 top-1/2 -translate-y-1/2" />
+          <input className="input !pr-10" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث باسم البنك أو الصرافة أو المحفظة" aria-label="بحث في طرق الدفع" />
+        </div>
+      )}
       {catalog.payment_methods.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2">
-          {catalog.payment_methods.map((p) => (
+          {catalog.payment_methods.filter((p) => !q.trim() || norm(`${p.name} ${KIND[p.kind] ?? ""}`).includes(norm(q))).map((p) => (
             <div key={p.id} className="card overflow-hidden">
               <div className="flex items-center gap-3 border-b border-[var(--border)] px-4 py-3">
                 {p.logo ? (
@@ -147,7 +159,7 @@ export function PaymentMethods({ catalog, cur }: { catalog: Catalog; cur: string
                 )}
                 <span className="min-w-0">
                   <b className="font-display block truncate">{p.name}</b>
-                  <span className="muted text-xs">{p.kind === "exchange" ? "صرافة" : "بنك"} · {p.accounts.length} {p.accounts.length === 1 ? "حساب" : "حسابات"}</span>
+                  <span className="muted text-xs">{KIND[p.kind] ?? "بنك"} · {p.accounts.length} {p.accounts.length === 1 ? "حساب" : "حسابات"}</span>
                 </span>
               </div>
               <ul className="divide-y divide-[var(--border)]">
@@ -169,6 +181,9 @@ export function PaymentMethods({ catalog, cur }: { catalog: Catalog; cur: string
             </div>
           ))}
         </div>
+      )}
+      {q.trim() && !catalog.payment_methods.some((p) => norm(`${p.name} ${KIND[p.kind] ?? ""}`).includes(norm(q))) && (
+        <p className="muted text-center text-sm">ما لقينا «{q}» — جرّب اسمًا آخر</p>
       )}
       {catalog.sales_contact && contact && (
         <button type="button" onClick={() => setReceipt(true)} className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/5 p-4 text-right transition hover:bg-emerald-500/10">
@@ -205,7 +220,8 @@ function CurrencySwitch({ cur, setCur }: { cur: string; setCur: (c: string) => v
  * (first plan shown first, an arrow and dots to move to the next); from md up a three-column grid.
  */
 export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: Catalog; cur: string; currentPlanId?: string | null; onChoose?: () => void }) {
-  const featured = catalog.plans.length >= 3 ? catalog.plans[1].id : null;
+  const featured = catalog.featured ? catalog.featured.plan_id : catalog.plans.length >= 3 ? catalog.plans[1].id : null;
+  const badge = catalog.featured?.label || "الأكثر طلبًا";
   const track = useRef<HTMLDivElement>(null);
   const cards = useRef<Array<HTMLDivElement | null>>([]);
   const [active, setActive] = useState(0);
@@ -230,7 +246,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: 
           const isCurrent = p.id === currentPlanId;
           return (
             <div key={p.id} ref={(el) => { cards.current[i] = el; }} data-i={i} className={`card relative flex w-[84%] shrink-0 snap-center flex-col p-5 md:w-auto ${isFeatured ? "ring-2 ring-violet-500 md:-translate-y-1 md:shadow-xl md:shadow-violet-500/10" : ""}`}>
-              {isFeatured && <span className="grad absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-extrabold text-white shadow">الأكثر طلبًا</span>}
+              {isFeatured && <span className="grad absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-extrabold text-white shadow">{badge}</span>}
               <div className="flex items-start justify-between gap-2">
                 <b className="font-display text-lg font-extrabold">{p.name}</b>
                 {isCurrent && <span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">باقتك</span>}

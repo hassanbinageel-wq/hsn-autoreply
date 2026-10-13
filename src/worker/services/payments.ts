@@ -10,7 +10,7 @@ export interface PaymentAccount {
 export interface PaymentProvider {
   id: number;
   name: string;
-  kind: "bank" | "exchange";
+  kind: "bank" | "exchange" | "wallet";
   logo: string | null;
   accounts: PaymentAccount[];
 }

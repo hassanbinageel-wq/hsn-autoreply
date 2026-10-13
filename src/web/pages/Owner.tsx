@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
 import { API_BASE } from "../platform";
+import { BANNER_SIZES, DEFAULT_TEXTS, DesktopBanner, MobileBanner, toCm, type BannerTexts, type Branding } from "../components/LoginBanner";
 import { Icon } from "../components/Icon";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, formatPrice } from "../../shared/plans";
@@ -399,7 +400,7 @@ function PlansTab() {
         </div>
       </Card>
       <RatesCard rates={settings.exchange_rates} onSaved={reloadSettings} />
-      <LoginBannerCard />
+      <FeaturedCard plans={data} />
       <div className="grid gap-5 xl:grid-cols-3">
         {data.map((p) => <PlanEditor key={p.id} plan={p} onSaved={reload} />)}
       </div>
@@ -472,7 +473,7 @@ function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
 }
 
 export function OwnerPage() {
-  const [tab, setTab] = useState<"customers" | "plans" | "codes" | "payments">("customers");
+  const [tab, setTab] = useState<"customers" | "plans" | "codes" | "payments" | "branding">("customers");
   return (
     <div className="space-y-5">
       <header>
@@ -480,11 +481,11 @@ export function OwnerPage() {
         <p className="muted mt-1 text-sm">العملاء، الباقات، وأكواد التفعيل — لإدارة الخدمة فقط.</p>
       </header>
       <div className="seg w-fit max-w-full overflow-x-auto" role="tablist">
-        {([["customers", "العملاء"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["payments", "الحسابات البنكية"]] as const).map(([k, l]) => (
+        {([["customers", "العملاء"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["payments", "الحسابات البنكية"], ["branding", "صفحة الدخول"]] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <CustomersTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : <PaymentsTab />}
+      {tab === "customers" ? <CustomersTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <PaymentsTab /> : <BrandingTab />}
     </div>
   );
 }
@@ -563,6 +564,7 @@ function LogoPicker({ value, onChange }: { value: string | null; onChange: (v: s
   );
 }
 
+const KIND_LABEL: Record<string, string> = { bank: "بنك", exchange: "صرافة", wallet: "محفظة" };
 const CUR_NAME = (code: string | null) => (code ? CURRENCIES.find((c) => c.code === code)?.name ?? code : "—");
 
 function AccountForm({ initial, onSubmit, onCancel }: { initial?: any; onSubmit: (v: any) => Promise<void>; onCancel?: () => void }) {
@@ -620,7 +622,7 @@ function ProviderCard({ p, first, last, reload }: { p: any; first: boolean; last
         <span className="flex items-center gap-2.5">
           {p.logo ? <img src={p.logo} alt="" className="h-8 w-8 rounded-lg bg-white object-contain p-0.5 ring-1 ring-[var(--border)]" /> : <Icon name="bank" size={20} />}
           {p.name}
-          <span className="chip surface-2 muted text-[11px]">{p.kind === "exchange" ? "صرافة" : "بنك"}</span>
+          <span className="chip surface-2 muted text-[11px]">{KIND_LABEL[p.kind] ?? "بنك"}</span>
         </span>
       }
       action={
@@ -636,7 +638,7 @@ function ProviderCard({ p, first, last, reload }: { p: any; first: boolean; last
         <div className="mb-4 space-y-3 rounded-2xl bg-[var(--surface-2)] p-3">
           <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} aria-label="الاسم" />
-            <select className="input" value={kind} onChange={(e) => setKind(e.target.value)} aria-label="النوع"><option value="bank">بنك</option><option value="exchange">صرافة</option></select>
+            <select className="input" value={kind} onChange={(e) => setKind(e.target.value)} aria-label="النوع"><option value="bank">بنك</option><option value="exchange">صرافة</option><option value="wallet">محفظة</option></select>
           </div>
           <LogoPicker value={logo} onChange={setLogo} />
           <button className="btn btn-primary w-full" onClick={() => call(() => api(`/api/owner/payment-providers/${p.id}`, { method: "PUT", body: { name: name.trim(), kind, logo } }), "تم الحفظ").then(() => setEdit(false), () => undefined)}>حفظ</button>
@@ -695,12 +697,12 @@ function PaymentsTab() {
   return (
     <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
       <div className="space-y-4">
-        <Card title="إضافة بنك أو صرافة">
+        <Card title="إضافة بنك أو صرافة أو محفظة">
           <div className="space-y-3">
             <Field label="الاسم"><input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="مثل: بنك الكريمي" /></Field>
             <Field label="النوع">
               <div className="flex gap-2">
-                {([["bank", "بنك"], ["exchange", "صرافة"]] as const).map(([k, l]) => (
+                {([["bank", "بنك"], ["exchange", "صرافة"], ["wallet", "محفظة"]] as const).map(([k, l]) => (
                   <button key={k} type="button" className={`flex-1 rounded-xl border px-3 py-2 text-sm font-bold ${kind === k ? "border-violet-500 bg-violet-500/10" : "border-[var(--border)]"}`} onClick={() => setKind(k)}>{l}</button>
                 ))}
               </div>
@@ -712,7 +714,7 @@ function PaymentsTab() {
         <Alert tone="info">تظهر هذه الحسابات للزوار في صفحة الباقات قبل التسجيل، مع زر «أرسل السند هنا» اللي يوديهم لرابط التواصل للشراء (من تبويب الباقات).</Alert>
       </div>
       <div className="space-y-4">
-        {!data ? <Spinner /> : !data.length ? <Empty title="لا توجد بنوك أو صرافات بعد" /> : data.map((p, i) => <ProviderCard key={p.id} p={p} first={i === 0} last={i === data.length - 1} reload={reload} />)}
+        {!data ? <Spinner /> : !data.length ? <Empty title="لا توجد بنوك أو صرافات أو محافظ بعد" /> : data.map((p, i) => <ProviderCard key={p.id} p={p} first={i === 0} last={i === data.length - 1} reload={reload} />)}
       </div>
     </div>
   );
@@ -749,15 +751,49 @@ async function shrinkImage(file: File, maxW: number, maxH: number, quality: numb
   return out;
 }
 
-function LoginBannerCard() {
-  const { data, reload } = useAsync(() => api<{ login_banner: string | null }>("/api/public/branding"), []);
+
+function FeaturedCard({ plans }: { plans: any[] }) {
+  const { data, reload } = useAsync(() => api<any>("/api/public/plans"), []);
+  const [planId, setPlanId] = useState<string | null | undefined>(undefined);
+  const [label, setLabel] = useState<string | null>(null);
+  if (!data) return null;
+  const cur = planId === undefined ? data.featured?.plan_id ?? null : planId;
+  const text = label ?? data.featured?.label ?? "الأكثر طلبًا";
+  const save = async () => {
+    try {
+      await api("/api/owner/featured-plan", { method: "PUT", body: { plan_id: cur, label: text.trim() } });
+      toast("تم الحفظ");
+      reload();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    }
+  };
+  return (
+    <Card title="شارة الباقة المميزة">
+      <p className="muted mb-3 text-sm">تظهر فوق الباقة اللي تختارها في صفحة الباقات (مثل «الأكثر طلبًا»).</p>
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+        <Field label="الباقة">
+          <select className="input" value={cur ?? ""} onChange={(e) => setPlanId(e.target.value || null)}>
+            <option value="">بدون شارة</option>
+            {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </Field>
+        <Field label="نص الشارة"><input className="input" value={text} onChange={(e) => setLabel(e.target.value)} maxLength={30} disabled={!cur} /></Field>
+        <button className="btn btn-primary" disabled={!!cur && !text.trim()} onClick={save}>حفظ</button>
+      </div>
+    </Card>
+  );
+}
+
+function BannerUpload({ variant, current, onSaved }: { variant: "desktop" | "mobile"; current: string | null; onSaved: () => void }) {
+  const size = BANNER_SIZES[variant];
   const [busy, setBusy] = useState(false);
   const save = async (image: string | null) => {
     setBusy(true);
     try {
-      await api("/api/owner/login-banner", { method: "PUT", body: { image } });
-      toast(image ? "تم حفظ صورة صفحة الدخول" : "أُزيلت الصورة");
-      reload();
+      await api("/api/owner/login-banner", { method: "PUT", body: { variant, image } });
+      toast(image ? "تم حفظ الصورة" : "رجعت الخلفية الافتراضية");
+      onSaved();
     } catch (e: any) {
       toast(e.message, "bad");
     } finally {
@@ -765,36 +801,117 @@ function LoginBannerCard() {
     }
   };
   return (
-    <Card title="صورة صفحة الدخول">
-      <div className="grid gap-4 sm:grid-cols-[260px_1fr] sm:items-center">
-        <div className="relative aspect-[4/5] overflow-hidden rounded-2xl ring-1 ring-[var(--border)]" style={{ background: "linear-gradient(160deg,#1e0b4b,#4c1d95 50%,#86198f)" }}>
-          {data?.login_banner ? <img src={`${API_BASE || ""}${data.login_banner}`} alt="" className="h-full w-full object-cover" /> : <span className="absolute inset-0 flex items-center justify-center text-xs text-white/70">التصميم الافتراضي</span>}
-        </div>
-        <div className="space-y-3">
-          <p className="muted text-sm leading-relaxed">تظهر على يسار صفحة الدخول والتسجيل في الكمبيوتر، وفوقها في الجوال. يُضاف فوقها ظل خفيف عشان يبقى الكلام واضح. الأفضل صورة عمودية أو مربعة بجودة عالية.</p>
-          <div className="flex flex-wrap gap-2">
-            <label className={`btn btn-primary cursor-pointer ${busy ? "pointer-events-none opacity-60" : ""}`}>
-              <Icon name="upload" size={17} />{data?.login_banner ? "تغيير الصورة" : "رفع صورة"}
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className="hidden"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (!f) return;
-                  try {
-                    await save(await shrinkImage(f, 1600, 1600, 0.82));
-                  } catch (err: any) {
-                    toast(err.message, "bad");
-                  }
-                }}
-              />
-            </label>
-            {data?.login_banner && <button className="btn btn-ghost text-red-600" disabled={busy} onClick={() => confirm("إزالة الصورة والرجوع للتصميم الافتراضي؟") && save(null)}>إزالة</button>}
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <b className="font-display">صورة {size.label}</b>
+        <span className={`chip ${current ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "surface-2 muted"}`}>{current ? "صورة مخصّصة" : "الخلفية الافتراضية"}</span>
+      </div>
+      <div className="rounded-2xl bg-[var(--surface-2)] px-3 py-2 text-xs leading-relaxed">
+        المقاس المقترح: <b dir="ltr">{size.w} × {size.h}</b> بكسل ({size.ratio})
+        <br />
+        بالسنتيمتر: <b dir="ltr">{toCm(size.w)} × {toCm(size.h)}</b> سم <span className="muted">(بدقة 72 بكسل/إنش)</span>
+        {variant === "mobile" && <span className="muted block">إذا ما رفعت صورة للجوال تُستخدم صورة الكمبيوتر.</span>}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <label className={`btn btn-primary min-h-9 cursor-pointer text-xs ${busy ? "pointer-events-none opacity-60" : ""}`}>
+          <Icon name="upload" size={15} />{current ? "تغيير الصورة" : "رفع صورة"}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              try {
+                await save(await shrinkImage(f, size.w, size.h, 0.82));
+              } catch (err: any) {
+                toast(err.message, "bad");
+              }
+            }}
+          />
+        </label>
+        {current && <button className="btn btn-ghost min-h-9 text-xs" disabled={busy} onClick={() => confirm("الرجوع للخلفية الافتراضية؟") && save(null)}><Icon name="refresh" size={15} />الرجوع للخلفية الافتراضية</button>}
+      </div>
+    </div>
+  );
+}
+
+function BrandingTab() {
+  const { data, reload } = useAsync(() => api<Branding>("/api/public/branding"), []);
+  const [texts, setTexts] = useState<BannerTexts | null>(null);
+  const [logo, setLogo] = useState<string | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  if (!data) return <Spinner />;
+  const abs = (p: string | null) => (p ? `${API_BASE || ""}${p}` : null);
+  const t = texts ?? data.texts ?? DEFAULT_TEXTS;
+  const lg = logo === undefined ? data.logo : logo;
+  const setPoint = (i: number, k: "title" | "desc", v: string) => setTexts({ ...t, points: t.points.map((p, j) => (j === i ? { ...p, [k]: v } : p)) });
+  const save = async (body: { texts: BannerTexts | null; logo: string | null }, msg: string) => {
+    setBusy(true);
+    try {
+      await api("/api/owner/branding", { method: "PUT", body });
+      toast(msg);
+      setTexts(null);
+      setLogo(undefined);
+      reload();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const desktopImg = abs(data.login_banner);
+  const mobileImg = abs(data.login_banner_mobile) ?? desktopImg;
+  return (
+    <div className="grid gap-5 xl:grid-cols-[1fr_440px]">
+      <div className="space-y-5">
+        <Card title="صور البنر">
+          <div className="grid gap-6 md:grid-cols-2">
+            <BannerUpload variant="desktop" current={data.login_banner} onSaved={reload} />
+            <BannerUpload variant="mobile" current={data.login_banner_mobile} onSaved={reload} />
+          </div>
+        </Card>
+        <Card title="النصوص والشعار">
+          <div className="space-y-3">
+            <Field label="الشعار (اختياري)" hint="يظهر أعلى البنر — يفضّل PNG بخلفية شفافة"><LogoPicker value={lg ?? null} onChange={setLogo} /></Field>
+            <Field label="العنوان" hint="سطر جديد = انتقال للسطر الثاني في الكمبيوتر">
+              <textarea className="input min-h-[72px]" value={t.title} onChange={(e) => setTexts({ ...t, title: e.target.value })} maxLength={120} />
+            </Field>
+            <Field label="الوصف"><textarea className="input min-h-[72px]" value={t.subtitle} onChange={(e) => setTexts({ ...t, subtitle: e.target.value })} maxLength={300} /></Field>
+            {t.points.map((p, i) => (
+              <div key={i} className="grid gap-2 rounded-2xl border border-[var(--border)] p-3 sm:grid-cols-[1fr_1.4fr]">
+                <input className="input" value={p.title} onChange={(e) => setPoint(i, "title", e.target.value)} maxLength={60} placeholder={`النقطة ${i + 1} — العنوان (فارغ = تختفي)`} aria-label={`النقطة ${i + 1}`} />
+                <input className="input" value={p.desc} onChange={(e) => setPoint(i, "desc", e.target.value)} maxLength={120} placeholder="الوصف" aria-label={`وصف النقطة ${i + 1}`} />
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-2">
+              <button className="btn btn-primary flex-1" disabled={busy} onClick={() => save({ texts: t, logo: lg ?? null }, "تم حفظ النصوص والشعار")}>حفظ</button>
+              <button className="btn btn-ghost" disabled={busy} onClick={() => confirm("استرجاع النصوص الافتراضية وإزالة الشعار؟") && save({ texts: null, logo: null }, "رجعت النصوص الافتراضية")}><Icon name="refresh" size={15} />النصوص الافتراضية</button>
+            </div>
+          </div>
+        </Card>
+      </div>
+      <Card title="المعاينة">
+        <p className="muted mb-3 text-xs">معاينة مباشرة بالتعديلات قبل الحفظ.</p>
+        <div className="space-y-5">
+          <div>
+            <div className="muted mb-1.5 text-xs font-bold">الكمبيوتر</div>
+            <div className="relative mx-auto h-[450px] w-[320px] overflow-hidden rounded-2xl ring-1 ring-[var(--border)]">
+              <div className="absolute right-0 top-0 h-[900px] w-[640px] origin-top-right scale-50">
+                <DesktopBanner className="flex h-full w-full" image={desktopImg} texts={t} logo={lg ?? null} />
+              </div>
+            </div>
+          </div>
+          <div>
+            <div className="muted mb-1.5 text-xs font-bold">الجوال</div>
+            <div className="mx-auto w-[320px] overflow-hidden rounded-2xl bg-[var(--bg)] ring-1 ring-[var(--border)]">
+              <MobileBanner image={mobileImg} texts={t} logo={lg ?? null} />
+              <div className="space-y-2 p-4"><div className="h-3 w-24 rounded bg-[var(--border)]" /><div className="h-9 rounded-xl bg-[var(--surface)]" /><div className="h-9 rounded-xl bg-[var(--surface)]" /></div>
+            </div>
           </div>
         </div>
-      </div>
-    </Card>
+      </Card>
+    </div>
   );
 }

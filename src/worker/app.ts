@@ -43,6 +43,8 @@ import {
   paymentProviderSchema,
   paymentAccountSchema,
   exchangeRatesSchema,
+  brandingSchema,
+  featuredSchema,
   campaignInputSchema,
   drawInputSchema,
   loginSchema,
@@ -154,11 +156,12 @@ async function appDownloadUrl(c: C): Promise<string> {
 
 /** What a buyer needs to see: active plans (with structured prices), exchange rates, payment accounts and the contact link. */
 async function publicCatalog(c: C) {
-  const [plans, rates, payment_methods, contact] = await Promise.all([
+  const [plans, rates, payment_methods, contact, featured] = await Promise.all([
     listPlans(c.env.DB),
     getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES),
     listPaymentMethods(c.env.DB),
     getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", ""),
+    getSetting<{ plan_id: string | null; label: string } | null>(c.env.DB, OWNER_TENANT, "featured_plan", null),
   ]);
   return {
     plans: plans
@@ -167,6 +170,8 @@ async function publicCatalog(c: C) {
     rates: { ...DEFAULT_RATES, ...rates, USD: 1 },
     payment_methods,
     sales_contact: contact || null,
+    // Which plan carries the highlight badge (default: the "pro" plan, "الأكثر طلبًا").
+    featured: featured ?? { plan_id: "pro", label: "الأكثر طلبًا" },
   };
 }
 
@@ -391,13 +396,25 @@ export function createApp() {
 
   // Public: the plans and how to buy, shown on the sign-up screen before an account exists.
   app.get("/api/public/plans", async (c) => c.json(await publicCatalog(c)));
-  // Login-page banner chosen by the owner: a version to build the image URL, and the image itself (cacheable per version).
+  // Login-page look chosen by the owner: banner images (computer / phone, cacheable per version), texts and logo.
   app.get("/api/public/branding", async (c) => {
-    const at = await getSetting<number>(c.env.DB, OWNER_TENANT, "login_banner_at", 0);
-    return c.json({ login_banner: at ? `/api/public/login-banner?v=${at}` : null });
+    const db = c.env.DB;
+    const [d, m, texts, logo] = await Promise.all([
+      getSetting<number>(db, OWNER_TENANT, "login_banner_at", 0),
+      getSetting<number>(db, OWNER_TENANT, "login_banner_mobile_at", 0),
+      getSetting<unknown>(db, OWNER_TENANT, "login_texts", null),
+      getSetting<string>(db, OWNER_TENANT, "login_logo", ""),
+    ]);
+    return c.json({
+      login_banner: d ? `/api/public/login-banner?v=${d}` : null,
+      login_banner_mobile: m ? `/api/public/login-banner?k=mobile&v=${m}` : null,
+      texts,
+      logo: logo || null,
+    });
   });
   app.get("/api/public/login-banner", async (c) => {
-    const data = await getSetting<string>(c.env.DB, OWNER_TENANT, "login_banner", "");
+    const key = c.req.query("k") === "mobile" ? "login_banner_mobile" : "login_banner";
+    const data = await getSetting<string>(c.env.DB, OWNER_TENANT, key, "");
     const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(data);
     if (!m) return c.body(null, 404);
     const bytes = Uint8Array.from(atob(m[2]), (ch) => ch.charCodeAt(0));
@@ -761,12 +778,32 @@ export function createApp() {
     return c.json({ ok: true });
   });
 
-  // The login page banner image (data: URL resized in the browser; null removes it).
+  // The login page banner images (data: URLs resized in the browser; null = back to the default design).
   owner.put("/login-banner", async (c) => {
-    const p = await parseBody(c, z.object({ image: z.string().max(1_400_000, "الصورة كبيرة — اختر صورة أصغر").regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, "صيغة الصورة غير مدعومة").nullable() }));
+    const p = await parseBody(c, z.object({
+      variant: z.enum(["desktop", "mobile"]).default("desktop"),
+      image: z.string().max(1_400_000, "الصورة كبيرة — اختر صورة أصغر").regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, "صيغة الصورة غير مدعومة").nullable(),
+    }));
     if (!p.ok) return p.res;
-    await setSetting(c.env.DB, OWNER_TENANT, "login_banner", p.data.image ?? "");
-    await setSetting(c.env.DB, OWNER_TENANT, "login_banner_at", p.data.image ? Date.now() : 0);
+    const key = p.data.variant === "mobile" ? "login_banner_mobile" : "login_banner";
+    await setSetting(c.env.DB, OWNER_TENANT, key, p.data.image ?? "");
+    await setSetting(c.env.DB, OWNER_TENANT, `${key}_at`, p.data.image ? Date.now() : 0);
+    return c.json({ ok: true });
+  });
+  // Banner texts and logo (null texts = the default texts).
+  owner.put("/branding", async (c) => {
+    const p = await parseBody(c, brandingSchema);
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "login_texts", p.data.texts);
+    await setSetting(c.env.DB, OWNER_TENANT, "login_logo", p.data.logo ?? "");
+    return c.json({ ok: true });
+  });
+  // The highlighted plan and its badge text (plan_id null = no badge).
+  owner.put("/featured-plan", async (c) => {
+    const p = await parseBody(c, featuredSchema);
+    if (!p.ok) return p.res;
+    if (p.data.plan_id && !(await first(c.env.DB, "SELECT 1 FROM plans WHERE id = ?", p.data.plan_id))) return apiError(c, 422, "validation", "باقة غير موجودة");
+    await setSetting(c.env.DB, OWNER_TENANT, "featured_plan", p.data);
     return c.json({ ok: true });
   });
 

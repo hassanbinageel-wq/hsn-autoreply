@@ -318,9 +318,36 @@ describe("owner tools", () => {
     expect((await call("/api/owner/login-banner", OWNER, "PUT", { image: "data:text/html;base64,PGgxPg==" })).status).toBe(422);
     const { h } = await customerWithAccount();
     expect((await call("/api/owner/login-banner", h, "PUT", { image: null })).status).toBe(403);
+    // a separate phone image
+    await call("/api/owner/login-banner", OWNER, "PUT", { variant: "mobile", image: png });
+    const mob = (await call("/api/public/branding")).body.login_banner_mobile;
+    expect(mob).toMatch(/k=mobile/);
+    expect((await SELF.fetch(new Request(BASE + mob))).status).toBe(200);
+    // texts + logo, then back to defaults
+    const texts = { title: "عنوان", subtitle: "وصف", points: [{ title: "أ", desc: "" }, { title: "ب", desc: "د" }, { title: "", desc: "" }] };
+    expect((await call("/api/owner/branding", OWNER, "PUT", { texts, logo: png })).status).toBe(200);
+    expect((await call("/api/public/branding")).body).toMatchObject({ texts, logo: png });
+    expect((await call("/api/owner/branding", OWNER, "PUT", { texts: { ...texts, points: [] }, logo: null })).status).toBe(422);
+    await call("/api/owner/branding", OWNER, "PUT", { texts: null, logo: null });
+    expect((await call("/api/public/branding")).body).toMatchObject({ texts: null, logo: null });
     await call("/api/owner/login-banner", OWNER, "PUT", { image: null });
-    expect((await call("/api/public/branding")).body.login_banner).toBeNull();
+    await call("/api/owner/login-banner", OWNER, "PUT", { variant: "mobile", image: null });
+    expect((await call("/api/public/branding")).body).toMatchObject({ login_banner: null, login_banner_mobile: null });
     expect((await SELF.fetch(new Request(BASE + "/api/public/login-banner"))).status).toBe(404);
+  });
+
+  it("the featured badge goes on any plan with the owner's text, or none; wallets are a payment kind", async () => {
+    expect((await call("/api/public/plans")).body.featured).toEqual({ plan_id: "pro", label: "الأكثر طلبًا" });
+    expect((await call("/api/owner/featured-plan", OWNER, "PUT", { plan_id: "max", label: "الأفضل قيمة" })).status).toBe(200);
+    expect((await call("/api/public/plans")).body.featured).toEqual({ plan_id: "max", label: "الأفضل قيمة" });
+    await call("/api/owner/featured-plan", OWNER, "PUT", { plan_id: null, label: "x" });
+    expect((await call("/api/public/plans")).body.featured.plan_id).toBeNull();
+    expect((await call("/api/owner/featured-plan", OWNER, "PUT", { plan_id: "nope", label: "x" })).status).toBe(422);
+    const { h } = await customerWithAccount();
+    expect((await call("/api/owner/featured-plan", h, "PUT", { plan_id: "max", label: "x" })).status).toBe(403);
+    const w = await call("/api/owner/payment-providers", OWNER, "POST", { name: "محفظة جيب", kind: "wallet" });
+    expect(w.status).toBe(200);
+    expect((await call("/api/public/plans")).body.payment_methods[0].kind).toBe("wallet");
   });
 
   it("plans are editable and the public pricing page shows them", async () => {
