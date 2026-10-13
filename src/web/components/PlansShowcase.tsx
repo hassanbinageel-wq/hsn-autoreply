@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
-import { Tip, toast } from "./ui";
+import { Field, Modal, Tip, toast } from "./ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, convertPrice, formatAmount, type ExchangeRates, type PlanLimits } from "../../shared/plans";
 
 export interface Catalog {
@@ -45,7 +45,76 @@ function copy(text: string) {
   navigator.clipboard?.writeText(text).then(() => toast("تم النسخ ✅"), () => toast(text));
 }
 
-export function PaymentMethods({ catalog }: { catalog: Catalog }) {
+const priceText = (p: Catalog["plans"][number], cur: string, rates: ExchangeRates) => {
+  if (p.price_amount === null) return p.price_label || "حسب الاتفاق";
+  const v = convertPrice(p.price_amount, p.price_currency, cur, rates);
+  return v === null ? p.price_label ?? "" : `${formatAmount(v, cur)} / ${PRICE_PERIODS[p.price_period] ?? PRICE_PERIODS.month}`;
+};
+
+/** "Send the receipt": pick the plan, fill name / Instagram / phone / location, then open WhatsApp with a ready message. */
+function ReceiptModal({ catalog, cur, onClose }: { catalog: Catalog; cur: string; onClose: () => void }) {
+  const [plan, setPlan] = useState<Catalog["plans"][number] | null>(null);
+  const [f, setF] = useState({ name: "", ig: "", phone: "", place: "" });
+  const contact = catalog.sales_contact!;
+  const kind = contactKind(contact);
+  const send = () => {
+    const ig = f.ig.trim().replace(/^@+/, "");
+    const text = [
+      "السلام عليكم 👋 حوّلت مبلغ الاشتراك في HSN AutoReply وهذا السند:",
+      "",
+      `الباقة: ${plan!.name}`,
+      `السعر: ${priceText(plan!, cur, catalog.rates)}`,
+      `الاسم: ${f.name.trim()}`,
+      `حساب إنستقرام: @${ig}`,
+      `رقم الجوال: ${f.phone.trim()}`,
+      `الدولة / المحافظة: ${f.place.trim()}`,
+      "",
+      "📎 (أرفقت صورة السند)",
+    ].join("\n");
+    const wa = contact.match(/wa\.me\/(\+?\d+)/i) ?? contact.match(/phone=(\+?\d+)/i);
+    if (wa) {
+      window.open(`https://wa.me/${wa[1].replace("+", "")}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+    } else {
+      // Instagram / other links cannot be pre-filled: copy the message, then open the chat.
+      navigator.clipboard?.writeText(text).catch(() => undefined);
+      toast(`نسخنا الرسالة ✅ الصقها في ${kind.label} وأرفق صورة السند`);
+      window.open(contact, "_blank", "noopener");
+    }
+    onClose();
+  };
+  const ok = f.name.trim().length >= 2 && f.ig.trim().replace(/^@+/, "").length >= 2 && f.phone.replace(/\D/g, "").length >= 7 && f.place.trim().length >= 2;
+  return (
+    <Modal open onClose={onClose} title={plan ? `بياناتك — باقة ${plan.name}` : "اختر الباقة اللي اشتركت فيها"}>
+      {!plan ? (
+        <div className="space-y-2.5">
+          {catalog.plans.map((p) => (
+            <button key={p.id} type="button" onClick={() => setPlan(p)} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--border)] px-4 py-3.5 text-right transition hover:border-violet-400 hover:bg-violet-500/5">
+              <b className="font-display text-base">{p.name}</b>
+              <span className="font-display font-extrabold text-violet-600 dark:text-violet-300">{priceText(p, cur, catalog.rates)}</span>
+            </button>
+          ))}
+          <p className="muted pt-1 text-center text-xs">السعر بالعملة المختارة في صفحة الباقات</p>
+        </div>
+      ) : (
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (ok) send(); }}>
+          <div className="flex items-center justify-between rounded-2xl bg-violet-500/10 px-3.5 py-2.5 text-sm">
+            <span><b>{plan.name}</b> · {priceText(plan, cur, catalog.rates)}</span>
+            <button type="button" className="text-xs font-bold text-violet-600 underline dark:text-violet-300" onClick={() => setPlan(null)}>تغيير</button>
+          </div>
+          <Field label="الاسم"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={80} required autoComplete="name" /></Field>
+          <Field label="حسابك في إنستقرام"><input className="input" dir="ltr" value={f.ig} onChange={(e) => setF({ ...f, ig: e.target.value })} maxLength={40} placeholder="@username" required /></Field>
+          <Field label="رقم الجوال"><input className="input" dir="ltr" type="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} maxLength={20} placeholder="+967 7xx xxx xxx" required autoComplete="tel" /></Field>
+          <Field label="الدولة / المحافظة"><input className="input" value={f.place} onChange={(e) => setF({ ...f, place: e.target.value })} maxLength={60} placeholder="مثل: اليمن / حضرموت" required /></Field>
+          <button className="btn btn-primary w-full" disabled={!ok}><Icon name={kind.icon} size={18} />إرسال عبر {kind.label}</button>
+          <p className="muted text-center text-[11px]">بنفتح لك {kind.label} برسالة جاهزة فيها بياناتك — أرفق صورة السند وأرسلها. ما نحفظ هذه البيانات عندنا.</p>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+export function PaymentMethods({ catalog, cur }: { catalog: Catalog; cur: string }) {
+  const [receipt, setReceipt] = useState(false);
   if (!catalog.payment_methods.length && !catalog.sales_contact) return null;
   const contact = catalog.sales_contact ? contactKind(catalog.sales_contact) : null;
   return (
@@ -102,46 +171,66 @@ export function PaymentMethods({ catalog }: { catalog: Catalog }) {
         </div>
       )}
       {catalog.sales_contact && contact && (
-        <a href={catalog.sales_contact} target="_blank" rel="noopener" className="flex items-center gap-3 rounded-2xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/5 p-4 transition hover:bg-emerald-500/10">
+        <button type="button" onClick={() => setReceipt(true)} className="flex w-full items-center gap-3 rounded-2xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/5 p-4 text-right transition hover:bg-emerald-500/10">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-white"><Icon name={contact.icon} size={22} /></span>
           <span className="flex-1 leading-tight">
             <b className="font-display block text-base">حوّلت المبلغ؟ أرسل السند هنا</b>
-            <span className="muted text-xs">اضغط وأرسل صورة السند عبر {contact.label} — يوصلك كود التفعيل بعد التأكد</span>
+            <span className="muted text-xs">اختر باقتك واكتب بياناتك — نجهّز لك رسالة {contact.label} جاهزة ترفق معها صورة السند</span>
           </span>
           <Icon name="arrowL" size={20} className="text-emerald-600" />
-        </a>
+        </button>
       )}
+      {receipt && catalog.sales_contact && <ReceiptModal catalog={catalog} cur={cur} onClose={() => setReceipt(false)} />}
     </section>
   );
 }
 
-/** Plan cards with a currency switcher, prices converted with the owner's exchange rates. */
-export function PlanCards({ catalog, currentPlanId, onChoose }: { catalog: Catalog; currentPlanId?: string | null; onChoose?: () => void }) {
-  const first = catalog.plans.find((p) => p.price_amount !== null)?.price_currency ?? "SAR";
-  const [cur, setCur] = useState(first);
-  const featured = catalog.plans.length >= 3 ? catalog.plans[1].id : null;
-  const anyPrice = catalog.plans.some((p) => p.price_amount !== null);
+/** The four currencies as a segmented switch. */
+function CurrencySwitch({ cur, setCur }: { cur: string; setCur: (c: string) => void }) {
   return (
-    <div className="space-y-4">
-      {anyPrice && (
-        <div className="flex justify-center">
-          <div className="inline-flex flex-wrap justify-center gap-1 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-1" role="tablist" aria-label="العملة">
-            {CURRENCIES.map((c) => (
-              <button key={c.code} type="button" role="tab" aria-selected={cur === c.code} onClick={() => setCur(c.code)} className={`rounded-xl px-3 py-1.5 text-xs font-bold transition sm:text-sm ${cur === c.code ? "grad text-white shadow" : "muted hover:text-[var(--text)]"}`}>
-                {c.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="grid items-stretch gap-4 md:grid-cols-3">
-        {catalog.plans.map((p) => {
+    <div className="flex justify-center">
+      <div className="inline-flex flex-wrap justify-center gap-1 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-1" role="tablist" aria-label="العملة">
+        {CURRENCIES.map((c) => (
+          <button key={c.code} type="button" role="tab" aria-selected={cur === c.code} onClick={() => setCur(c.code)} className={`rounded-xl px-3 py-1.5 text-xs font-bold transition sm:text-sm ${cur === c.code ? "grad text-white shadow" : "muted hover:text-[var(--text)]"}`}>
+            {c.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Plan cards, prices converted with the owner's exchange rates. On phones they are a swipeable carousel
+ * (first plan shown first, an arrow and dots to move to the next); from md up a three-column grid.
+ */
+export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: Catalog; cur: string; currentPlanId?: string | null; onChoose?: () => void }) {
+  const featured = catalog.plans.length >= 3 ? catalog.plans[1].id : null;
+  const track = useRef<HTMLDivElement>(null);
+  const cards = useRef<Array<HTMLDivElement | null>>([]);
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    const root = track.current;
+    if (!root || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((en) => en.isIntersecting && setActive(Number((en.target as HTMLElement).dataset.i))),
+      { root, threshold: 0.6 },
+    );
+    cards.current.forEach((c) => c && io.observe(c));
+    return () => io.disconnect();
+  }, [catalog.plans.length]);
+  const go = (i: number) => cards.current[Math.max(0, Math.min(catalog.plans.length - 1, i))]?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  const many = catalog.plans.length > 1;
+  return (
+    <div className="relative">
+      <div ref={track} className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-[8%] pb-2 pt-4 [scrollbar-width:none] md:mx-0 md:grid md:grid-cols-3 md:items-stretch md:gap-4 md:overflow-visible md:px-0 [&::-webkit-scrollbar]:hidden">
+        {catalog.plans.map((p, i) => {
           const price = p.price_amount !== null ? convertPrice(p.price_amount, p.price_currency, cur, catalog.rates) : null;
           const isFeatured = p.id === featured;
           const isCurrent = p.id === currentPlanId;
           return (
-            <div key={p.id} className={`card relative flex flex-col p-5 ${isFeatured ? "ring-2 ring-violet-500 md:-translate-y-1 md:shadow-xl md:shadow-violet-500/10" : ""}`}>
-              {isFeatured && <span className="grad absolute -top-3 left-1/2 -translate-x-1/2 rounded-full px-3 py-1 text-[11px] font-extrabold text-white shadow">الأكثر طلبًا</span>}
+            <div key={p.id} ref={(el) => { cards.current[i] = el; }} data-i={i} className={`card relative flex w-[84%] shrink-0 snap-center flex-col p-5 md:w-auto ${isFeatured ? "ring-2 ring-violet-500 md:-translate-y-1 md:shadow-xl md:shadow-violet-500/10" : ""}`}>
+              {isFeatured && <span className="grad absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-extrabold text-white shadow">الأكثر طلبًا</span>}
               <div className="flex items-start justify-between gap-2">
                 <b className="font-display text-lg font-extrabold">{p.name}</b>
                 {isCurrent && <span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">باقتك</span>}
@@ -165,17 +254,35 @@ export function PlanCards({ catalog, currentPlanId, onChoose }: { catalog: Catal
           );
         })}
       </div>
+      {many && (
+        <div className="mt-3 flex items-center justify-center gap-3 md:hidden">
+          <button type="button" aria-label="الباقة السابقة" disabled={active === 0} onClick={() => go(active - 1)} className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] shadow-sm disabled:opacity-30">
+            <Icon name="arrowL" size={18} className="rotate-180" />
+          </button>
+          <div className="flex gap-1.5" aria-hidden>
+            {catalog.plans.map((p, i) => <button key={p.id} type="button" tabIndex={-1} onClick={() => go(i)} className={`h-2 rounded-full transition-all ${i === active ? "w-6 bg-violet-600" : "w-2 bg-[var(--border)]"}`} />)}
+          </div>
+          <button type="button" aria-label="الباقة التالية" disabled={active === catalog.plans.length - 1} onClick={() => go(active + 1)} className="grad flex h-10 w-10 items-center justify-center rounded-full text-white shadow disabled:opacity-30">
+            <Icon name="arrowL" size={18} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 export function PlansShowcase({ catalog, currentPlanId }: { catalog: Catalog; currentPlanId?: string | null }) {
+  const [cur, setCur] = useState(() => catalog.plans.find((p) => p.price_amount !== null)?.price_currency ?? "SAR");
   const toPayment = () => document.getElementById("payment")?.scrollIntoView({ behavior: "smooth", block: "start" });
   const hasPayment = catalog.payment_methods.length > 0 || !!catalog.sales_contact;
+  const anyPrice = catalog.plans.some((p) => p.price_amount !== null);
   return (
     <div className="space-y-10">
-      <PlanCards catalog={catalog} currentPlanId={currentPlanId} onChoose={hasPayment ? toPayment : undefined} />
-      <PaymentMethods catalog={catalog} />
+      <div className="space-y-4">
+        {anyPrice && <CurrencySwitch cur={cur} setCur={setCur} />}
+        <PlanCards catalog={catalog} cur={cur} currentPlanId={currentPlanId} onChoose={hasPayment ? toPayment : undefined} />
+      </div>
+      <PaymentMethods catalog={catalog} cur={cur} />
     </div>
   );
 }

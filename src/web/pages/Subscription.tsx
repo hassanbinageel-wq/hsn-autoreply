@@ -76,7 +76,7 @@ export function SubscriptionPage() {
           )}
         </Card>
       </div>
-      <h2 className="font-display pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
+      <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
       <PlansShowcase catalog={data} currentPlanId={data.plan?.id} />
     </div>
   );

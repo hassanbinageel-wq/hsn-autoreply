@@ -168,7 +168,7 @@ export async function resetDb() {
     DB.prepare("DELETE FROM payment_providers"),
     DB.prepare("DELETE FROM usage_counters"),
     DB.prepare("UPDATE tenants SET status = 'active' WHERE id = 1"),
-    DB.prepare("DELETE FROM app_settings WHERE key LIKE 't%:%' OR key IN ('sales_contact', 'app_download_url', 'exchange_rates')"),
+    DB.prepare("DELETE FROM app_settings WHERE key LIKE 't%:%' OR key IN ('sales_contact', 'app_download_url', 'exchange_rates', 'login_banner', 'login_banner_at')"),
   ]);
   await DB.prepare("UPDATE app_settings SET value = 'true' WHERE key IN ('automation_enabled','any_reply_counts_as_start')").run();
   await DB.prepare("UPDATE app_settings SET value = '10' WHERE key = 'global_user_hourly_limit'").run();

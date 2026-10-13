@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, setCsrf, setUnauthorizedHandler } from "./api";
 import { deviceToken, initNative, isNative, watchNetwork } from "./platform";
-import { Alert, Spinner, ToastHost, setTz } from "./components/ui";
+import { Alert, Modal, Spinner, ToastHost, setTz } from "./components/ui";
+import { FEATURE_LABELS, type PlanLimits } from "../shared/plans";
 import { Icon } from "./components/Icon";
 import { AccountAvatar } from "./components/UserAvatar";
 import { LoginPage } from "./pages/Login";
@@ -109,6 +110,14 @@ export function App() {
   const [sub, setSub] = useState<{ active: boolean; expires_at: number | null; reason?: string } | null>(null);
   // Customers: "تنزيل التطبيق" goes straight to the stable download link the owner controls.
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [limits, setLimits] = useState<PlanLimits | null>(null);
+  // "Your plan does not include …" box (from a locked menu item or any 403 plan error from the API).
+  const [blocked, setBlocked] = useState<string | null>(null);
+  useEffect(() => {
+    const on = (e: Event) => setBlocked((e as CustomEvent<{ message: string }>).detail.message);
+    window.addEventListener("hsn:plan-blocked", on);
+    return () => window.removeEventListener("hsn:plan-blocked", on);
+  }, []);
   const [online, setOnline] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(false);
@@ -127,11 +136,13 @@ export function App() {
           .then((x) => {
             setSub({ active: x.active, expires_at: x.expires_at, reason: x.reason });
             setDownloadUrl(x.app_download_url ?? null);
+            setLimits(x.active ? x.limits : null);
           })
           .catch(() => undefined);
       else {
         setSub(null);
         setDownloadUrl(null);
+        setLimits(null);
       }
       setAuth("in");
       api<{ settings: { timezone?: string } }>("/api/settings")
@@ -228,12 +239,28 @@ export function App() {
   const isActive = (to: string) => (to === "/" ? route === "/" : route.startsWith(to));
 
   const current = NAV.find((n) => isActive(n.to));
-  const NavLink = ({ to, className, children }: { to: string; className?: string; children: ReactNode }) =>
-    !isOwner && to === "/download" && downloadUrl ? (
+  // Sections a customer's plan does not include: the menu item shows a lock and opens the upgrade box.
+  const lockedFeature = (to: string): string | null => {
+    if (isOwner || !limits) return null;
+    if (to === "/draws" && limits.draws_per_month === 0) return "السحوبات";
+    if (to === "/simulator" && !limits.simulator) return FEATURE_LABELS.simulator;
+    return null;
+  };
+  const NavLink = ({ to, className, children }: { to: string; className?: string; children: ReactNode }) => {
+    const locked = lockedFeature(to);
+    if (locked)
+      return (
+        <button type="button" className={`${className ?? ""} w-full text-right`} onClick={() => { setMenuOpen(false); setBlocked(`باقتك لا تشمل: ${locked} — رقِّ باقتك من صفحة «اشتراكي»`); }}>
+          {children}
+          <Icon name="lock" size={14} className="mr-auto opacity-60" />
+        </button>
+      );
+    return !isOwner && to === "/download" && downloadUrl ? (
       <a href={downloadUrl} target="_blank" rel="noopener" className={className}>{children}</a>
     ) : (
       <Link to={to} className={className}>{children}</Link>
     );
+  };
   const nextTheme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
   const themeIcon = theme === "light" ? "sun" : theme === "dark" ? "moon" : "grid";
   const acc = shell.account;
@@ -331,10 +358,10 @@ export function App() {
         {MOBILE_TABS.slice(0, 2).map((to) => {
           const n = NAV.find((x) => x.to === to)!;
           return (
-            <Link key={to} to={to} className={`font-display flex flex-col items-center gap-0.5 pb-2 pt-2.5 text-[11px] font-bold ${isActive(to) ? "text-violet-600 dark:text-violet-400" : "muted"}`}>
+            <NavLink key={to} to={to} className={`font-display flex flex-col items-center gap-0.5 pb-2 pt-2.5 text-[11px] font-bold ${isActive(to) ? "text-violet-600 dark:text-violet-400" : "muted"}`}>
               <Icon name={n.icon} size={22} />
               {n.label}
-            </Link>
+            </NavLink>
           );
         })}
         <div className="flex justify-center">
@@ -374,6 +401,27 @@ export function App() {
         </div>
       )}
       <ToastHost />
+      {blocked && !isOwner && (
+        <Modal open onClose={() => setBlocked(null)} title="ميزة غير متاحة في باقتك">
+          <div className="space-y-4 text-center">
+            <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400"><Icon name="lock" size={26} /></span>
+            <p className="font-display text-base font-bold leading-relaxed">{blocked}</p>
+            <div className="flex gap-2">
+              <button
+                className="btn btn-primary flex-1"
+                onClick={() => {
+                  setBlocked(null);
+                  location.hash = "#/subscription";
+                  setTimeout(() => document.getElementById("plans")?.scrollIntoView({ behavior: "smooth", block: "start" }), 700);
+                }}
+              >
+                <Icon name="zap" size={17} />رقِّ اشتراكي
+              </button>
+              <button className="btn btn-ghost" onClick={() => setBlocked(null)}>لاحقًا</button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

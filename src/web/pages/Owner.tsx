@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import { API_BASE } from "../platform";
 import { Icon } from "../components/Icon";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, formatPrice } from "../../shared/plans";
@@ -398,6 +399,7 @@ function PlansTab() {
         </div>
       </Card>
       <RatesCard rates={settings.exchange_rates} onSaved={reloadSettings} />
+      <LoginBannerCard />
       <div className="grid gap-5 xl:grid-cols-3">
         {data.map((p) => <PlanEditor key={p.id} plan={p} onSaved={reload} />)}
       </div>
@@ -430,12 +432,12 @@ function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
       <div className="space-y-3">
         <Field label="الاسم"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={40} /></Field>
         <Field label="السعر" hint={f.price_amount === "" || f.price_amount == null ? "فارغ = يظهر «تواصل معنا»" : `يظهر للعملاء: ${formatPrice(Number(f.price_amount), f.price_currency || "SAR", f.price_period || "month")}`}>
-          <div className="grid grid-cols-[1fr_auto_auto] gap-2">
-            <input className="input" type="number" min={0} step="any" dir="ltr" value={f.price_amount ?? ""} onChange={(e) => setF({ ...f, price_amount: e.target.value })} placeholder="99" aria-label="المبلغ" />
-            <select className="input !w-auto" value={f.price_currency || "SAR"} onChange={(e) => setF({ ...f, price_currency: e.target.value })} aria-label="العملة">
+          <div className="grid grid-cols-2 gap-2">
+            <input className="input col-span-2 text-lg font-bold" type="number" min={0} step="any" dir="ltr" value={f.price_amount ?? ""} onChange={(e) => setF({ ...f, price_amount: e.target.value })} placeholder="المبلغ، مثل 99" aria-label="المبلغ" />
+            <select className="input min-w-0 text-sm" value={f.price_currency || "SAR"} onChange={(e) => setF({ ...f, price_currency: e.target.value })} aria-label="العملة">
               {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
             </select>
-            <select className="input !w-auto" value={f.price_period || "month"} onChange={(e) => setF({ ...f, price_period: e.target.value })} aria-label="المدة">
+            <select className="input min-w-0 text-sm" value={f.price_period || "month"} onChange={(e) => setF({ ...f, price_period: e.target.value })} aria-label="المدة">
               {Object.entries(PRICE_PERIODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
@@ -713,5 +715,86 @@ function PaymentsTab() {
         {!data ? <Spinner /> : !data.length ? <Empty title="لا توجد بنوك أو صرافات بعد" /> : data.map((p, i) => <ProviderCard key={p.id} p={p} first={i === 0} last={i === data.length - 1} reload={reload} />)}
       </div>
     </div>
+  );
+}
+
+/** Reads an image as a data: URL (allowed by the app's CSP) and shrinks it to fit maxW×maxH. */
+async function shrinkImage(file: File, maxW: number, maxH: number, quality: number): Promise<string> {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error("اختر صورة PNG أو JPG أو WEBP");
+  if (file.size > 15 * 1024 * 1024) throw new Error("الصورة كبيرة جدًا (أكثر من 15 ميقا)");
+  const src = await new Promise<string>((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result));
+    r.onerror = () => rej(new Error("تعذّر قراءة الملف"));
+    r.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error("تعذّر قراءة الصورة — جرّب صورة ثانية"));
+    i.src = src;
+  });
+  const scale = Math.min(1, maxW / img.width, maxH / img.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+  let q = quality;
+  let out = canvas.toDataURL("image/webp", q);
+  if (!out.startsWith("data:image/webp")) out = canvas.toDataURL("image/jpeg", q);
+  while (out.length > 1_300_000 && q > 0.4) {
+    q -= 0.1;
+    out = canvas.toDataURL(out.startsWith("data:image/webp") ? "image/webp" : "image/jpeg", q);
+  }
+  return out;
+}
+
+function LoginBannerCard() {
+  const { data, reload } = useAsync(() => api<{ login_banner: string | null }>("/api/public/branding"), []);
+  const [busy, setBusy] = useState(false);
+  const save = async (image: string | null) => {
+    setBusy(true);
+    try {
+      await api("/api/owner/login-banner", { method: "PUT", body: { image } });
+      toast(image ? "تم حفظ صورة صفحة الدخول" : "أُزيلت الصورة");
+      reload();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card title="صورة صفحة الدخول">
+      <div className="grid gap-4 sm:grid-cols-[260px_1fr] sm:items-center">
+        <div className="relative aspect-[4/5] overflow-hidden rounded-2xl ring-1 ring-[var(--border)]" style={{ background: "linear-gradient(160deg,#1e0b4b,#4c1d95 50%,#86198f)" }}>
+          {data?.login_banner ? <img src={`${API_BASE || ""}${data.login_banner}`} alt="" className="h-full w-full object-cover" /> : <span className="absolute inset-0 flex items-center justify-center text-xs text-white/70">التصميم الافتراضي</span>}
+        </div>
+        <div className="space-y-3">
+          <p className="muted text-sm leading-relaxed">تظهر على يسار صفحة الدخول والتسجيل في الكمبيوتر، وفوقها في الجوال. يُضاف فوقها ظل خفيف عشان يبقى الكلام واضح. الأفضل صورة عمودية أو مربعة بجودة عالية.</p>
+          <div className="flex flex-wrap gap-2">
+            <label className={`btn btn-primary cursor-pointer ${busy ? "pointer-events-none opacity-60" : ""}`}>
+              <Icon name="upload" size={17} />{data?.login_banner ? "تغيير الصورة" : "رفع صورة"}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!f) return;
+                  try {
+                    await save(await shrinkImage(f, 1600, 1600, 0.82));
+                  } catch (err: any) {
+                    toast(err.message, "bad");
+                  }
+                }}
+              />
+            </label>
+            {data?.login_banner && <button className="btn btn-ghost text-red-600" disabled={busy} onClick={() => confirm("إزالة الصورة والرجوع للتصميم الافتراضي؟") && save(null)}>إزالة</button>}
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }

@@ -391,6 +391,18 @@ export function createApp() {
 
   // Public: the plans and how to buy, shown on the sign-up screen before an account exists.
   app.get("/api/public/plans", async (c) => c.json(await publicCatalog(c)));
+  // Login-page banner chosen by the owner: a version to build the image URL, and the image itself (cacheable per version).
+  app.get("/api/public/branding", async (c) => {
+    const at = await getSetting<number>(c.env.DB, OWNER_TENANT, "login_banner_at", 0);
+    return c.json({ login_banner: at ? `/api/public/login-banner?v=${at}` : null });
+  });
+  app.get("/api/public/login-banner", async (c) => {
+    const data = await getSetting<string>(c.env.DB, OWNER_TENANT, "login_banner", "");
+    const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(data);
+    if (!m) return c.body(null, 404);
+    const bytes = Uint8Array.from(atob(m[2]), (ch) => ch.charCodeAt(0));
+    return c.body(bytes, 200, { "Content-Type": m[1], "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" });
+  });
 
   app.get("/api/auth/status", async (c) => {
     const admin = await first(c.env.DB, "SELECT id FROM admin_users LIMIT 1");
@@ -746,6 +758,15 @@ export function createApp() {
     const r = await run(c.env.DB, "DELETE FROM activation_codes WHERE id = ?", cid);
     if (!r.meta.changes) return apiError(c, 404, "not_found", "الكود غير موجود");
     await audit(c.env.DB, T(c), c.get("session").username, "codes.deleted", String(cid));
+    return c.json({ ok: true });
+  });
+
+  // The login page banner image (data: URL resized in the browser; null removes it).
+  owner.put("/login-banner", async (c) => {
+    const p = await parseBody(c, z.object({ image: z.string().max(1_400_000, "الصورة كبيرة — اختر صورة أصغر").regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, "صيغة الصورة غير مدعومة").nullable() }));
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "login_banner", p.data.image ?? "");
+    await setSetting(c.env.DB, OWNER_TENANT, "login_banner_at", p.data.image ? Date.now() : 0);
     return c.json({ ok: true });
   });
 
@@ -1657,7 +1678,7 @@ export function createApp() {
     const ent = await ENT(c);
     if (!ent.active) return apiError(c, 403, "subscription_inactive", "اشتراكك غير فعّال — أدخل كود التفعيل من صفحة «اشتراكي»");
     if (ent.limits.draws_per_month !== null && (await drawsThisMonth(c.env.DB, T(c))) >= ent.limits.draws_per_month) {
-      return apiError(c, 403, "plan_draws", ent.limits.draws_per_month === 0 ? "السحوبات غير متاحة في باقتك — رقِّ باقتك" : `وصلت لحد السحوبات الشهري في باقتك (${ent.limits.draws_per_month})`);
+      return apiError(c, 403, "plan_draws", ent.limits.draws_per_month === 0 ? "باقتك لا تشمل: السحوبات — رقِّ باقتك من صفحة «اشتراكي»" : `وصلت لحد السحوبات الشهري في باقتك (${ent.limits.draws_per_month})`);
     }
     try {
       const m = await resolveDrawMedia(c, d);

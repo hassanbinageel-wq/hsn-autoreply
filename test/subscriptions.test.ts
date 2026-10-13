@@ -304,6 +304,25 @@ describe("owner tools", () => {
     expect(revoked).toMatch(/^HSN-/);
   });
 
+  it("login banner: the owner sets it, everyone gets it as a cacheable image, customers cannot change it", async () => {
+    expect((await call("/api/public/branding")).body.login_banner).toBeNull();
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    expect((await call("/api/owner/login-banner", OWNER, "PUT", { image: png })).status).toBe(200);
+    const url = (await call("/api/public/branding")).body.login_banner;
+    expect(url).toMatch(/^\/api\/public\/login-banner\?v=\d+$/);
+    const img = await SELF.fetch(new Request(BASE + url));
+    expect(img.status).toBe(200);
+    expect(img.headers.get("content-type")).toBe("image/png");
+    expect(img.headers.get("cache-control")).toContain("immutable");
+    expect(new Uint8Array(await img.arrayBuffer()).slice(1, 4)).toEqual(new Uint8Array([80, 78, 71])); // "PNG"
+    expect((await call("/api/owner/login-banner", OWNER, "PUT", { image: "data:text/html;base64,PGgxPg==" })).status).toBe(422);
+    const { h } = await customerWithAccount();
+    expect((await call("/api/owner/login-banner", h, "PUT", { image: null })).status).toBe(403);
+    await call("/api/owner/login-banner", OWNER, "PUT", { image: null });
+    expect((await call("/api/public/branding")).body.login_banner).toBeNull();
+    expect((await SELF.fetch(new Request(BASE + "/api/public/login-banner"))).status).toBe(404);
+  });
+
   it("plans are editable and the public pricing page shows them", async () => {
     const plans = (await call("/api/owner/plans", OWNER)).body;
     const pro = plans.find((p: any) => p.id === "pro");

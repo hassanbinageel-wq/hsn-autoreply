@@ -11,6 +11,12 @@ export class ApiError extends Error {
   }
 }
 
+/** A customer's plan does not include what they tried: the app shows an "upgrade" box (see UpgradeModal). */
+const PLAN_CODES = new Set(["plan_feature", "plan_event", "plan_campaigns", "plan_draws", "subscription_inactive", "monthly_limit_reached"]);
+export function notifyPlanBlocked(message: string) {
+  window.dispatchEvent(new CustomEvent("hsn:plan-blocked", { detail: { message } }));
+}
+
 let csrfToken: string | null = null;
 let onUnauthorized: (() => void) | null = null;
 
@@ -56,7 +62,9 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   }
   if (!res.ok) {
     const e = data?.error ?? {};
-    throw new ApiError(res.status, e.code ?? "http", e.message ?? `HTTP ${res.status}`, e.details);
+    const err = new ApiError(res.status, e.code ?? "http", e.message ?? `HTTP ${res.status}`, e.details);
+    if (res.status === 403 && PLAN_CODES.has(err.code)) notifyPlanBlocked(err.message);
+    throw err;
   }
   return data as T;
 }
