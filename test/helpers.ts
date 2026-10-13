@@ -154,19 +154,19 @@ const TABLES = [
 ];
 
 /** The plans as seeded by the migrations (tests may edit them; every reset restores them). */
-let seededPlans: Array<{ id: string; name: string; price_label: string | null; description: string | null; limits: string; active: number }> | null = null;
+let seededPlans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; description: string | null; limits: string; active: number }> | null = null;
 
 export async function resetDb() {
   ctxExtra = {};
-  seededPlans ??= (await DB.prepare("SELECT id, name, price_label, description, limits, active FROM plans").all<any>()).results;
-  await DB.batch(seededPlans.map((p) => DB.prepare("UPDATE plans SET name = ?, price_label = ?, description = ?, limits = ?, active = ? WHERE id = ?").bind(p.name, p.price_label, p.description, p.limits, p.active, p.id)));
+  seededPlans ??= (await DB.prepare("SELECT id, name, price_label, price_amount, description, limits, active FROM plans").all<any>()).results;
+  await DB.batch(seededPlans.map((p) => DB.prepare("UPDATE plans SET name = ?, price_label = ?, price_amount = ?, description = ?, limits = ?, active = ? WHERE id = ?").bind(p.name, p.price_label, p.price_amount, p.description, p.limits, p.active, p.id)));
   await DB.batch([
     ...TABLES.map((t) => DB.prepare(`DELETE FROM ${t}`)),
     DB.prepare("DELETE FROM tenants WHERE id != 1"),
     DB.prepare("DELETE FROM activation_codes"),
     DB.prepare("DELETE FROM usage_counters"),
     DB.prepare("UPDATE tenants SET status = 'active' WHERE id = 1"),
-    DB.prepare("DELETE FROM app_settings WHERE key LIKE 't%:%'"),
+    DB.prepare("DELETE FROM app_settings WHERE key LIKE 't%:%' OR key IN ('sales_contact', 'app_download_url')"),
   ]);
   await DB.prepare("UPDATE app_settings SET value = 'true' WHERE key IN ('automation_enabled','any_reply_counts_as_start')").run();
   await DB.prepare("UPDATE app_settings SET value = '10' WHERE key = 'global_user_hourly_limit'").run();

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { Icon } from "../components/Icon";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtTime, toast, useAsync } from "../components/ui";
-import { EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS } from "../../shared/plans";
+import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, formatPrice } from "../../shared/plans";
 
 /** A random 16-character password (the owner gives it to the customer, who can change it later). */
 function generatePassword(): string {
@@ -108,12 +108,7 @@ function CustomersTab() {
                 <div><b className="font-display block text-base">{t.active_campaigns}/{t.campaigns}</b><span className="muted">حملات نشطة</span></div>
                 <div><b className="font-display block text-base">{t.flows_30d}</b><span className="muted">تفاعل (30 يوم)</span></div>
               </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                <span className={`chip ${t.plan_expires_at > Date.now() ? "bg-violet-500/10 text-violet-700 dark:text-violet-200" : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"}`}>
-                  {t.plan_name ?? "بدون باقة"}{t.plan_expires_at ? ` · ${t.plan_expires_at > Date.now() ? `حتى ${new Date(t.plan_expires_at).toLocaleDateString("ar")}` : "منتهي"}` : ""}
-                </span>
-                <span className="muted">رسائل الشهر: {(t.messages_month ?? 0).toLocaleString("en-US")}</span>
-              </div>
+              <SubscriptionBar t={t} onEdit={() => setPlanFor(t)} />
               {t.notes && <p className="muted mt-2 text-xs">📝 {t.notes}</p>}
               <p className="muted mt-2 text-[11px]">أُنشئ {fmtTime(t.created_at)} · آخر دخول {t.last_seen_at ? fmtTime(t.last_seen_at) : "لم يدخل بعد"}</p>
               {t.ig_username && (
@@ -169,9 +164,43 @@ function CustomersTab() {
   );
 }
 
+const DAY = 86_400_000;
+
+/** Days left in the customer's subscription as a bar (green → amber → red), with the plan and monthly usage. */
+function SubscriptionBar({ t, onEdit }: { t: any; onEdit: () => void }) {
+  const now = Date.now();
+  const exp: number | null = t.plan_expires_at ?? null;
+  const active = !!exp && exp > now;
+  const daysLeft = active ? Math.ceil((exp! - now) / DAY) : 0;
+  const start: number = t.plan_started_at && exp && t.plan_started_at < exp ? t.plan_started_at : (exp ?? now) - 30 * DAY;
+  const total = Math.max(1, (exp ?? now) - start);
+  const pct = active ? Math.max(3, Math.min(100, Math.round(((exp! - now) / total) * 100))) : 0;
+  const tone = !active ? "bg-red-500" : daysLeft <= 3 ? "bg-red-500" : daysLeft <= 7 ? "bg-amber-500" : "bg-emerald-500";
+  return (
+    <button type="button" onClick={onEdit} className="mt-3 block w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-3 text-right transition hover:border-violet-400" title="تعديل الاشتراك">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="font-display text-sm font-extrabold">{t.plan_name ?? "بدون باقة"}</span>
+        <span className={`font-bold ${!active ? "text-red-600" : daysLeft <= 3 ? "text-red-600" : daysLeft <= 7 ? "text-amber-600" : "text-emerald-600"}`}>
+          {!exp ? "لا يوجد اشتراك" : active ? `باقي ${daysLeft} ${daysLeft === 1 ? "يوم" : daysLeft <= 10 ? "أيام" : "يوم"}` : "منتهي"}
+        </span>
+      </div>
+      <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+        <div className={`h-full rounded-full ${tone} transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+      <div className="muted mt-1.5 flex justify-between text-[11px]">
+        <span>{exp ? `${active ? "ينتهي" : "انتهى"} ${new Date(exp).toLocaleDateString("ar")}` : "اضغط لتعيين باقة"}</span>
+        <span>رسائل الشهر: {(t.messages_month ?? 0).toLocaleString("en-US")}</span>
+      </div>
+    </button>
+  );
+}
+
 function SetPlan({ t, plans, onClose, onDone }: { t: any; plans: any[]; onClose: () => void; onDone: () => void }) {
+  const now = Date.now();
+  const active = !!t.plan_expires_at && t.plan_expires_at > now;
   const [planId, setPlanId] = useState<string>(t.plan_id ?? plans[0]?.id ?? "");
   const [days, setDays] = useState(30);
+  const [date, setDate] = useState(() => new Date(active ? t.plan_expires_at : now + 30 * DAY).toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const save = async (body: Record<string, unknown>, msg: string) => {
     setBusy(true);
@@ -185,25 +214,50 @@ function SetPlan({ t, plans, onClose, onDone }: { t: any; plans: any[]; onClose:
       setBusy(false);
     }
   };
+  const preview = (d: number) => new Date((active ? t.plan_expires_at : now) + d * DAY).toLocaleDateString("ar");
   return (
-    <Modal open onClose={onClose} title={`باقة «${t.name}»`}>
-      <p className="muted mb-3 text-sm">للحالات اللي تستلم فيها الدفع مباشرة بدون كود. الأيام تُضاف بعد تاريخ الانتهاء الحالي إذا كان الاشتراك فعّالًا.</p>
-      <div className="space-y-3">
+    <Modal open onClose={onClose} title={`اشتراك «${t.name}»`}>
+      <div className="space-y-4">
+        <div className="rounded-2xl bg-[var(--surface-2)] p-3 text-sm">
+          {t.plan_expires_at ? (
+            <>الباقة الحالية: <b>{t.plan_name ?? "—"}</b> · {active ? `ينتهي ${new Date(t.plan_expires_at).toLocaleDateString("ar")} (باقي ${Math.ceil((t.plan_expires_at - now) / DAY)} يوم)` : "منتهي"}</>
+          ) : (
+            "لا يوجد اشتراك بعد"
+          )}
+        </div>
         <Field label="الباقة">
           <select className="input" value={planId} onChange={(e) => setPlanId(e.target.value)}>
             {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </Field>
-        <Field label="المدة (أيام)">
+        {t.plan_expires_at && planId !== t.plan_id && (
+          <button className="btn btn-ghost w-full" disabled={busy || !planId} onClick={() => save({ plan_id: planId }, "تم تغيير الباقة")}>تغيير الباقة فقط (نفس تاريخ الانتهاء)</button>
+        )}
+        <Field label={active ? "إضافة أيام (بعد تاريخ الانتهاء الحالي)" : "مدة الاشتراك (تبدأ من اليوم)"}>
           <div className="flex flex-wrap gap-2">
-            {[30, 90, 180, 365].map((d) => (
-              <button key={d} type="button" className={`rounded-xl border px-3 py-2 text-sm font-bold ${days === d ? "border-violet-500 bg-violet-500/10" : "border-[var(--border)]"}`} onClick={() => setDays(d)}>{d}</button>
+            {[7, 30, 90, 180, 365].map((d) => (
+              <button key={d} type="button" className={`rounded-xl border px-3 py-2 text-sm font-bold ${days === d ? "border-violet-500 bg-violet-500/10" : "border-[var(--border)]"}`} onClick={() => setDays(d)}>+{d}</button>
             ))}
-            <input className="input !w-24" type="number" min={1} value={days} onChange={(e) => setDays(Number(e.target.value))} />
+            <input className="input !w-24" type="number" min={1} value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="عدد الأيام" />
           </div>
         </Field>
-        <button className="btn btn-primary w-full" disabled={busy || !planId || days < 1} onClick={() => save({ plan_id: planId, days }, "تم تعيين الباقة")}>حفظ</button>
-        {t.plan_id && <button className="btn btn-ghost w-full text-red-600" disabled={busy} onClick={() => confirm("إنهاء اشتراك العميل الآن؟") && save({ plan_id: t.plan_id, expires_at: Date.now() }, "تم إنهاء الاشتراك")}>إنهاء الاشتراك الآن</button>}
+        <button className="btn btn-primary w-full" disabled={busy || !planId || days < 1} onClick={() => save({ plan_id: planId, days }, `تمت إضافة ${days} يوم`)}>
+          {active ? `إضافة ${days} يوم — ينتهي ${preview(days)}` : `تفعيل ${days} يوم — ينتهي ${preview(days)}`}
+        </button>
+        {active && (
+          <div className="flex flex-wrap gap-2">
+            {[1, 7, 30].map((d) => (
+              <button key={d} className="btn btn-ghost min-h-9 flex-1 text-xs" disabled={busy} onClick={() => confirm(`خصم ${d} يوم من اشتراك «${t.name}»؟`) && save({ plan_id: t.plan_id ?? planId, days: -d }, `تم خصم ${d} يوم`)}>−{d} يوم</button>
+            ))}
+          </div>
+        )}
+        <Field label="أو حدّد تاريخ انتهاء بالضبط">
+          <div className="flex gap-2">
+            <input className="input" type="date" dir="ltr" value={date} onChange={(e) => setDate(e.target.value)} />
+            <button className="btn btn-ghost shrink-0" disabled={busy || !planId || !date} onClick={() => save({ plan_id: planId, expires_at: new Date(`${date}T23:59:59`).getTime() }, "تم تحديد تاريخ الانتهاء")}>حفظ التاريخ</button>
+          </div>
+        </Field>
+        {active && <button className="btn btn-ghost w-full text-red-600" disabled={busy} onClick={() => confirm("إنهاء اشتراك العميل الآن؟ تتوقف ردوده التلقائية.") && save({ plan_id: t.plan_id, expires_at: Date.now() }, "تم إنهاء الاشتراك")}>إنهاء الاشتراك الآن</button>}
       </div>
     </Modal>
   );
@@ -286,12 +340,13 @@ const LIMIT_FIELDS: Array<[string, string]> = [
 
 function PlansTab() {
   const { data, reload } = useAsync(() => api<any[]>("/api/owner/plans"), []);
-  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string }>("/api/owner/settings"), []);
+  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string }>("/api/owner/settings"), []);
   const [contact, setContact] = useState<string | null>(null);
+  const [download, setDownload] = useState<string | null>(null);
   if (!data || !settings) return <Spinner />;
-  const saveContact = async () => {
+  const saveSetting = async (body: Record<string, string>) => {
     try {
-      await api("/api/owner/settings", { method: "PUT", body: { sales_contact: (contact ?? settings.sales_contact).trim() } });
+      await api("/api/owner/settings", { method: "PUT", body });
       toast("تم الحفظ");
       reloadSettings();
     } catch (e: any) {
@@ -308,9 +363,17 @@ function PlansTab() {
         <Field label="رابط التواصل للشراء" hint="يظهر كزر «تواصل معنا» — مثل رابط واتساب https://wa.me/966… أو رابط حسابك في إنستقرام">
           <div className="flex gap-2">
             <input className="input" dir="ltr" value={contact ?? settings.sales_contact} onChange={(e) => setContact(e.target.value)} placeholder="https://wa.me/966..." />
-            <button className="btn btn-primary shrink-0" onClick={saveContact}>حفظ</button>
+            <button className="btn btn-primary shrink-0" onClick={() => saveSetting({ sales_contact: (contact ?? settings.sales_contact).trim() })}>حفظ</button>
           </div>
         </Field>
+        <div className="mt-4">
+          <Field label="رابط تنزيل التطبيق للعملاء" hint={`اتركه فارغًا لاستخدام الرابط الثابت ${location.origin}/app.apk — يتحدّث تلقائيًا مع كل إصدار جديد`}>
+            <div className="flex gap-2">
+              <input className="input" dir="ltr" value={download ?? settings.app_download_url} onChange={(e) => setDownload(e.target.value)} placeholder={`${location.origin}/app.apk`} />
+              <button className="btn btn-primary shrink-0" onClick={() => saveSetting({ app_download_url: (download ?? settings.app_download_url).trim() })}>حفظ</button>
+            </div>
+          </Field>
+        </div>
       </Card>
       <div className="grid gap-5 xl:grid-cols-3">
         {data.map((p) => <PlanEditor key={p.id} plan={p} onSaved={reload} />)}
@@ -326,7 +389,11 @@ function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
   const save = async () => {
     setBusy(true);
     try {
-      await api(`/api/owner/plans/${plan.id}`, { method: "PUT", body: { name: f.name, price_label: f.price_label || undefined, description: f.description || undefined, active: !!f.active, limits: f.limits } });
+      const amount = f.price_amount === "" || f.price_amount === null || f.price_amount === undefined ? null : Number(f.price_amount);
+      await api(`/api/owner/plans/${plan.id}`, {
+        method: "PUT",
+        body: { name: f.name, price_amount: amount, price_currency: f.price_currency || "SAR", price_period: f.price_period || "month", description: f.description || undefined, active: !!f.active, limits: f.limits },
+      });
       toast(`تم حفظ باقة «${f.name}»`);
       onSaved();
     } catch (e: any) {
@@ -339,7 +406,17 @@ function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
     <Card title={f.name || plan.id} action={<span className="chip surface-2 muted" dir="ltr">{plan.id}</span>}>
       <div className="space-y-3">
         <Field label="الاسم"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={40} /></Field>
-        <Field label="السعر (كما يظهر)" hint="مثل: 99 ر.س / شهريًا"><input className="input" value={f.price_label ?? ""} onChange={(e) => setF({ ...f, price_label: e.target.value })} maxLength={60} /></Field>
+        <Field label="السعر" hint={f.price_amount === "" || f.price_amount == null ? "فارغ = يظهر «تواصل معنا»" : `يظهر للعملاء: ${formatPrice(Number(f.price_amount), f.price_currency || "SAR", f.price_period || "month")}`}>
+          <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+            <input className="input" type="number" min={0} step="any" dir="ltr" value={f.price_amount ?? ""} onChange={(e) => setF({ ...f, price_amount: e.target.value })} placeholder="99" aria-label="المبلغ" />
+            <select className="input !w-auto" value={f.price_currency || "SAR"} onChange={(e) => setF({ ...f, price_currency: e.target.value })} aria-label="العملة">
+              {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label} {c.code}</option>)}
+            </select>
+            <select className="input !w-auto" value={f.price_period || "month"} onChange={(e) => setF({ ...f, price_period: e.target.value })} aria-label="المدة">
+              {Object.entries(PRICE_PERIODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+        </Field>
         <Field label="وصف قصير"><input className="input" value={f.description ?? ""} onChange={(e) => setF({ ...f, description: e.target.value })} maxLength={200} /></Field>
         {LIMIT_FIELDS.map(([k, label]) => (
           <Field key={k} label={<Tip text={LIMIT_HINTS[k]}>{label}</Tip>} hint="فارغ = غير محدود">

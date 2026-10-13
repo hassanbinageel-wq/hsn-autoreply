@@ -52,6 +52,19 @@ jobs:
                .replace(/"APP_VERSION": "[^"]*"/,`"APP_VERSION": "${process.argv[1]}"`);
             fs.writeFileSync("wrangler.jsonc",s);' "$VERSION"
       - run: npm run build:web
+      # The newest Android APK is served at a stable link on the site: <domain>/app.apk
+      - name: Add the latest Android APK to the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/apk"
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'hsn-autoreply-v*.apk' --dir "$RUNNER_TEMP/apk" --clobber; then
+            cp "$(ls "$RUNNER_TEMP"/apk/*.apk | head -1)" dist/web/app.apk
+            ls -l dist/web/app.apk
+          else
+            echo "::warning::No APK release found; /app.apk will not be available"
+          fi
       - name: Validate Cloudflare credentials format
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

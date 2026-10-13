@@ -197,6 +197,55 @@ describe("owner tools", () => {
     expect((await call("/api/undo", OWNER)).status).toBe(200);
   });
 
+  it("owner adjusts a customer's subscription: add, subtract, plan-only change, exact date; the period start is kept", async () => {
+    const { h, tid } = await customerWithAccount();
+    const DAY = 86_400_000;
+    const plan = (body: unknown) => call(`/api/owner/tenants/${tid}/plan`, OWNER, "POST", body);
+    const row = () => DB.prepare("SELECT plan_id, plan_expires_at, plan_started_at FROM tenants WHERE id = ?").bind(tid).first<any>();
+    const t0 = Date.now();
+    expect((await plan({ plan_id: "basic", days: 30 })).status).toBe(200);
+    const a = await row();
+    expect(a.plan_started_at).toBeGreaterThanOrEqual(t0);
+    expect(Math.round((a.plan_expires_at - a.plan_started_at) / DAY)).toBe(30);
+    await plan({ plan_id: "basic", days: 10 }); // extend: after the current expiry, same start
+    const b = await row();
+    expect(Math.round((b.plan_expires_at - a.plan_expires_at) / DAY)).toBe(10);
+    expect(b.plan_started_at).toBe(a.plan_started_at);
+    await plan({ plan_id: "basic", days: -5 }); // subtract
+    expect(Math.round(((await row()).plan_expires_at - b.plan_expires_at) / DAY)).toBe(-5);
+    const before = (await row()).plan_expires_at;
+    await plan({ plan_id: "pro" }); // plan only
+    expect(await row()).toMatchObject({ plan_id: "pro", plan_expires_at: before });
+    const exact = Date.now() + 3 * DAY;
+    await plan({ plan_id: "pro", expires_at: exact });
+    expect((await row()).plan_expires_at).toBe(exact);
+    // the owner's list carries what the bar needs
+    const listed = (await call("/api/owner/tenants", OWNER)).body.find((x: any) => x.id === tid);
+    expect(listed.plan_started_at).toBe(a.plan_started_at);
+    // customers cannot use the owner endpoint
+    expect((await call(`/api/owner/tenants/${tid}/plan`, h, "POST", { plan_id: "max", days: 365 })).status).toBe(403);
+  });
+
+  it("structured price with currency, the public plans endpoint, and the app download link", async () => {
+    const pro = (await call("/api/owner/plans", OWNER)).body.find((p: any) => p.id === "pro");
+    const put = await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, active: true, limits: pro.limits, price_amount: 149, price_currency: "SAR", price_period: "month" });
+    expect(put.status).toBe(200);
+    const pub = await call("/api/public/plans"); // no login
+    expect(pub.status).toBe(200);
+    expect(pub.body.plans.find((p: any) => p.id === "pro").price_label).toBe("149 ر.س / شهريًا");
+    await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, active: true, limits: pro.limits, price_amount: 40, price_currency: "USD", price_period: "year" });
+    expect((await call("/api/public/plans")).body.plans.find((p: any) => p.id === "pro").price_label).toBe("40 $ / سنويًا");
+    await call("/api/owner/settings", OWNER, "PUT", { sales_contact: "https://wa.me/966500000000" });
+    expect((await call("/api/public/plans")).body.sales_contact).toBe("https://wa.me/966500000000");
+    // download link: the stable APK on this domain by default, or the owner's link
+    const { h } = await customerWithAccount();
+    expect((await call("/api/subscription", h)).body.app_download_url).toBe(`${BASE}/app.apk`);
+    await call("/api/owner/settings", OWNER, "PUT", { app_download_url: "https://example.com/folder" });
+    expect((await call("/api/subscription", h)).body.app_download_url).toBe("https://example.com/folder");
+    expect((await call("/api/owner/settings", OWNER, "PUT", { app_download_url: "http://insecure" })).status).toBe(422);
+    expect((await call("/api/owner/settings", h, "PUT", { app_download_url: "https://x.com" })).status).toBe(403);
+  });
+
   it("plans are editable and the public pricing page shows them", async () => {
     const plans = (await call("/api/owner/plans", OWNER)).body;
     const pro = plans.find((p: any) => p.id === "pro");

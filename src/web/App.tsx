@@ -107,6 +107,8 @@ export function App() {
   const [username, setUsername] = useState("");
   const [isOwner, setIsOwner] = useState(false);
   const [sub, setSub] = useState<{ active: boolean; expires_at: number | null; reason?: string } | null>(null);
+  // Customers: "تنزيل التطبيق" goes straight to the stable download link the owner controls.
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [online, setOnline] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(false);
@@ -120,8 +122,17 @@ export function App() {
       setCsrf(me.csrf_token);
       setUsername(me.username);
       setIsOwner(!!me.is_owner);
-      if (!me.is_owner) api<any>("/api/subscription").then((x) => setSub({ active: x.active, expires_at: x.expires_at, reason: x.reason })).catch(() => undefined);
-      else setSub(null);
+      if (!me.is_owner)
+        api<any>("/api/subscription")
+          .then((x) => {
+            setSub({ active: x.active, expires_at: x.expires_at, reason: x.reason });
+            setDownloadUrl(x.app_download_url ?? null);
+          })
+          .catch(() => undefined);
+      else {
+        setSub(null);
+        setDownloadUrl(null);
+      }
       setAuth("in");
       api<{ settings: { timezone?: string } }>("/api/settings")
         .then((s) => setTz(s.settings.timezone ?? "Asia/Aden"))
@@ -217,6 +228,12 @@ export function App() {
   const isActive = (to: string) => (to === "/" ? route === "/" : route.startsWith(to));
 
   const current = NAV.find((n) => isActive(n.to));
+  const NavLink = ({ to, className, children }: { to: string; className?: string; children: ReactNode }) =>
+    !isOwner && to === "/download" && downloadUrl ? (
+      <a href={downloadUrl} target="_blank" rel="noopener" className={className}>{children}</a>
+    ) : (
+      <Link to={to} className={className}>{children}</Link>
+    );
   const nextTheme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
   const themeIcon = theme === "light" ? "sun" : theme === "dark" ? "moon" : "grid";
   const acc = shell.account;
@@ -250,11 +267,11 @@ export function App() {
             <div key={g.title}>
               <div className="muted px-2.5 pb-1.5 pt-3 text-[11px] font-semibold">{g.title}</div>
               {g.items.map((n) => (
-                <Link key={n.to} to={n.to} className={`nav-link mb-0.5 ${isActive(n.to) ? "on" : ""}`}>
+                <NavLink key={n.to} to={n.to} className={`nav-link mb-0.5 ${isActive(n.to) ? "on" : ""}`}>
                   <Icon name={n.icon} size={19} />
                   <span>{n.label}</span>
                   {n.to === "/inbox" && shell.unread > 0 && <span className="mr-auto rounded-full bg-pink-600 px-1.5 text-[11px] leading-[18px] text-white">{shell.unread}</span>}
-                </Link>
+                </NavLink>
               ))}
             </div>
           ))}
@@ -346,10 +363,10 @@ export function App() {
             <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-[var(--border)]" />
             <div className="grid grid-cols-3 gap-2">
               {NAV.filter((n) => !MOBILE_TABS.includes(n.to) && (isOwner ? n.to !== "/subscription" : n.to !== "/owner")).map((n) => (
-                <Link key={n.to} to={n.to} className={`flex flex-col items-center gap-1.5 rounded-2xl border border-[var(--border)] px-2 py-3.5 text-center text-xs font-bold ${isActive(n.to) ? "border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300" : ""}`}>
+                <NavLink key={n.to} to={n.to} className={`flex flex-col items-center gap-1.5 rounded-2xl border border-[var(--border)] px-2 py-3.5 text-center text-xs font-bold ${isActive(n.to) ? "border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300" : ""}`}>
                   <Icon name={n.icon} size={22} />
                   {n.label}
-                </Link>
+                </NavLink>
               ))}
             </div>
             <button onClick={logout} className="btn btn-ghost mt-3 w-full text-red-600"><Icon name="logout" size={18} />تسجيل الخروج ({username})</button>

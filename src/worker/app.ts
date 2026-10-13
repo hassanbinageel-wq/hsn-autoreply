@@ -62,7 +62,7 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 import { toCsv } from "../shared/csv";
-import { EVENT_LABELS, FEATURE_LABELS, type PlanLimits } from "../shared/plans";
+import { EVENT_LABELS, FEATURE_LABELS, formatPrice, type PlanLimits } from "../shared/plans";
 import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, pricingPage, privacyPage, termsPage } from "./pages";
@@ -141,6 +141,12 @@ async function seedStarterTemplates(db: D1Database, tenantId: number, now: numbe
 
 /** The tenant of the logged-in user: every query below is scoped to it. */
 const T = (c: C): number => c.get("session").tenant_id;
+
+/** Where customers download the Android app: the owner's link, or the APK served on this domain. */
+async function appDownloadUrl(c: C): Promise<string> {
+  const custom = await getSetting<string>(c.env.DB, OWNER_TENANT, "app_download_url", "");
+  return custom || `${new URL(c.req.url).origin}/app.apk`;
+}
 
 /** The caller's subscription (the owner always has everything). */
 const ENT = (c: C) => getEntitlement(c.env.DB, T(c));
@@ -364,6 +370,13 @@ export function createApp() {
     }),
   );
 
+  // Public: the plans and how to buy, shown on the sign-up screen before an account exists.
+  app.get("/api/public/plans", async (c) => {
+    const plans = (await listPlans(c.env.DB)).filter((p) => p.active);
+    const contact = await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", "");
+    return c.json({ plans: plans.map(({ id, name, price_label, description, limits }) => ({ id, name, price_label, description, limits })), sales_contact: contact || null });
+  });
+
   app.get("/api/auth/status", async (c) => {
     const admin = await first(c.env.DB, "SELECT id FROM admin_users LIMIT 1");
     return c.json({ needs_setup: !admin, setup_enabled: !admin && !!c.env.SETUP_TOKEN, missing_secrets: missingSecrets(c.env) });
@@ -512,6 +525,7 @@ export function createApp() {
       usage: { messages, active_campaigns: activeCampaigns?.n ?? 0, draws_this_month: draws },
       plans: plans.filter((p) => p.active).map(({ id, name, price_label, description, limits }) => ({ id, name, price_label, description, limits })),
       sales_contact: contact || null,
+      app_download_url: await appDownloadUrl(c),
     });
   });
   api.post("/subscription/redeem", async (c) => {
@@ -539,7 +553,7 @@ export function createApp() {
     const since = Date.now() - 30 * 86_400_000;
     const rows = await all<any>(
       c.env.DB,
-      `SELECT t.id, t.name, t.is_owner, t.status, t.notes, t.created_at, t.plan_id, t.plan_expires_at,
+      `SELECT t.id, t.name, t.is_owner, t.status, t.notes, t.created_at, t.plan_id, t.plan_expires_at, t.plan_started_at,
               (SELECT p.name FROM plans p WHERE p.id = t.plan_id) AS plan_name,
               (SELECT u.messages FROM usage_counters u WHERE u.tenant_id = t.id AND u.month = ?) AS messages_month,
               (SELECT u.username FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS username,
@@ -622,13 +636,21 @@ export function createApp() {
     const t = await tenantParam(c);
     if (!t) return apiError(c, 404, "not_found", "العميل غير موجود");
     if (t.is_owner) return apiError(c, 409, "owner", "حساب المالك لا يحتاج اشتراكًا");
-    const p = await parseBody(c, z.object({ plan_id: z.string().max(20).nullable(), days: z.number().int().min(0).max(3650).optional(), expires_at: z.number().int().nullable().optional() }));
+    // days > 0 adds (after the current expiry if still running), days < 0 removes; expires_at sets an exact date;
+    // neither keeps the current expiry (e.g. a plan change only).
+    const p = await parseBody(c, z.object({ plan_id: z.string().max(20).nullable(), days: z.number().int().min(-3650).max(3650).optional(), expires_at: z.number().int().nullable().optional() }));
     if (!p.ok) return p.res;
     if (p.data.plan_id && !(await first(c.env.DB, "SELECT 1 FROM plans WHERE id = ?", p.data.plan_id))) return apiError(c, 422, "validation", "باقة غير موجودة");
     const now = Date.now();
-    const cur = await first<{ plan_expires_at: number | null }>(c.env.DB, "SELECT plan_expires_at FROM tenants WHERE id = ?", t.id);
-    const expires = p.data.expires_at !== undefined ? p.data.expires_at : p.data.days !== undefined ? Math.max(now, cur?.plan_expires_at ?? 0) + p.data.days * 86_400_000 : cur?.plan_expires_at ?? null;
-    await run(c.env.DB, "UPDATE tenants SET plan_id = ?, plan_expires_at = ?, expiry_notice_at = NULL, updated_at = ? WHERE id = ?", p.data.plan_id, expires, now, t.id);
+    const cur = await first<{ plan_expires_at: number | null; plan_started_at: number | null }>(c.env.DB, "SELECT plan_expires_at, plan_started_at FROM tenants WHERE id = ?", t.id);
+    const running = !!cur?.plan_expires_at && cur.plan_expires_at > now;
+    let expires: number | null = cur?.plan_expires_at ?? null;
+    if (p.data.expires_at !== undefined) expires = p.data.expires_at;
+    else if (p.data.days !== undefined && p.data.days > 0) expires = (running ? cur!.plan_expires_at! : now) + p.data.days * 86_400_000;
+    else if (p.data.days !== undefined && p.data.days < 0) expires = running ? Math.max(now, cur!.plan_expires_at! + p.data.days * 86_400_000) : expires;
+    // A new period starts when the subscription was not running; extending keeps the original start.
+    const started = expires && expires > now ? (running ? (cur!.plan_started_at ?? now) : now) : (cur?.plan_started_at ?? null);
+    await run(c.env.DB, "UPDATE tenants SET plan_id = ?, plan_expires_at = ?, plan_started_at = ?, expiry_notice_at = NULL, updated_at = ? WHERE id = ?", p.data.plan_id, expires, started, now, t.id);
     await audit(c.env.DB, T(c), c.get("session").username, "tenant.plan_set", String(t.id), { plan: p.data.plan_id, expires_at: expires });
     return c.json({ ok: true, plan_id: p.data.plan_id, expires_at: expires });
   });
@@ -654,10 +676,15 @@ export function createApp() {
     if (!(await first(c.env.DB, "SELECT 1 FROM plans WHERE id = ?", pid))) return apiError(c, 404, "not_found", "الباقة غير موجودة");
     const p = await parseBody(c, planUpdateSchema);
     if (!p.ok) return p.res;
+    const currency = p.data.price_currency ?? "SAR";
+    const period = p.data.price_period ?? "month";
+    const amount = p.data.price_amount ?? null;
+    // A structured price wins; otherwise the free-text label (or nothing → "تواصل معنا").
+    const label = amount !== null ? formatPrice(amount, currency, period) : (p.data.price_label ?? null);
     await run(
       c.env.DB,
-      "UPDATE plans SET name = ?, price_label = ?, description = ?, limits = ?, active = ?, updated_at = ? WHERE id = ?",
-      p.data.name, p.data.price_label ?? null, p.data.description ?? null, JSON.stringify(p.data.limits), p.data.active ? 1 : 0, Date.now(), pid,
+      "UPDATE plans SET name = ?, price_label = ?, price_amount = ?, price_currency = ?, price_period = ?, description = ?, limits = ?, active = ?, updated_at = ? WHERE id = ?",
+      p.data.name, label, amount, currency, period, p.data.description ?? null, JSON.stringify(p.data.limits), p.data.active ? 1 : 0, Date.now(), pid,
     );
     await audit(c.env.DB, T(c), c.get("session").username, "plan.updated", pid);
     return c.json({ ok: true });
@@ -700,11 +727,18 @@ export function createApp() {
     return c.json({ ok: true });
   });
 
-  owner.get("/settings", async (c) => c.json({ sales_contact: await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", "") }));
+  owner.get("/settings", async (c) =>
+    c.json({
+      sales_contact: await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", ""),
+      app_download_url: await getSetting<string>(c.env.DB, OWNER_TENANT, "app_download_url", ""),
+    }),
+  );
   owner.put("/settings", async (c) => {
-    const p = await parseBody(c, z.object({ sales_contact: z.string().trim().max(300).refine((v) => v === "" || /^https:\/\//.test(v), "الرابط يجب أن يبدأ بـ https://") }));
+    const httpsOrEmpty = z.string().trim().max(300).refine((v) => v === "" || /^https:\/\//.test(v), "الرابط يجب أن يبدأ بـ https://");
+    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional() }));
     if (!p.ok) return p.res;
-    await setSetting(c.env.DB, OWNER_TENANT, "sales_contact", p.data.sales_contact);
+    if (p.data.sales_contact !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "sales_contact", p.data.sales_contact);
+    if (p.data.app_download_url !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "app_download_url", p.data.app_download_url);
     return c.json({ ok: true });
   });
 

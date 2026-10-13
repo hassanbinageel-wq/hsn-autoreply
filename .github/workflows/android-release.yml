@@ -34,6 +34,7 @@ jobs:
     environment: release
     permissions:
       contents: write # create the GitHub Release
+      actions: write # redeploy the site so <domain>/app.apk serves the new APK
     env:
       BUILD_TYPE: ${{ github.event.inputs.build_type || 'release' }}
     steps:
@@ -166,3 +167,7 @@ jobs:
           else
             gh release create "v$V" "$FILE" "$FILE.sha256" --repo "$GITHUB_REPOSITORY" --title "HSN AutoReply v$V" --notes-file "$NOTES_FILE" --target "$GITHUB_SHA"
           fi
+      - name: Redeploy the site with the new APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" --ref main

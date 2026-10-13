@@ -210,10 +210,10 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
 export function Tip({ text, children, className = "" }: { text?: string; children: ReactNode; className?: string }) {
   if (!text) return <span className={className}>{children}</span>;
   return (
-    <span className={`group relative inline cursor-help outline-none ${className}`} tabIndex={0}>
+    <span className={`group/tip relative inline cursor-help outline-none ${className}`} tabIndex={0}>
       {children}
       <span className="muted mr-1 text-[0.75em]" aria-hidden>ⓘ</span>
-      <span role="tooltip" className="pointer-events-none invisible absolute bottom-full right-0 z-40 mb-2 w-64 max-w-[78vw] rounded-xl bg-[#16122b] px-3 py-2 text-xs font-normal leading-relaxed text-white no-underline opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus:visible group-focus:opacity-100 dark:bg-white dark:text-[#16122b]">
+      <span role="tooltip" className="pointer-events-none invisible absolute bottom-full right-0 z-40 mb-2 w-64 max-w-[78vw] rounded-xl bg-[#16122b] px-3 py-2 text-xs font-normal leading-relaxed text-white no-underline opacity-0 shadow-lg transition-opacity group-hover/tip:visible group-hover/tip:opacity-100 group-focus/tip:visible group-focus/tip:opacity-100 dark:bg-white dark:text-[#16122b]">
         {text}
       </span>
     </span>

@@ -80,3 +80,24 @@ export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export function normalizeCode(raw: string): string {
   return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^HSN/, "");
 }
+
+/** Currencies the owner can price plans in (symbol as shown to customers). */
+export const CURRENCIES: Array<{ code: string; label: string }> = [
+  { code: "SAR", label: "ر.س" },
+  { code: "USD", label: "$" },
+  { code: "AED", label: "د.إ" },
+  { code: "KWD", label: "د.ك" },
+  { code: "QAR", label: "ر.ق" },
+  { code: "BHD", label: "د.ب" },
+  { code: "OMR", label: "ر.ع" },
+  { code: "YER", label: "ر.ي" },
+  { code: "EGP", label: "ج.م" },
+];
+export const PRICE_PERIODS: Record<string, string> = { month: "شهريًا", quarter: "كل 3 أشهر", year: "سنويًا", once: "مرة واحدة" };
+
+/** "99 ر.س / شهريًا" from the owner's structured price. */
+export function formatPrice(amount: number, currency: string, period: string): string {
+  const cur = CURRENCIES.find((c) => c.code === currency)?.label ?? currency;
+  const n = Number.isInteger(amount) ? amount.toLocaleString("en-US") : amount.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return `${n} ${cur} / ${PRICE_PERIODS[period] ?? PRICE_PERIODS.month}`;
+}

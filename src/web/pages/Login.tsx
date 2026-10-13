@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, setCsrf } from "../api";
 import { API_BASE, deviceToken, isNative } from "../platform";
 import { Alert, Field } from "../components/ui";
+import { Features } from "./Subscription";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
   const [status, setStatus] = useState<{ needs_setup: boolean; setup_enabled: boolean; missing_secrets: string[] } | null>(null);
@@ -111,6 +112,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             <Icon name="shield" size={18} className="text-emerald-500" />
             <span>هذا حساب إدارة التطبيق فقط — لا نطلب كلمة مرور إنستقرام أبدًا. الربط يتم عبر Meta الرسمي.</span>
           </div>
+          {register && !status?.needs_setup && <PublicPlans />}
           <p className="muted text-center text-[11px] leading-relaxed">
             خدمة تقدّمها شركة ارقام المستديرة للدعاية والاعلان — الرقم الوطني الموحد 7042872536
             <br />
@@ -138,5 +140,40 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Plans, prices and the purchase contact, shown on the sign-up screen before an account exists. */
+function PublicPlans() {
+  const [data, setData] = useState<{ plans: any[]; sales_contact: string | null } | null>(null);
+  useEffect(() => {
+    api<{ plans: any[]; sales_contact: string | null }>("/api/public/plans").then(setData, () => undefined);
+  }, []);
+  if (!data || !data.plans.length) return null;
+  return (
+    <section className="space-y-2.5 border-t border-[var(--border)] pt-4" aria-label="الباقات والأسعار">
+      <div className="flex items-baseline justify-between">
+        <h2 className="font-display text-base font-extrabold">الباقات والأسعار</h2>
+        <a className="muted text-xs underline" href={`${API_BASE || ""}/pricing`} target="_blank" rel="noopener">صفحة الباقات</a>
+      </div>
+      {data.plans.map((p) => (
+        <details key={p.id} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2.5 open:border-violet-400">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
+            <span>
+              <b className="font-display block">{p.name}</b>
+              {p.description && <span className="muted block text-xs">{p.description}</span>}
+            </span>
+            <span className="font-display shrink-0 text-sm font-extrabold text-violet-600 dark:text-violet-300">{p.price_label || "تواصل معنا"}</span>
+          </summary>
+          <div className="mt-2.5 border-t border-[var(--border)] pt-2.5"><Features limits={p.limits} /></div>
+        </details>
+      ))}
+      {data.sales_contact && (
+        <a className="btn btn-primary w-full" href={data.sales_contact} target="_blank" rel="noopener">
+          <Icon name="send" size={17} />ما عندك كود؟ تواصل معنا للاشتراك
+        </a>
+      )}
+      <p className="muted text-center text-[11px]">بعد الدفع يصلك كود التفعيل — أدخله فوق وأنشئ حسابك.</p>
+    </section>
   );
 }

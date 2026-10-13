@@ -6,6 +6,9 @@ export interface PlanRow {
   id: string;
   name: string;
   price_label: string | null;
+  price_amount: number | null;
+  price_currency: string;
+  price_period: string;
   description: string | null;
   sort: number;
   limits: PlanLimits;
@@ -126,10 +129,12 @@ export async function redeemCode(db: D1Database, tenantId: number, raw: string, 
   // Claim it atomically (two simultaneous redemptions cannot both succeed).
   const claimed = await run(db, "UPDATE activation_codes SET used_at = ?, used_by_tenant = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL", now, tenantId, code.id);
   if (!claimed.meta.changes) throw new RedeemError("used", "هذا الكود مستخدم مسبقًا");
-  const t = await first<{ plan_expires_at: number | null }>(db, "SELECT plan_expires_at FROM tenants WHERE id = ?", tenantId);
-  const from = t?.plan_expires_at && t.plan_expires_at > now ? t.plan_expires_at : now;
+  const t = await first<{ plan_expires_at: number | null; plan_started_at: number | null }>(db, "SELECT plan_expires_at, plan_started_at FROM tenants WHERE id = ?", tenantId);
+  const running = !!t?.plan_expires_at && t.plan_expires_at > now;
+  const from = running ? t!.plan_expires_at! : now;
   const expires = from + code.days * 86_400_000;
-  await run(db, "UPDATE tenants SET plan_id = ?, plan_expires_at = ?, expiry_notice_at = NULL, updated_at = ? WHERE id = ?", code.plan_id, expires, now, tenantId);
+  const started = running ? (t!.plan_started_at ?? now) : now;
+  await run(db, "UPDATE tenants SET plan_id = ?, plan_expires_at = ?, plan_started_at = ?, expiry_notice_at = NULL, updated_at = ? WHERE id = ?", code.plan_id, expires, started, now, tenantId);
   return { plan_id: code.plan_id, expires_at: expires };
 }
 

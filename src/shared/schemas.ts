@@ -128,6 +128,9 @@ const limitNum = z.number().int().min(0).max(10_000_000).nullable();
 export const planUpdateSchema = z.object({
   name: text(40).min(1),
   price_label: text(60).optional(),
+  price_amount: z.number().min(0).max(1_000_000).nullable().optional(),
+  price_currency: z.string().trim().min(2).max(5).optional(),
+  price_period: z.enum(["month", "quarter", "year", "once"]).optional(),
   description: text(200).optional(),
   active: z.boolean().default(true),
   limits: z.object({

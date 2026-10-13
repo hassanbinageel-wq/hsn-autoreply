@@ -18,7 +18,7 @@ function Meter({ label, used, max }: { label: string; used: number; max: number 
   );
 }
 
-function Features({ limits }: { limits: PlanLimits }) {
+export function Features({ limits }: { limits: PlanLimits }) {
   return (
     <ul className="space-y-1.5 text-sm">
       <li><Tip text={LIMIT_HINTS.events}>✅ {limits.events.map((e) => EVENT_LABELS[e] ?? e).join(" · ") || "—"}</Tip></li>
