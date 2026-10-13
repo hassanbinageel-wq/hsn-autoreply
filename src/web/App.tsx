@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, setCsrf, setUnauthorizedHandler } from "./api";
 import { deviceToken, initNative, isNative, watchNetwork } from "./platform";
-import { Alert, Modal, Spinner, ToastHost, setTz } from "./components/ui";
+import { Alert, Modal, Spinner, ToastHost, setTz, toast } from "./components/ui";
 import { FEATURE_LABELS, type PlanLimits } from "../shared/plans";
+import { enableBio, takeBioOffer } from "./lib/biometric";
 import { Icon } from "./components/Icon";
 import { AccountAvatar } from "./components/UserAvatar";
 import { LoginPage } from "./pages/Login";
@@ -113,6 +114,9 @@ export function App() {
   const [limits, setLimits] = useState<PlanLimits | null>(null);
   // "Your plan does not include …" box (from a locked menu item or any 403 plan error from the API).
   const [blocked, setBlocked] = useState<string | null>(null);
+  // Android app: "turn on fingerprint sign-in?" right after a password sign-in.
+  const [bioOffer, setBioOffer] = useState<{ username: string; password: string } | null>(null);
+  const [bioBusy, setBioBusy] = useState(false);
   useEffect(() => {
     const on = (e: Event) => setBlocked((e as CustomEvent<{ message: string }>).detail.message);
     window.addEventListener("hsn:plan-blocked", on);
@@ -146,6 +150,8 @@ export function App() {
         api<{ app_download_url?: string | null }>("/api/public/branding").then((b) => setDownloadUrl(b.app_download_url ?? null), () => setDownloadUrl(null));
       }
       setAuth("in");
+      const offer = takeBioOffer();
+      if (offer) setBioOffer(offer);
       api<{ settings: { timezone?: string } }>("/api/settings")
         .then((s) => setTz(s.settings.timezone ?? "Asia/Aden"))
         .catch(() => undefined);
@@ -402,6 +408,35 @@ export function App() {
         </div>
       )}
       <ToastHost />
+      {bioOffer && (
+        <Modal open onClose={() => setBioOffer(null)} title="الدخول بالبصمة">
+          <div className="space-y-4 text-center">
+            <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600 dark:text-violet-300"><Icon name="fingerprint" size={28} /></span>
+            <p className="text-sm leading-relaxed">تبي تدخل المرة الجاية ببصمتك بدون كلمة مرور؟ بيانات الدخول تنحفظ مشفّرة في خزنة الجوال الآمنة، وما تنفتح إلا ببصمتك.</p>
+            <div className="flex gap-2">
+              <button
+                className="btn btn-primary flex-1"
+                disabled={bioBusy}
+                onClick={async () => {
+                  setBioBusy(true);
+                  try {
+                    await enableBio(bioOffer.username, bioOffer.password);
+                    toast("تم تفعيل الدخول بالبصمة ✅");
+                  } catch {
+                    toast("ما تم التفعيل — تقدر تجرّب مرة ثانية بعد تسجيل الدخول", "bad");
+                  } finally {
+                    setBioBusy(false);
+                    setBioOffer(null);
+                  }
+                }}
+              >
+                <Icon name="fingerprint" size={18} />{bioBusy ? "…" : "تفعيل البصمة"}
+              </button>
+              <button className="btn btn-ghost" disabled={bioBusy} onClick={() => setBioOffer(null)}>لاحقًا</button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {blocked && !isOwner && (
         <Modal open onClose={() => setBlocked(null)} title="ميزة غير متاحة في باقتك">
           <div className="space-y-4 text-center">

@@ -21,13 +21,32 @@ export function bioUser(): string | null {
   }
 }
 
+/** Rejects if a native call does not answer in time (a stuck plugin must never block the app). */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+}
+
 export async function bioAvailable(): Promise<boolean> {
   if (!isNative) return false;
   try {
-    return (await (await plugin()).isAvailable()).isAvailable;
+    return (await withTimeout((await plugin()).isAvailable(), 3000)).isAvailable;
   } catch {
     return false;
   }
+}
+
+/**
+ * Right after a password sign-in the app may offer fingerprint sign-in. The password is held in memory
+ * only until the user answers (it is never written anywhere except the biometric-protected Keystore).
+ */
+let pending: { username: string; password: string } | null = null;
+export function offerBio(username: string, password: string) {
+  pending = { username, password };
+}
+export function takeBioOffer(): { username: string; password: string } | null {
+  const p = pending;
+  pending = null;
+  return p;
 }
 
 export async function enableBio(username: string, password: string): Promise<void> {

@@ -5,7 +5,7 @@ import { API_BASE, deviceToken, isNative } from "../platform";
 import { Alert, Field } from "../components/ui";
 import { PlansShowcase, type Catalog } from "../components/PlansShowcase";
 import { AppDownloadBox, DesktopBanner, MobileBanner, type Branding } from "../components/LoginBanner";
-import { bioAvailable, bioCredentials, bioUser, disableBio, enableBio } from "../lib/biometric";
+import { bioAvailable, bioCredentials, bioUser, disableBio, offerBio } from "../lib/biometric";
 import { Spinner } from "../components/ui";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
@@ -87,14 +87,8 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         location.hash = "#/";
       }
       await signIn(username, password);
-      // Offer fingerprint sign-in on this phone (or keep the saved one in step with a new password).
-      if (isNative && (await bioAvailable())) {
-        const saved = bioUser();
-        if (saved === username) await enableBio(username, password).catch(() => undefined);
-        else if (!saved && confirm("تفعيل الدخول بالبصمة على هذا الجوال؟ المرة الجاية تدخل ببصمتك بدون كلمة مرور.")) {
-          await enableBio(username, password).catch(() => undefined);
-        }
-      }
+      // Sign-in is done here; fingerprint sign-in is offered afterwards in the app (never blocks this step).
+      if (isNative && !bioUser() && (await bioAvailable())) offerBio(username, password);
       setPassword("");
       onDone();
     } catch (err) {

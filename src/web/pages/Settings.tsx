@@ -20,11 +20,11 @@ const SECTIONS: Array<[string, string, string]> = [
 function Row({ label, hint, children }: { label: ReactNode; hint?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 py-4 first:pt-0 last:pb-0">
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-52">
         <div className="font-display text-[15px] font-bold">{label}</div>
         {hint && <div className="muted mt-0.5 text-[13px]">{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="max-w-full shrink-0">{children}</div>
     </div>
   );
 }
@@ -118,8 +118,8 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
         </button>
       </header>
 
-      <div className="grid gap-5 lg:grid-cols-[250px_1fr]">
-        <nav className="card h-fit p-2 lg:sticky lg:top-20" aria-label="أقسام الإعدادات">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-[250px_minmax(0,1fr)]">
+        <nav className="card h-fit min-w-0 p-2 lg:sticky lg:top-20" aria-label="أقسام الإعدادات">
           <div className="flex gap-1 overflow-x-auto lg:flex-col">
             {SECTIONS.map(([id, label, icon]) => (
               <button key={id} onClick={() => go(id)} className={`nav-link shrink-0 ${active === id ? "on" : ""}`}>
@@ -130,7 +130,7 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
           </div>
         </nav>
 
-        <div className="grid min-w-0 gap-5 xl:grid-cols-2">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-2">
           <section id="set-general" className="scroll-mt-24">
             <Card title="عام" className="h-full">
               <div className="divide-y divide-[var(--border)]">
