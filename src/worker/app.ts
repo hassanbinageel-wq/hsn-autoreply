@@ -40,6 +40,9 @@ import {
   tenantCreateSchema,
   registerSchema,
   planUpdateSchema,
+  paymentProviderSchema,
+  paymentAccountSchema,
+  exchangeRatesSchema,
   campaignInputSchema,
   drawInputSchema,
   loginSchema,
@@ -62,10 +65,11 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 import { toCsv } from "../shared/csv";
-import { EVENT_LABELS, FEATURE_LABELS, formatPrice, type PlanLimits } from "../shared/plans";
+import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, type ExchangeRates, type PlanLimits } from "../shared/plans";
+import { listPaymentMethods } from "./services/payments";
 import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
-import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, pricingPage, privacyPage, termsPage } from "./pages";
+import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, termsPage } from "./pages";
 
 type C = Context<AppEnv>;
 
@@ -146,6 +150,24 @@ const T = (c: C): number => c.get("session").tenant_id;
 async function appDownloadUrl(c: C): Promise<string> {
   const custom = await getSetting<string>(c.env.DB, OWNER_TENANT, "app_download_url", "");
   return custom || `${new URL(c.req.url).origin}/app.apk`;
+}
+
+/** What a buyer needs to see: active plans (with structured prices), exchange rates, payment accounts and the contact link. */
+async function publicCatalog(c: C) {
+  const [plans, rates, payment_methods, contact] = await Promise.all([
+    listPlans(c.env.DB),
+    getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES),
+    listPaymentMethods(c.env.DB),
+    getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", ""),
+  ]);
+  return {
+    plans: plans
+      .filter((p) => p.active)
+      .map(({ id, name, price_label, price_amount, price_currency, price_period, description, limits }) => ({ id, name, price_label, price_amount, price_currency, price_period, description, limits })),
+    rates: { ...DEFAULT_RATES, ...rates, USD: 1 },
+    payment_methods,
+    sales_contact: contact || null,
+  };
 }
 
 /** The caller's subscription (the owner always has everything). */
@@ -242,11 +264,8 @@ export function createApp() {
   });
 
   app.get("/privacy", (c) => html(c, privacyPage(c.env.PUBLIC_BASE_URL)));
-  app.get("/pricing", async (c) => {
-    const plans = (await listPlans(c.env.DB)).filter((p) => p.active);
-    const contact = await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", "");
-    return html(c, pricingPage(plans, contact || null, c.env.PUBLIC_BASE_URL.replace(/\/+$/, "")));
-  });
+  // The plans page lives in the app now (works for visitors without an account).
+  app.get("/pricing", (c) => c.redirect("/#/plans", 302));
   app.get("/terms", (c) => html(c, termsPage()));
   app.get("/data-deletion", (c) => html(c, dataDeletionPage()));
   app.get("/meta/deletion-status", (c) => html(c, deletionStatusPage(c.req.query("code") ?? "")));
@@ -371,11 +390,7 @@ export function createApp() {
   );
 
   // Public: the plans and how to buy, shown on the sign-up screen before an account exists.
-  app.get("/api/public/plans", async (c) => {
-    const plans = (await listPlans(c.env.DB)).filter((p) => p.active);
-    const contact = await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", "");
-    return c.json({ plans: plans.map(({ id, name, price_label, description, limits }) => ({ id, name, price_label, description, limits })), sales_contact: contact || null });
-  });
+  app.get("/api/public/plans", async (c) => c.json(await publicCatalog(c)));
 
   app.get("/api/auth/status", async (c) => {
     const admin = await first(c.env.DB, "SELECT id FROM admin_users LIMIT 1");
@@ -513,18 +528,15 @@ export function createApp() {
   // ---- Subscription of the logged-in customer
   api.get("/subscription", async (c) => {
     const e = await ENT(c);
-    const [plans, messages, activeCampaigns, draws] = await Promise.all([
-      listPlans(c.env.DB),
+    const [messages, activeCampaigns, draws] = await Promise.all([
       monthlyMessages(c.env.DB, T(c)),
       first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM campaigns WHERE tenant_id = ? AND status = 'active' AND deleted_at IS NULL", T(c)),
       drawsThisMonth(c.env.DB, T(c)),
     ]);
-    const contact = await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", "");
     return c.json({
       ...e,
       usage: { messages, active_campaigns: activeCampaigns?.n ?? 0, draws_this_month: draws },
-      plans: plans.filter((p) => p.active).map(({ id, name, price_label, description, limits }) => ({ id, name, price_label, description, limits })),
-      sales_contact: contact || null,
+      ...(await publicCatalog(c)),
       app_download_url: await appDownloadUrl(c),
     });
   });
@@ -694,7 +706,9 @@ export function createApp() {
     c.json(
       await all(
         c.env.DB,
-        `SELECT a.id, a.hint, a.plan_id, p.name AS plan_name, a.days, a.note, a.created_at, a.used_at, a.revoked_at, t.name AS used_by
+        `SELECT a.id, a.hint, a.plan_id, p.name AS plan_name, a.days, a.note, a.created_at, a.used_at, a.revoked_at, a.used_by_tenant,
+                COALESCE(t.name, a.used_by_name) AS used_by, a.used_by_username, (t.id IS NOT NULL) AS customer_exists,
+                t.plan_expires_at AS customer_expires_at
            FROM activation_codes a LEFT JOIN plans p ON p.id = a.plan_id LEFT JOIN tenants t ON t.id = a.used_by_tenant
           ORDER BY a.id DESC LIMIT 300`,
       ),
@@ -726,17 +740,80 @@ export function createApp() {
     await audit(c.env.DB, T(c), c.get("session").username, "codes.revoked", String(cid));
     return c.json({ ok: true });
   });
+  // Removes a code from the list (any state). A used code's subscription stays as it is.
+  owner.delete("/codes/:cid", async (c) => {
+    const cid = Number(c.req.param("cid"));
+    const r = await run(c.env.DB, "DELETE FROM activation_codes WHERE id = ?", cid);
+    if (!r.meta.changes) return apiError(c, 404, "not_found", "الكود غير موجود");
+    await audit(c.env.DB, T(c), c.get("session").username, "codes.deleted", String(cid));
+    return c.json({ ok: true });
+  });
+
+  // ---- Payment methods (banks / exchange offices and their accounts), shown to buyers
+  owner.get("/payment-methods", async (c) => c.json(await listPaymentMethods(c.env.DB)));
+  owner.post("/payment-providers", async (c) => {
+    const p = await parseBody(c, paymentProviderSchema);
+    if (!p.ok) return p.res;
+    const max = await first<{ m: number | null }>(c.env.DB, "SELECT MAX(sort) AS m FROM payment_providers");
+    const row = await first<{ id: number }>(c.env.DB, "INSERT INTO payment_providers (name, kind, logo, sort, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id", p.data.name, p.data.kind, p.data.logo ?? null, (max?.m ?? 0) + 1, Date.now());
+    return c.json({ ok: true, id: row!.id });
+  });
+  owner.put("/payment-providers/:pid", async (c) => {
+    const p = await parseBody(c, paymentProviderSchema);
+    if (!p.ok) return p.res;
+    const r = await run(c.env.DB, "UPDATE payment_providers SET name = ?, kind = ?, logo = ? WHERE id = ?", p.data.name, p.data.kind, p.data.logo ?? null, Number(c.req.param("pid")));
+    if (!r.meta.changes) return apiError(c, 404, "not_found", "غير موجود");
+    return c.json({ ok: true });
+  });
+  owner.post("/payment-providers/:pid/move", async (c) => {
+    const p = await parseBody(c, z.object({ dir: z.enum(["up", "down"]) }));
+    if (!p.ok) return p.res;
+    const rows = await all<{ id: number }>(c.env.DB, "SELECT id FROM payment_providers ORDER BY sort, id");
+    const i = rows.findIndex((r) => r.id === Number(c.req.param("pid")));
+    const j = p.data.dir === "up" ? i - 1 : i + 1;
+    if (i < 0 || j < 0 || j >= rows.length) return c.json({ ok: true });
+    [rows[i], rows[j]] = [rows[j], rows[i]];
+    await c.env.DB.batch(rows.map((r, k) => c.env.DB.prepare("UPDATE payment_providers SET sort = ? WHERE id = ?").bind(k + 1, r.id)));
+    return c.json({ ok: true });
+  });
+  owner.delete("/payment-providers/:pid", async (c) => {
+    const pid = Number(c.req.param("pid"));
+    await c.env.DB.batch([c.env.DB.prepare("DELETE FROM payment_accounts WHERE provider_id = ?").bind(pid), c.env.DB.prepare("DELETE FROM payment_providers WHERE id = ?").bind(pid)]);
+    return c.json({ ok: true });
+  });
+  owner.post("/payment-providers/:pid/accounts", async (c) => {
+    const pid = Number(c.req.param("pid"));
+    if (!(await first(c.env.DB, "SELECT 1 FROM payment_providers WHERE id = ?", pid))) return apiError(c, 404, "not_found", "غير موجود");
+    const p = await parseBody(c, paymentAccountSchema);
+    if (!p.ok) return p.res;
+    const max = await first<{ m: number | null }>(c.env.DB, "SELECT MAX(sort) AS m FROM payment_accounts WHERE provider_id = ?", pid);
+    const row = await first<{ id: number }>(c.env.DB, "INSERT INTO payment_accounts (provider_id, holder, number, currency, note, sort) VALUES (?, ?, ?, ?, ?, ?) RETURNING id", pid, p.data.holder, p.data.number, p.data.currency ?? null, p.data.note ?? null, (max?.m ?? 0) + 1);
+    return c.json({ ok: true, id: row!.id });
+  });
+  owner.put("/payment-accounts/:aid", async (c) => {
+    const p = await parseBody(c, paymentAccountSchema);
+    if (!p.ok) return p.res;
+    const r = await run(c.env.DB, "UPDATE payment_accounts SET holder = ?, number = ?, currency = ?, note = ? WHERE id = ?", p.data.holder, p.data.number, p.data.currency ?? null, p.data.note ?? null, Number(c.req.param("aid")));
+    if (!r.meta.changes) return apiError(c, 404, "not_found", "غير موجود");
+    return c.json({ ok: true });
+  });
+  owner.delete("/payment-accounts/:aid", async (c) => {
+    await run(c.env.DB, "DELETE FROM payment_accounts WHERE id = ?", Number(c.req.param("aid")));
+    return c.json({ ok: true });
+  });
 
   owner.get("/settings", async (c) =>
     c.json({
       sales_contact: await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", ""),
       app_download_url: await getSetting<string>(c.env.DB, OWNER_TENANT, "app_download_url", ""),
+      exchange_rates: { ...DEFAULT_RATES, ...(await getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES)), USD: 1 },
     }),
   );
   owner.put("/settings", async (c) => {
     const httpsOrEmpty = z.string().trim().max(300).refine((v) => v === "" || /^https:\/\//.test(v), "الرابط يجب أن يبدأ بـ https://");
-    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional() }));
+    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional(), exchange_rates: exchangeRatesSchema.optional() }));
     if (!p.ok) return p.res;
+    if (p.data.exchange_rates) await setSetting(c.env.DB, OWNER_TENANT, "exchange_rates", { USD: 1, ...p.data.exchange_rates });
     if (p.data.sales_contact !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "sales_contact", p.data.sales_contact);
     if (p.data.app_download_url !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "app_download_url", p.data.app_download_url);
     return c.json({ ok: true });

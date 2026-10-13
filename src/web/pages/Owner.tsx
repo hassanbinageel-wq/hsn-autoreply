@@ -309,24 +309,46 @@ function CodesTab() {
           </div>
         )}
       </Card>
-      <Card title="الأكواد">
+      <Card title="الأكواد" action={data && <span className="muted text-xs">{data.length} كود · {data.filter((c) => c.used_at).length} مستخدم</span>}>
         {!data ? <Spinner /> : !data.length ? <Empty title="لا توجد أكواد بعد" /> : (
-          <ul className="divide-y divide-[var(--border)] text-sm">
-            {data.map((c) => (
-              <li key={c.id} className="flex flex-wrap items-center gap-3 py-2.5">
-                <span className="font-mono" dir="ltr">…{c.hint}</span>
-                <span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">{c.plan_name ?? planName(c.plan_id)} · {c.days} يوم</span>
-                <span className="muted text-xs">{c.note}</span>
-                <span className="mr-auto text-xs">
-                  {c.used_at ? <span className="text-emerald-600">استُخدم — {c.used_by ?? "عميل محذوف"} · {fmtTime(c.used_at)}</span> : c.revoked_at ? <span className="text-red-600">ملغى</span> : <span className="muted">غير مستخدم · {fmtTime(c.created_at)}</span>}
-                </span>
-                {!c.used_at && !c.revoked_at && (
-                  <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" onClick={() => confirm("إلغاء هذا الكود؟") && api(`/api/owner/codes/${c.id}/revoke`, { body: {} }).then(() => { toast("أُلغي"); reload(); }, (e) => toast(e.message, "bad"))}>إلغاء</button>
-                )}
-              </li>
-            ))}
+          <ul className="space-y-2">
+            {data.map((c) => {
+              const state = c.used_at ? "used" : c.revoked_at ? "revoked" : "open";
+              return (
+                <li key={c.id} className="rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-3 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono rounded-lg bg-[var(--surface)] px-2 py-0.5 text-xs font-bold ring-1 ring-[var(--border)]" dir="ltr">HSN-••••-••••-{c.hint}</span>
+                    <span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">{c.plan_name ?? planName(c.plan_id)} · {c.days} يوم</span>
+                    <span className={`chip ${state === "used" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : state === "revoked" ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"}`}>
+                      {state === "used" ? "مستخدم" : state === "revoked" ? "ملغى" : "غير مستخدم"}
+                    </span>
+                    <span className="mr-auto flex gap-1">
+                      {state === "open" && (
+                        <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => confirm("إلغاء هذا الكود؟ لن يمكن استخدامه.") && api(`/api/owner/codes/${c.id}/revoke`, { body: {} }).then(() => { toast("أُلغي"); reload(); }, (e) => toast(e.message, "bad"))}>إلغاء</button>
+                      )}
+                      <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" aria-label="حذف الكود" onClick={() => confirm(state === "used" ? "حذف الكود من القائمة؟ اشتراك العميل يبقى كما هو." : "حذف الكود نهائيًا؟") && api(`/api/owner/codes/${c.id}`, { method: "DELETE" }).then(() => { toast("حُذف"); reload(); }, (e) => toast(e.message, "bad"))}>
+                        <Icon name="x" size={14} />حذف
+                      </button>
+                    </span>
+                  </div>
+                  <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+                    <div className="flex gap-1.5"><dt className="muted">أُنشئ:</dt><dd>{fmtTime(c.created_at)}</dd></div>
+                    {c.note && <div className="flex gap-1.5"><dt className="muted">ملاحظة:</dt><dd>{c.note}</dd></div>}
+                    {state === "used" && (
+                      <>
+                        <div className="flex gap-1.5"><dt className="muted">استخدمه:</dt><dd><b>{c.used_by ?? "—"}</b>{c.used_by_username && <span className="muted" dir="ltr"> @{c.used_by_username}</span>}{!c.customer_exists && <span className="text-red-600"> (محذوف)</span>}</dd></div>
+                        <div className="flex gap-1.5"><dt className="muted">وقت التفعيل:</dt><dd>{fmtTime(c.used_at)}</dd></div>
+                        {c.customer_exists && c.customer_expires_at ? <div className="flex gap-1.5"><dt className="muted">اشتراكه الحالي حتى:</dt><dd>{new Date(c.customer_expires_at).toLocaleDateString("ar")}</dd></div> : null}
+                      </>
+                    )}
+                    {state === "revoked" && <div className="flex gap-1.5"><dt className="muted">أُلغي:</dt><dd>{fmtTime(c.revoked_at)}</dd></div>}
+                  </dl>
+                </li>
+              );
+            })}
           </ul>
         )}
+        <p className="muted mt-3 text-[11px]">الكود الكامل يظهر مرة واحدة عند التوليد فقط — نحفظ بصمته للأمان، ونعرض آخر 4 أحرف للتعرّف عليه.</p>
       </Card>
     </div>
   );
@@ -340,7 +362,7 @@ const LIMIT_FIELDS: Array<[string, string]> = [
 
 function PlansTab() {
   const { data, reload } = useAsync(() => api<any[]>("/api/owner/plans"), []);
-  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string }>("/api/owner/settings"), []);
+  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string; exchange_rates: Record<string, number> }>("/api/owner/settings"), []);
   const [contact, setContact] = useState<string | null>(null);
   const [download, setDownload] = useState<string | null>(null);
   if (!data || !settings) return <Spinner />;
@@ -375,6 +397,7 @@ function PlansTab() {
           </Field>
         </div>
       </Card>
+      <RatesCard rates={settings.exchange_rates} onSaved={reloadSettings} />
       <div className="grid gap-5 xl:grid-cols-3">
         {data.map((p) => <PlanEditor key={p.id} plan={p} onSaved={reload} />)}
       </div>
@@ -410,7 +433,7 @@ function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
           <div className="grid grid-cols-[1fr_auto_auto] gap-2">
             <input className="input" type="number" min={0} step="any" dir="ltr" value={f.price_amount ?? ""} onChange={(e) => setF({ ...f, price_amount: e.target.value })} placeholder="99" aria-label="المبلغ" />
             <select className="input !w-auto" value={f.price_currency || "SAR"} onChange={(e) => setF({ ...f, price_currency: e.target.value })} aria-label="العملة">
-              {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label} {c.code}</option>)}
+              {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
             </select>
             <select className="input !w-auto" value={f.price_period || "month"} onChange={(e) => setF({ ...f, price_period: e.target.value })} aria-label="المدة">
               {Object.entries(PRICE_PERIODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
@@ -447,7 +470,7 @@ function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
 }
 
 export function OwnerPage() {
-  const [tab, setTab] = useState<"customers" | "plans" | "codes">("customers");
+  const [tab, setTab] = useState<"customers" | "plans" | "codes" | "payments">("customers");
   return (
     <div className="space-y-5">
       <header>
@@ -455,11 +478,236 @@ export function OwnerPage() {
         <p className="muted mt-1 text-sm">العملاء، الباقات، وأكواد التفعيل — لإدارة الخدمة فقط.</p>
       </header>
       <div className="seg w-fit max-w-full overflow-x-auto" role="tablist">
-        {([["customers", "العملاء"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"]] as const).map(([k, l]) => (
+        {([["customers", "العملاء"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["payments", "الحسابات البنكية"]] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <CustomersTab /> : tab === "plans" ? <PlansTab /> : <CodesTab />}
+      {tab === "customers" ? <CustomersTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : <PaymentsTab />}
+    </div>
+  );
+}
+
+function RatesCard({ rates, onSaved }: { rates: Record<string, number>; onSaved: () => void }) {
+  const [r, setR] = useState(() => ({ SAR: String(rates.SAR ?? ""), YER: String(rates.YER ?? ""), YER_SAN: String(rates.YER_SAN ?? "") }));
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api("/api/owner/settings", { method: "PUT", body: { exchange_rates: { SAR: Number(r.SAR), YER: Number(r.YER), YER_SAN: Number(r.YER_SAN) } } });
+      toast("تم حفظ أسعار الصرف");
+      onSaved();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const ok = [r.SAR, r.YER, r.YER_SAN].every((v) => Number(v) > 0);
+  return (
+    <Card title="أسعار الصرف">
+      <p className="muted mb-3 text-sm">يشوف العميل سعر كل باقة بالعملة اللي يختارها، محسوبًا بأسعارك هذه. السعر الأساسي يبقى بالعملة اللي حددتها في الباقة.</p>
+      <div className="grid gap-3 sm:grid-cols-4 sm:items-end">
+        {([["SAR", "ريال سعودي"], ["YER", "ريال يمني"], ["YER_SAN", "ريال يمني / صنعاء"]] as const).map(([k, l]) => (
+          <Field key={k} label={`1 دولار = ? ${l}`}>
+            <input className="input" type="number" min={0} step="any" dir="ltr" value={r[k]} onChange={(e) => setR({ ...r, [k]: e.target.value })} />
+          </Field>
+        ))}
+        <button className="btn btn-primary" disabled={busy || !ok} onClick={save}>{busy ? "…" : "حفظ الأسعار"}</button>
+      </div>
+    </Card>
+  );
+}
+
+/** Resizes an image file to a small square logo (data URL) so it stays light in the database. */
+async function logoDataUrl(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error("تعذّر قراءة الصورة"));
+      i.src = url;
+    });
+    const size = 160;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+    const scale = Math.min(size / img.width, size / img.height);
+    const w = img.width * scale;
+    const h = img.height * scale;
+    ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+    const webp = canvas.toDataURL("image/webp", 0.88);
+    return webp.startsWith("data:image/webp") ? webp : canvas.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function LogoPicker({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
+  return (
+    <div className="flex items-center gap-3">
+      {value ? <img src={value} alt="" className="h-14 w-14 rounded-xl bg-white object-contain p-1 ring-1 ring-[var(--border)]" /> : <span className="flex h-14 w-14 items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--text-2)] ring-1 ring-[var(--border)]"><Icon name="bank" size={24} /></span>}
+      <label className="btn btn-ghost min-h-9 cursor-pointer text-xs">
+        <Icon name="upload" size={15} />{value ? "تغيير الشعار" : "رفع شعار"}
+        <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (f) onChange(await logoDataUrl(f).catch((err) => { toast(err.message, "bad"); return value; })); e.target.value = ""; }} />
+      </label>
+      {value && <button type="button" className="btn btn-ghost min-h-9 text-xs text-red-600" onClick={() => onChange(null)}>إزالة</button>}
+    </div>
+  );
+}
+
+const CUR_NAME = (code: string | null) => (code ? CURRENCIES.find((c) => c.code === code)?.name ?? code : "—");
+
+function AccountForm({ initial, onSubmit, onCancel }: { initial?: any; onSubmit: (v: any) => Promise<void>; onCancel?: () => void }) {
+  const [f, setF] = useState({ holder: initial?.holder ?? "", number: initial?.number ?? "", currency: initial?.currency ?? "", note: initial?.note ?? "" });
+  const [busy, setBusy] = useState(false);
+  return (
+    <form
+      className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+          await onSubmit({ holder: f.holder.trim(), number: f.number.trim(), currency: f.currency || null, note: f.note.trim() || undefined });
+          if (!initial) setF({ holder: "", number: "", currency: "", note: "" });
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <input className="input" placeholder="اسم الحساب" value={f.holder} onChange={(e) => setF({ ...f, holder: e.target.value })} maxLength={120} required />
+      <input className="input" placeholder="رقم الحساب / الآيبان" dir="ltr" value={f.number} onChange={(e) => setF({ ...f, number: e.target.value })} maxLength={80} required />
+      <select className="input" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })} aria-label="العملة">
+        <option value="">العملة (اختياري)</option>
+        {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+      </select>
+      <input className="input sm:col-span-2" placeholder="ملاحظة (اختياري) — مثل: الفرع، اسم المستفيد بالإنجليزي" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} maxLength={200} />
+      <div className="flex gap-2">
+        <button className="btn btn-primary flex-1" disabled={busy}>{busy ? "…" : initial ? "حفظ" : "إضافة الحساب"}</button>
+        {onCancel && <button type="button" className="btn btn-ghost" onClick={onCancel}>إلغاء</button>}
+      </div>
+    </form>
+  );
+}
+
+function ProviderCard({ p, first, last, reload }: { p: any; first: boolean; last: boolean; reload: () => void }) {
+  const [edit, setEdit] = useState(false);
+  const [name, setName] = useState(p.name);
+  const [kind, setKind] = useState(p.kind);
+  const [logo, setLogo] = useState<string | null>(p.logo);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [adding, setAdding] = useState(!p.accounts.length);
+  const call = async (fn: () => Promise<unknown>, msg: string) => {
+    try {
+      await fn();
+      toast(msg);
+      reload();
+    } catch (e: any) {
+      toast(e.message, "bad");
+      throw e;
+    }
+  };
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-2.5">
+          {p.logo ? <img src={p.logo} alt="" className="h-8 w-8 rounded-lg bg-white object-contain p-0.5 ring-1 ring-[var(--border)]" /> : <Icon name="bank" size={20} />}
+          {p.name}
+          <span className="chip surface-2 muted text-[11px]">{p.kind === "exchange" ? "صرافة" : "بنك"}</span>
+        </span>
+      }
+      action={
+        <span className="flex gap-1">
+          <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={first} aria-label="تحريك لأعلى" onClick={() => call(() => api(`/api/owner/payment-providers/${p.id}/move`, { body: { dir: "up" } }), "تم")}>↑</button>
+          <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={last} aria-label="تحريك لأسفل" onClick={() => call(() => api(`/api/owner/payment-providers/${p.id}/move`, { body: { dir: "down" } }), "تم")}>↓</button>
+          <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => setEdit(!edit)}>تعديل</button>
+          <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" onClick={() => confirm(`حذف «${p.name}» مع كل حساباته؟`) && call(() => api(`/api/owner/payment-providers/${p.id}`, { method: "DELETE" }), "تم الحذف")}>حذف</button>
+        </span>
+      }
+    >
+      {edit && (
+        <div className="mb-4 space-y-3 rounded-2xl bg-[var(--surface-2)] p-3">
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} aria-label="الاسم" />
+            <select className="input" value={kind} onChange={(e) => setKind(e.target.value)} aria-label="النوع"><option value="bank">بنك</option><option value="exchange">صرافة</option></select>
+          </div>
+          <LogoPicker value={logo} onChange={setLogo} />
+          <button className="btn btn-primary w-full" onClick={() => call(() => api(`/api/owner/payment-providers/${p.id}`, { method: "PUT", body: { name: name.trim(), kind, logo } }), "تم الحفظ").then(() => setEdit(false), () => undefined)}>حفظ</button>
+        </div>
+      )}
+      <ul className="space-y-2">
+        {p.accounts.map((a: any) =>
+          editing === a.id ? (
+            <li key={a.id} className="rounded-2xl border border-violet-400 p-3">
+              <AccountForm initial={a} onCancel={() => setEditing(null)} onSubmit={(v) => call(() => api(`/api/owner/payment-accounts/${a.id}`, { method: "PUT", body: v }), "تم الحفظ").then(() => setEditing(null))} />
+            </li>
+          ) : (
+            <li key={a.id} className="flex items-center gap-3 rounded-2xl border border-[var(--border)] px-3 py-2.5">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs"><span className="chip bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">{CUR_NAME(a.currency)}</span><span className="muted">{a.holder}</span></div>
+                <div className="font-mono font-bold" dir="ltr" style={{ textAlign: "right" }}>{a.number}</div>
+                {a.note && <div className="muted text-[11px]">{a.note}</div>}
+              </div>
+              <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => setEditing(a.id)}>تعديل</button>
+              <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" onClick={() => confirm("حذف هذا الحساب؟") && call(() => api(`/api/owner/payment-accounts/${a.id}`, { method: "DELETE" }), "تم الحذف")}>حذف</button>
+            </li>
+          ),
+        )}
+      </ul>
+      {adding ? (
+        <div className="mt-3 rounded-2xl border border-dashed border-[var(--border)] p-3">
+          <AccountForm onSubmit={(v) => call(() => api(`/api/owner/payment-providers/${p.id}/accounts`, { body: v }), "تمت إضافة الحساب")} onCancel={p.accounts.length ? () => setAdding(false) : undefined} />
+        </div>
+      ) : (
+        <button className="btn btn-ghost mt-3 w-full text-xs" onClick={() => setAdding(true)}><Icon name="plus" size={15} />إضافة حساب آخر</button>
+      )}
+    </Card>
+  );
+}
+
+function PaymentsTab() {
+  const { data, reload } = useAsync(() => api<any[]>("/api/owner/payment-methods"), []);
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState("bank");
+  const [logo, setLogo] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    setBusy(true);
+    try {
+      await api("/api/owner/payment-providers", { body: { name: name.trim(), kind, logo } });
+      toast("تمت الإضافة — أضف حساباته الآن");
+      setName("");
+      setLogo(null);
+      reload();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
+      <div className="space-y-4">
+        <Card title="إضافة بنك أو صرافة">
+          <div className="space-y-3">
+            <Field label="الاسم"><input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="مثل: بنك الكريمي" /></Field>
+            <Field label="النوع">
+              <div className="flex gap-2">
+                {([["bank", "بنك"], ["exchange", "صرافة"]] as const).map(([k, l]) => (
+                  <button key={k} type="button" className={`flex-1 rounded-xl border px-3 py-2 text-sm font-bold ${kind === k ? "border-violet-500 bg-violet-500/10" : "border-[var(--border)]"}`} onClick={() => setKind(k)}>{l}</button>
+                ))}
+              </div>
+            </Field>
+            <Field label="الشعار (اختياري)"><LogoPicker value={logo} onChange={setLogo} /></Field>
+            <button className="btn btn-primary w-full" disabled={busy || !name.trim()} onClick={add}>{busy ? "…" : "إضافة"}</button>
+          </div>
+        </Card>
+        <Alert tone="info">تظهر هذه الحسابات للزوار في صفحة الباقات قبل التسجيل، مع زر «أرسل السند هنا» اللي يوديهم لرابط التواصل للشراء (من تبويب الباقات).</Alert>
+      </div>
+      <div className="space-y-4">
+        {!data ? <Spinner /> : !data.length ? <Empty title="لا توجد بنوك أو صرافات بعد" /> : data.map((p, i) => <ProviderCard key={p.id} p={p} first={i === 0} last={i === data.length - 1} reload={reload} />)}
+      </div>
     </div>
   );
 }

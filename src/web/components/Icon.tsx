@@ -2,6 +2,8 @@
 import type { SVGProps } from "react";
 
 const PATHS: Record<string, string> = {
+  bank: `<path d="M3 10 12 4l9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/>`,
+  whatsapp: `<path d="M20.5 11.7a8.5 8.5 0 0 1-12.6 7.4L3.5 20.5l1.5-4.3A8.5 8.5 0 1 1 20.5 11.7z"/><path d="M9 8.5c.3 2.6 2.4 5 5.5 6l1.4-1.3-1.9-1.1-.9.8c-1-.4-2-1.4-2.4-2.4l.8-.9-1.1-1.9z"/>`,
   logout: `<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>`,
   moon: `<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>`,
   menu: `<path d="M4 6h16M4 12h16M4 18h16"/>`,

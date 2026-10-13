@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { api } from "../api";
 import { Icon } from "../components/Icon";
-import { EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, type PlanLimits } from "../../shared/plans";
-import { Alert, Card, Spinner, Tip, fmtTime, toast, useAsync } from "../components/ui";
+import { PlansShowcase } from "../components/PlansShowcase";
+import { Alert, Card, Spinner, fmtTime, toast, useAsync } from "../components/ui";
 
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
 
@@ -18,19 +18,6 @@ function Meter({ label, used, max }: { label: string; used: number; max: number 
   );
 }
 
-export function Features({ limits }: { limits: PlanLimits }) {
-  return (
-    <ul className="space-y-1.5 text-sm">
-      <li><Tip text={LIMIT_HINTS.events}>✅ {limits.events.map((e) => EVENT_LABELS[e] ?? e).join(" · ") || "—"}</Tip></li>
-      <li><Tip text={LIMIT_HINTS.active_campaigns}>✅ الحملات النشطة: {n(limits.active_campaigns)}</Tip></li>
-      <li><Tip text={LIMIT_HINTS.monthly_messages}>✅ الرسائل شهريًا: {n(limits.monthly_messages)}</Tip></li>
-      <li><Tip text={LIMIT_HINTS.draws_per_month}><span className={limits.draws_per_month === 0 ? "muted line-through" : ""}>{limits.draws_per_month === 0 ? "—" : "✅"} السحوبات: {limits.draws_per_month === null ? "غير محدودة" : `${limits.draws_per_month} شهريًا`}</span></Tip></li>
-      {Object.entries(FEATURE_LABELS).map(([k, label]) => (
-        <li key={k}><Tip text={FEATURE_HINTS[k]}><span className={(limits as any)[k] ? "" : "muted line-through"}>{(limits as any)[k] ? "✅" : "—"} {label}</span></Tip></li>
-      ))}
-    </ul>
-  );
-}
 
 export function SubscriptionPage() {
   const { data, loading, error, reload } = useAsync(() => api<any>("/api/subscription"), []);
@@ -89,20 +76,8 @@ export function SubscriptionPage() {
           )}
         </Card>
       </div>
-      <h2 className="font-display pt-2 text-lg font-extrabold">الباقات</h2>
-      <div className="grid gap-4 md:grid-cols-3">
-        {data.plans.map((p: any) => (
-          <Card key={p.id} className={p.id === data.plan?.id ? "ring-2 ring-violet-500" : ""}>
-            <div className="flex items-baseline justify-between gap-2">
-              <b className="font-display text-lg">{p.name}</b>
-              {p.id === data.plan?.id && <span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">باقتك</span>}
-            </div>
-            <div className="font-display mt-1 text-xl font-extrabold text-violet-600 dark:text-violet-300">{p.price_label || "تواصل معنا"}</div>
-            {p.description && <p className="muted mt-1 text-xs">{p.description}</p>}
-            <div className="mt-3"><Features limits={p.limits} /></div>
-          </Card>
-        ))}
-      </div>
+      <h2 className="font-display pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
+      <PlansShowcase catalog={data} currentPlanId={data.plan?.id} />
     </div>
   );
 }

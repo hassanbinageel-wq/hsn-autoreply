@@ -3,7 +3,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, setCsrf } from "../api";
 import { API_BASE, deviceToken, isNative } from "../platform";
 import { Alert, Field } from "../components/ui";
-import { Features } from "./Subscription";
+import { PlansShowcase, type Catalog } from "../components/PlansShowcase";
+import { Spinner } from "../components/ui";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
   const [status, setStatus] = useState<{ needs_setup: boolean; setup_enabled: boolean; missing_secrets: string[] } | null>(null);
@@ -13,8 +14,17 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   const [setupToken, setSetupToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // Self sign-up with an activation code (#/register).
+  // Self sign-up with an activation code (#/register); public plans page (#/plans).
   const [register, setRegister] = useState(() => location.hash.startsWith("#/register"));
+  const [plans, setPlans] = useState(() => location.hash.startsWith("#/plans"));
+  useEffect(() => {
+    const on = () => {
+      setPlans(location.hash.startsWith("#/plans"));
+      setRegister(location.hash.startsWith("#/register"));
+    };
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
 
@@ -47,6 +57,8 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
       setBusy(false);
     }
   };
+
+  if (plans && !status?.needs_setup) return <PublicPlansPage />;
 
   return (
     <div className="flex min-h-screen">
@@ -102,8 +114,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               ) : (
                 <>
                   <button type="button" className="font-semibold text-violet-600 underline dark:text-violet-300" onClick={() => { setRegister(true); setError(null); location.hash = "#/register"; }}>عندك كود تفعيل؟ أنشئ حسابك</button>
-                  <span className="muted"> · </span>
-                  <a className="muted underline" href={`${API_BASE || ""}/pricing`} target="_blank" rel="noopener">الباقات</a>
+                  <a href="#/plans" className="mr-2 inline-block rounded-lg bg-red-500/10 px-2.5 py-0.5 font-bold text-red-600 no-underline transition hover:bg-red-500/15 dark:text-red-400">الباقات</a>
                 </>
               )}
             </p>
@@ -112,7 +123,13 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             <Icon name="shield" size={18} className="text-emerald-500" />
             <span>هذا حساب إدارة التطبيق فقط — لا نطلب كلمة مرور إنستقرام أبدًا. الربط يتم عبر Meta الرسمي.</span>
           </div>
-          {register && !status?.needs_setup && <PublicPlans />}
+          {register && !status?.needs_setup && (
+            <a href="#/plans" className="flex items-center gap-3 rounded-2xl border border-red-500/25 bg-red-500/[0.06] p-3.5 transition hover:bg-red-500/10">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-600 dark:text-red-400"><Icon name="zap" size={20} /></span>
+              <span className="flex-1 leading-tight"><b className="block text-sm">ما عندك كود؟</b><span className="muted text-xs">شوف الباقات والأسعار وطرق الدفع</span></span>
+              <Icon name="arrowL" size={18} className="text-red-600 dark:text-red-400" />
+            </a>
+          )}
           <p className="muted text-center text-[11px] leading-relaxed">
             خدمة تقدّمها شركة ارقام المستديرة للدعاية والاعلان — الرقم الوطني الموحد 7042872536
             <br />
@@ -143,37 +160,42 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   );
 }
 
-/** Plans, prices and the purchase contact, shown on the sign-up screen before an account exists. */
-function PublicPlans() {
-  const [data, setData] = useState<{ plans: any[]; sales_contact: string | null } | null>(null);
+
+/** Public plans page for visitors (#/plans): plans, prices in four currencies, payment accounts, "send the receipt". */
+function PublicPlansPage() {
+  const [data, setData] = useState<Catalog | null>(null);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    api<{ plans: any[]; sales_contact: string | null }>("/api/public/plans").then(setData, () => undefined);
+    api<Catalog>("/api/public/plans").then(setData, (e) => setError(e.message));
+    window.scrollTo(0, 0);
   }, []);
-  if (!data || !data.plans.length) return null;
   return (
-    <section className="space-y-2.5 border-t border-[var(--border)] pt-4" aria-label="الباقات والأسعار">
-      <div className="flex items-baseline justify-between">
-        <h2 className="font-display text-base font-extrabold">الباقات والأسعار</h2>
-        <a className="muted text-xs underline" href={`${API_BASE || ""}/pricing`} target="_blank" rel="noopener">صفحة الباقات</a>
-      </div>
-      {data.plans.map((p) => (
-        <details key={p.id} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2.5 open:border-violet-400">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
-            <span>
-              <b className="font-display block">{p.name}</b>
-              {p.description && <span className="muted block text-xs">{p.description}</span>}
-            </span>
-            <span className="font-display shrink-0 text-sm font-extrabold text-violet-600 dark:text-violet-300">{p.price_label || "تواصل معنا"}</span>
-          </summary>
-          <div className="mt-2.5 border-t border-[var(--border)] pt-2.5"><Features limits={p.limits} /></div>
-        </details>
-      ))}
-      {data.sales_contact && (
-        <a className="btn btn-primary w-full" href={data.sales_contact} target="_blank" rel="noopener">
-          <Icon name="send" size={17} />ما عندك كود؟ تواصل معنا للاشتراك
-        </a>
-      )}
-      <p className="muted text-center text-[11px]">بعد الدفع يصلك كود التفعيل — أدخله فوق وأنشئ حسابك.</p>
-    </section>
+    <div className="min-h-screen bg-[var(--bg)]">
+      <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
+          <a href="#/" className="flex items-center gap-2.5">
+            <span className="grad flex h-9 w-9 items-center justify-center rounded-xl text-white"><Icon name="zap" size={18} /></span>
+            <b className="font-display">HSN AutoReply</b>
+          </a>
+          <div className="flex gap-2">
+            <a href="#/" className="btn btn-ghost min-h-9 text-xs">تسجيل الدخول</a>
+            <a href="#/register" className="btn btn-primary min-h-9 text-xs">عندي كود</a>
+          </div>
+        </div>
+      </header>
+      <main className="mx-auto max-w-5xl space-y-8 px-4 py-8">
+        <div className="text-center">
+          <span className="inline-block rounded-full bg-red-500/10 px-3 py-1 text-xs font-bold text-red-600 dark:text-red-400">الباقات</span>
+          <h1 className="font-display mt-3 text-[28px] font-extrabold leading-tight sm:text-4xl">اختر الباقة المناسبة لحسابك</h1>
+          <p className="muted mx-auto mt-2 max-w-xl text-sm leading-relaxed">ردود تلقائية على تعليقات وستوري إنستقرام عبر واجهة Meta الرسمية — بدون كلمة مرور، وبدون أي أدوات غير رسمية.</p>
+        </div>
+        {error ? <p className="text-center text-red-600">{error}</p> : !data ? <Spinner /> : <PlansShowcase catalog={data} />}
+        <p className="muted text-center text-[11px] leading-relaxed">
+          خدمة تقدّمها شركة ارقام المستديرة للدعاية والاعلان — الرقم الوطني الموحد 7042872536
+          <br />
+          <a className="underline" href={`${API_BASE || ""}/privacy`} target="_blank" rel="noopener">الخصوصية</a> · <a className="underline" href={`${API_BASE || ""}/terms`} target="_blank" rel="noopener">الشروط</a>
+        </p>
+      </main>
+    </div>
   );
 }

@@ -81,23 +81,34 @@ export function normalizeCode(raw: string): string {
   return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^HSN/, "");
 }
 
-/** Currencies the owner can price plans in (symbol as shown to customers). */
-export const CURRENCIES: Array<{ code: string; label: string }> = [
-  { code: "SAR", label: "ر.س" },
-  { code: "USD", label: "$" },
-  { code: "AED", label: "د.إ" },
-  { code: "KWD", label: "د.ك" },
-  { code: "QAR", label: "ر.ق" },
-  { code: "BHD", label: "د.ب" },
-  { code: "OMR", label: "ر.ع" },
-  { code: "YER", label: "ر.ي" },
-  { code: "EGP", label: "ج.م" },
+/** The four currencies offered (symbol as shown to customers). YER_SAN = the Sana'a rate of the Yemeni rial. */
+export const CURRENCIES: Array<{ code: string; label: string; name: string }> = [
+  { code: "USD", label: "$", name: "دولار" },
+  { code: "SAR", label: "ر.س", name: "ريال سعودي" },
+  { code: "YER", label: "ر.ي", name: "ريال يمني" },
+  { code: "YER_SAN", label: "ر.ي (صنعاء)", name: "ريال يمني / صنعاء" },
 ];
+/** How many units of each currency equal 1 USD (set by the owner). */
+export type ExchangeRates = Record<string, number>;
+export const DEFAULT_RATES: ExchangeRates = { USD: 1, SAR: 3.75, YER: 1600, YER_SAN: 535 };
+
+/** Converts an amount between the four currencies using the owner's rates (null if a rate is missing). */
+export function convertPrice(amount: number, from: string, to: string, rates: ExchangeRates): number | null {
+  if (from === to) return amount;
+  const rf = from === "USD" ? 1 : rates[from];
+  const rt = to === "USD" ? 1 : rates[to];
+  if (!rf || !rt) return null;
+  const v = (amount / rf) * rt;
+  return to.startsWith("YER") ? Math.round(v) : Math.round(v * 100) / 100;
+}
 export const PRICE_PERIODS: Record<string, string> = { month: "شهريًا", quarter: "كل 3 أشهر", year: "سنويًا", once: "مرة واحدة" };
 
 /** "99 ر.س / شهريًا" from the owner's structured price. */
-export function formatPrice(amount: number, currency: string, period: string): string {
+export function formatAmount(amount: number, currency: string): string {
   const cur = CURRENCIES.find((c) => c.code === currency)?.label ?? currency;
   const n = Number.isInteger(amount) ? amount.toLocaleString("en-US") : amount.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  return `${n} ${cur} / ${PRICE_PERIODS[period] ?? PRICE_PERIODS.month}`;
+  return `${n} ${cur}`;
+}
+export function formatPrice(amount: number, currency: string, period: string): string {
+  return `${formatAmount(amount, currency)} / ${PRICE_PERIODS[period] ?? PRICE_PERIODS.month}`;
 }

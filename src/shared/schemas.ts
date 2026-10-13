@@ -129,7 +129,7 @@ export const planUpdateSchema = z.object({
   name: text(40).min(1),
   price_label: text(60).optional(),
   price_amount: z.number().min(0).max(1_000_000).nullable().optional(),
-  price_currency: z.string().trim().min(2).max(5).optional(),
+  price_currency: z.enum(["USD", "SAR", "YER", "YER_SAN"]).optional(),
   price_period: z.enum(["month", "quarter", "year", "once"]).optional(),
   description: text(200).optional(),
   active: z.boolean().default(true),
@@ -204,3 +204,24 @@ export const drawInputSchema = z
     if (d.starts_at && d.ends_at && d.ends_at <= d.starts_at) ctx.addIssue({ code: "custom", path: ["ends_at"], message: "نهاية الفترة يجب أن تكون بعد بدايتها" });
   });
 export type DrawInput = z.infer<typeof drawInputSchema>;
+
+const logoSchema = z
+  .string()
+  .max(200_000, "الشعار كبير — اختر صورة أصغر")
+  .refine((v) => /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(v), "صيغة الشعار غير مدعومة");
+export const paymentProviderSchema = z.object({
+  name: text(80).min(1, "اكتب اسم البنك أو الصرافة"),
+  kind: z.enum(["bank", "exchange"]).default("bank"),
+  logo: logoSchema.nullable().optional(),
+});
+export const paymentAccountSchema = z.object({
+  holder: text(120).min(1, "اكتب اسم الحساب"),
+  number: text(80).min(1, "اكتب رقم الحساب"),
+  currency: z.enum(["USD", "SAR", "YER", "YER_SAN"]).nullable().optional(),
+  note: text(200).optional(),
+});
+export const exchangeRatesSchema = z.object({
+  SAR: z.number().positive().max(1_000_000),
+  YER: z.number().positive().max(1_000_000),
+  YER_SAN: z.number().positive().max(1_000_000),
+});

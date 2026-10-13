@@ -127,7 +127,14 @@ export async function redeemCode(db: D1Database, tenantId: number, raw: string, 
   if (code.revoked_at) throw new RedeemError("revoked", "هذا الكود أُلغي — تواصل مع إدارة الخدمة");
   if (code.used_at) throw new RedeemError("used", "هذا الكود مستخدم مسبقًا");
   // Claim it atomically (two simultaneous redemptions cannot both succeed).
-  const claimed = await run(db, "UPDATE activation_codes SET used_at = ?, used_by_tenant = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL", now, tenantId, code.id);
+  const claimed = await run(
+    db,
+    `UPDATE activation_codes SET used_at = ?, used_by_tenant = ?,
+            used_by_name = (SELECT name FROM tenants WHERE id = ?),
+            used_by_username = (SELECT username FROM admin_users WHERE tenant_id = ? ORDER BY id LIMIT 1)
+      WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL`,
+    now, tenantId, tenantId, tenantId, code.id,
+  );
   if (!claimed.meta.changes) throw new RedeemError("used", "هذا الكود مستخدم مسبقًا");
   const t = await first<{ plan_expires_at: number | null; plan_started_at: number | null }>(db, "SELECT plan_expires_at, plan_started_at FROM tenants WHERE id = ?", tenantId);
   const running = !!t?.plan_expires_at && t.plan_expires_at > now;

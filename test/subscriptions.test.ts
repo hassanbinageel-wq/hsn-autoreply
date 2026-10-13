@@ -246,19 +246,76 @@ describe("owner tools", () => {
     expect((await call("/api/owner/settings", h, "PUT", { app_download_url: "https://x.com" })).status).toBe(403);
   });
 
+  it("payment methods: banks with several accounts and a logo, shown publicly; owner only", async () => {
+    const logo = "data:image/png;base64,iVBORw0KGgo=";
+    const prov = await call("/api/owner/payment-providers", OWNER, "POST", { name: "بنك الكريمي", kind: "bank", logo });
+    expect(prov.status).toBe(200);
+    for (const [currency, number] of [["YER", "111"], ["SAR", "222"], ["USD", "333"]]) {
+      expect((await call(`/api/owner/payment-providers/${prov.body.id}/accounts`, OWNER, "POST", { holder: "حسن", number, currency })).status).toBe(200);
+    }
+    const ex = await call("/api/owner/payment-providers", OWNER, "POST", { name: "صرافة النجم", kind: "exchange" });
+    await call(`/api/owner/payment-providers/${ex.body.id}/move`, OWNER, "POST", { dir: "up" });
+    const pub = (await call("/api/public/plans")).body;
+    expect(pub.payment_methods.map((p: any) => p.name)).toEqual(["صرافة النجم", "بنك الكريمي"]);
+    const bank = pub.payment_methods[1];
+    expect(bank.logo).toBe(logo);
+    expect(bank.accounts.map((a: any) => a.currency)).toEqual(["YER", "SAR", "USD"]);
+    // edit + delete an account, bad logo rejected
+    const aid = bank.accounts[0].id;
+    expect((await call(`/api/owner/payment-accounts/${aid}`, OWNER, "PUT", { holder: "حسن علي", number: "999", currency: "YER_SAN" })).status).toBe(200);
+    await call(`/api/owner/payment-accounts/${bank.accounts[1].id}`, OWNER, "DELETE");
+    expect((await call("/api/public/plans")).body.payment_methods[1].accounts.map((a: any) => [a.number, a.currency])).toEqual([["999", "YER_SAN"], ["333", "USD"]]);
+    expect((await call("/api/owner/payment-providers", OWNER, "POST", { name: "x", logo: "javascript:alert(1)" })).status).toBe(422);
+    expect((await call(`/api/owner/payment-providers/${prov.body.id}/accounts`, OWNER, "POST", { holder: "a", number: "1", currency: "EUR" })).status).toBe(422);
+    // customers cannot change them
+    const { h } = await customerWithAccount();
+    expect((await call("/api/owner/payment-providers", h, "POST", { name: "x" })).status).toBe(403);
+    expect((await call("/api/subscription", h)).body.payment_methods).toHaveLength(2);
+    await call(`/api/owner/payment-providers/${prov.body.id}`, OWNER, "DELETE");
+    expect((await DB.prepare("SELECT COUNT(*) AS n FROM payment_accounts").first<any>()).n).toBe(0);
+  });
+
+  it("exchange rates are the owner's and come with the catalog; only four currencies", async () => {
+    expect((await call("/api/owner/settings", OWNER, "PUT", { exchange_rates: { SAR: 3.8, YER: 1700, YER_SAN: 530 } })).status).toBe(200);
+    expect((await call("/api/public/plans")).body.rates).toEqual({ USD: 1, SAR: 3.8, YER: 1700, YER_SAN: 530 });
+    expect((await call("/api/owner/settings", OWNER, "PUT", { exchange_rates: { SAR: 0, YER: 1, YER_SAN: 1 } })).status).toBe(422);
+    const pro = (await call("/api/owner/plans", OWNER)).body.find((p: any) => p.id === "pro");
+    expect((await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, active: true, limits: pro.limits, price_amount: 10, price_currency: "EUR" })).status).toBe(422);
+    expect((await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, active: true, limits: pro.limits, price_amount: 5000, price_currency: "YER_SAN" })).status).toBe(200);
+    expect((await call("/api/public/plans")).body.plans.find((p: any) => p.id === "pro")).toMatchObject({ price_amount: 5000, price_currency: "YER_SAN", price_label: "5,000 ر.ي (صنعاء) / شهريًا" });
+  });
+
+  it("codes keep who used them after the customer is deleted, and any code can be deleted", async () => {
+    const [code] = await codes("basic", 30);
+    const reg = await call("/api/auth/register", {}, "POST", { name: "متجر سارة", username: "shop_sara", password: "sara-strong-pass-123", code });
+    expect(reg.status).toBe(200);
+    let list = (await call("/api/owner/codes", OWNER)).body;
+    expect(list[0]).toMatchObject({ used_by: "متجر سارة", used_by_username: "shop_sara", customer_exists: 1 });
+    const tid = (await DB.prepare("SELECT tenant_id FROM admin_users WHERE username = 'shop_sara'").first<any>()).tenant_id;
+    await call(`/api/owner/tenants/${tid}`, OWNER, "DELETE", { confirm: "متجر سارة" });
+    list = (await call("/api/owner/codes", OWNER)).body;
+    expect(list[0]).toMatchObject({ used_by: "متجر سارة", used_by_username: "shop_sara", customer_exists: 0 });
+    const [revoked] = await codes("pro", 7);
+    const rid = (await call("/api/owner/codes", OWNER)).body[0].id;
+    await call(`/api/owner/codes/${rid}/revoke`, OWNER, "POST", {});
+    expect((await call(`/api/owner/codes/${rid}`, OWNER, "DELETE")).status).toBe(200);
+    expect((await call(`/api/owner/codes/${list[0].id}`, OWNER, "DELETE")).status).toBe(200);
+    expect((await call("/api/owner/codes", OWNER)).body).toHaveLength(0);
+    expect(revoked).toMatch(/^HSN-/);
+  });
+
   it("plans are editable and the public pricing page shows them", async () => {
     const plans = (await call("/api/owner/plans", OWNER)).body;
     const pro = plans.find((p: any) => p.id === "pro");
     const put = await call("/api/owner/plans/pro", OWNER, "PUT", { ...pro, price_label: "149 ر.س / شهريًا", active: true });
     expect(put.status, JSON.stringify(put.body)).toBe(200);
     await call("/api/owner/settings", OWNER, "PUT", { sales_contact: "https://wa.me/966500000000" });
-    const page = await call("/pricing");
-    expect(page.status).toBe(200);
-    expect(page.body).toContain("149 ر.س / شهريًا");
-    expect(page.body).toContain("الكامل");
-    expect(page.body).toContain("7042872536");
-    expect(page.body).toContain("https://wa.me/966500000000");
-    expect(page.body).toContain('role="tooltip"');
-    expect(page.body).toContain("المحاكاة");
+    const page = await SELF.fetch(new Request(BASE + "/pricing", { redirect: "manual" }));
+    expect(page.status).toBe(302);
+    expect(page.headers.get("location")).toBe("/#/plans");
+    const pub = (await call("/api/public/plans")).body;
+    expect(pub.plans.find((p: any) => p.id === "pro").price_label).toBe("149 ر.س / شهريًا");
+    expect(pub.plans.map((p: any) => p.name)).toContain("الكامل");
+    expect(pub.sales_contact).toBe("https://wa.me/966500000000");
   });
 });
