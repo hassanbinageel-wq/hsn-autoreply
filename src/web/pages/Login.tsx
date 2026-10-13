@@ -5,6 +5,7 @@ import { API_BASE, deviceToken, isNative } from "../platform";
 import { Alert, Field } from "../components/ui";
 import { PlansShowcase, type Catalog } from "../components/PlansShowcase";
 import { AppDownloadBox, DesktopBanner, MobileBanner, type Branding } from "../components/LoginBanner";
+import { bioAvailable, bioCredentials, bioUser, disableBio, enableBio } from "../lib/biometric";
 import { Spinner } from "../components/ui";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
@@ -35,6 +36,45 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
     api<Branding>("/api/public/branding").then(setBrand, () => undefined);
   }, []);
 
+  const signIn = async (u: string, pw: string) => {
+    const r = await api<{ token?: string; csrf_token?: string }>("/api/auth/login", {
+      body: { username: u, password: pw, client: isNative ? "app" : "web", device_label: isNative ? "Android" : undefined },
+    });
+    if (isNative && r.token) await deviceToken.set(r.token);
+    setCsrf(r.csrf_token);
+  };
+
+  // Fingerprint sign-in (Android app): offered automatically when this device has it switched on.
+  const [bio, setBio] = useState<string | null>(() => bioUser());
+  const fingerprint = async () => {
+    setError(null);
+    let creds: { username: string; password: string } | null = null;
+    try {
+      creds = await bioCredentials();
+    } catch {
+      return; // cancelled, or biometrics changed on the phone
+    }
+    if (!creds) return;
+    setBusy(true);
+    try {
+      await signIn(creds.username, creds.password);
+      onDone();
+    } catch (err) {
+      const e2 = err as ApiError;
+      if (e2.status === 401 || e2.code === "invalid_credentials") {
+        await disableBio();
+        setBio(null);
+        setError("كلمة المرور تغيّرت — سجّل دخولك بكلمة المرور مرة وحدة وفعّل البصمة من جديد.");
+      } else setError(e2.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (bio && !register && !location.hash.startsWith("#/plans")) void fingerprint();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -46,11 +86,15 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         await api("/api/auth/register", { body: { name: name.trim(), username: username.trim(), password, code } });
         location.hash = "#/";
       }
-      const r = await api<{ token?: string; csrf_token?: string }>("/api/auth/login", {
-        body: { username, password, client: isNative ? "app" : "web", device_label: isNative ? "Android" : undefined },
-      });
-      if (isNative && r.token) await deviceToken.set(r.token);
-      setCsrf(r.csrf_token);
+      await signIn(username, password);
+      // Offer fingerprint sign-in on this phone (or keep the saved one in step with a new password).
+      if (isNative && (await bioAvailable())) {
+        const saved = bioUser();
+        if (saved === username) await enableBio(username, password).catch(() => undefined);
+        else if (!saved && confirm("تفعيل الدخول بالبصمة على هذا الجوال؟ المرة الجاية تدخل ببصمتك بدون كلمة مرور.")) {
+          await enableBio(username, password).catch(() => undefined);
+        }
+      }
       setPassword("");
       onDone();
     } catch (err) {
@@ -110,6 +154,11 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             </div>
           </Field>
           {error && <Alert tone="bad">{error}</Alert>}
+          {bio && !register && !status?.needs_setup && (
+            <button type="button" onClick={fingerprint} disabled={busy} className="flex w-full items-center justify-center gap-2.5 rounded-2xl border-2 border-violet-500/40 bg-violet-500/5 py-3 font-bold text-violet-700 transition hover:bg-violet-500/10 dark:text-violet-300">
+              <Icon name="fingerprint" size={22} />الدخول بالبصمة <span className="muted text-xs font-normal" dir="ltr">{bio}</span>
+            </button>
+          )}
           <button type="submit" className="btn btn-primary min-h-12 w-full text-[15px]" disabled={busy || !status}>
             {busy ? "…" : status?.needs_setup ? "إنشاء حساب الإدارة والدخول" : register ? "إنشاء الحساب والدخول" : "تسجيل الدخول"}
           </button>

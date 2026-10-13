@@ -141,8 +141,8 @@ export function InboxPage() {
   return (
     <div className="space-y-4">
       <PageHeader title="الرسائل" subtitle="المحادثات التي بدأتها الأتمتة أو وصلتك عبر الخاص. الرد اليدوي متاح خلال 24 ساعة من آخر رسالة من الشخص." />
-      <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
-        <div className={`card p-3 ${open !== null ? "hidden lg:block" : ""}`}>
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+        <div className={`card min-w-0 p-2 sm:p-3 ${open !== null ? "hidden lg:block" : ""}`}>
           <input className="input mb-2" placeholder="بحث باسم الحساب…" value={q} onChange={(e) => setQ(e.target.value)} />
           {!list ? (
             <Spinner />
@@ -155,7 +155,7 @@ export function InboxPage() {
                   <UserAvatar url={c.profile_pic_url} name={c.username} size={40} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate font-bold" dir="ltr">{c.username ? `@${c.username}` : "حساب غير معروف"}</span>
+                      <span className="min-w-0 truncate font-bold" dir="ltr">{c.username ? `@${c.username}` : "حساب غير معروف"}</span>
                       {c.unread > 0 && <span className="rounded-full bg-pink-600 px-1.5 text-[11px] text-white">{c.unread}</span>}
                       <span className="muted mr-auto shrink-0 text-[11px]">{fmtTime(c.last_message_at)}</span>
                     </div>

@@ -5,6 +5,7 @@ import { Link } from "../App";
 import { NotificationsCard } from "../components/NotificationsCard";
 import { Icon } from "../components/Icon";
 import { Alert, Card, Spinner, Toggle, setTz, toast, useAsync } from "../components/ui";
+import { bioUser, disableBio } from "../lib/biometric";
 
 const SECTIONS: Array<[string, string, string]> = [
   ["general", "عام", "settings"],
@@ -218,6 +219,7 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
                 </button>
                 <button className="btn btn-ghost" onClick={onLogout}><Icon name="logout" size={17} />تسجيل الخروج</button>
               </div>
+              {isNative && <BiometricRow />}
               <div className="muted mt-4 border-t border-[var(--border)] pt-4 text-sm">
                 الإصدار: واجهة <b>{APP_VERSION}</b> ({isNative ? "Android" : "ويب/PWA"}) · خادم <b>{data.app_version}</b>
                 <Link to="/download" className="mr-2 font-semibold text-violet-600 underline dark:text-violet-300">تنزيل أحدث APK</Link>
@@ -226,6 +228,23 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
           </section>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Android app: fingerprint sign-in is switched on from the login screen; here it can be switched off. */
+function BiometricRow() {
+  const [user, setUser] = useState(() => bioUser());
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--border)] p-3">
+      <Icon name="fingerprint" size={22} className="text-violet-600" />
+      <span className="flex-1 text-sm">
+        <b className="block">الدخول بالبصمة</b>
+        <span className="muted text-xs">{user ? `مفعّل على هذا الجوال (${user})` : "غير مفعّل — سجّل الخروج ثم ادخل بكلمة المرور وبيسألك عن التفعيل"}</span>
+      </span>
+      {user && (
+        <button className="btn btn-ghost min-h-9 text-xs text-red-600" onClick={async () => { await disableBio(); setUser(null); toast("أُوقف الدخول بالبصمة"); }}>إيقاف</button>
+      )}
     </div>
   );
 }

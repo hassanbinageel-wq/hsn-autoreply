@@ -146,7 +146,15 @@ export function CampaignsPage() {
       /* storage unavailable */
     }
   };
-  const compact = size < 250;
+  // Phones: two campaigns per row (compact cards); the size slider is for larger screens.
+  const [phone, setPhone] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const on = () => setPhone(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const compact = phone || size < 250;
   const { data, loading, error, reload } = useAsync(
     () => api<any[]>(`/api/campaigns?q=${encodeURIComponent(q)}&status=${status}&type=${type}`),
     [q, status, type],
@@ -171,7 +179,7 @@ export function CampaignsPage() {
             <h1 className="text-2xl font-extrabold leading-tight sm:text-[26px]">الحملات</h1>
             {data && <p className="muted mt-1 text-sm">{data.length} حملة · {data.filter((c) => c.status === "active").length} نشطة</p>}
           </div>
-          <label className="flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2" title="حجم بطاقات الحملات">
+          <label className="hidden items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 sm:flex" title="حجم بطاقات الحملات">
             <Icon name="grid" size={15} className="muted" />
             <input
               type="range"
@@ -211,7 +219,7 @@ export function CampaignsPage() {
       ) : !data!.length ? (
         <Empty title="لا توجد حملات">أنشئ أول حملة، ثم جرّبها في المعاينة قبل التفعيل.</Empty>
       ) : (
-        <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${size}px), 1fr))` }}>
+        <div className="grid gap-3 sm:gap-4" style={{ gridTemplateColumns: phone ? "repeat(2, minmax(0, 1fr))" : `repeat(auto-fill, minmax(min(100%, ${size}px), 1fr))` }}>
           {data!.map((c) => {
             const rate = c.people_count ? Math.round((c.delivered_count / c.people_count) * 100) : null;
             return (
@@ -223,27 +231,27 @@ export function CampaignsPage() {
                 onKeyDown={(e) => e.key === "Enter" && navigate(`/campaigns/${c.id}`)}
                 className="card group flex cursor-pointer flex-col overflow-hidden transition hover:-translate-y-0.5 hover:shadow-xl"
               >
-                <div className="relative w-full overflow-hidden" style={{ background: TYPE_GRAD[c.type], height: Math.round(size * 0.45) }}>
+                <div className="relative w-full overflow-hidden" style={{ background: TYPE_GRAD[c.type], height: phone ? 92 : Math.round(size * 0.45) }}>
                   {c.cover_url && <img src={c.cover_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={`h-full w-full object-cover transition group-hover:scale-105 ${c.status !== "active" ? "opacity-60 grayscale-[40%]" : ""}`} />}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent" />
-                  <div className="absolute right-3 top-3">
+                  <div className={`absolute ${phone ? "right-2 top-2 origin-top-right scale-90" : "right-3 top-3"}`}>
                     <span className="rounded-full bg-white/95 px-0.5 py-0.5 dark:bg-black/60"><Badge value={c.status} label={{ active: "نشطة", paused: "متوقفة", draft: "مسودة", archived: "مؤرشفة" }[c.status as string]} /></span>
                   </div>
-                  <span className="absolute left-3 top-3 flex h-9 w-9 items-center justify-center rounded-xl bg-white/20 text-white backdrop-blur"><Icon name={TYPE_ICON[c.type]} size={18} /></span>
+                  <span className={`absolute flex items-center justify-center rounded-xl bg-white/20 text-white backdrop-blur ${phone ? "left-2 top-2 h-7 w-7" : "left-3 top-3 h-9 w-9"}`}><Icon name={TYPE_ICON[c.type]} size={phone ? 15 : 18} /></span>
                   <div className="absolute bottom-3 right-3 flex flex-wrap gap-1.5">
                     {c.follow_invite && !compact ? <span className="chip bg-black/40 text-white"><Icon name="userplus" size={12} />دعوة للمتابعة</span> : null}
                     {c.media_count > 1 && !compact && <span className="chip bg-black/40 text-white">{c.media_count} منشورات</span>}
                   </div>
                 </div>
-                <div className={`flex flex-1 flex-col ${compact ? "p-3" : "p-4"}`}>
-                  <b className="font-display truncate text-[15px] font-extrabold">{c.name}</b>
-                  <span className="muted text-xs">{AR_LABELS[c.type] ?? c.type}</span>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                    <div><b className="font-display block text-base">{c.people_count}</b><span className="muted">شخص</span></div>
-                    <div><b className="font-display block text-base">{c.delivered_count}</b><span className="muted">سُلِّم</span></div>
-                    <div><b className="font-display block text-base">{rate == null ? "—" : `${rate}%`}</b><span className="muted">نسبة التسليم</span></div>
+                <div className={`flex flex-1 flex-col ${phone ? "p-2.5" : compact ? "p-3" : "p-4"}`}>
+                  <b className={`font-display truncate font-extrabold ${phone ? "text-[13px]" : "text-[15px]"}`}>{c.name}</b>
+                  <span className="muted text-[11px] sm:text-xs">{AR_LABELS[c.type] ?? c.type}</span>
+                  <div className={`grid grid-cols-3 ${phone ? "mt-2 gap-1 text-[10px]" : "mt-3 gap-2 text-xs"}`}>
+                    <div><b className={`font-display block ${phone ? "text-sm" : "text-base"}`}>{c.people_count}</b><span className="muted">شخص</span></div>
+                    <div><b className={`font-display block ${phone ? "text-sm" : "text-base"}`}>{c.delivered_count}</b><span className="muted">سُلِّم</span></div>
+                    <div><b className={`font-display block ${phone ? "text-sm" : "text-base"}`}>{rate == null ? "—" : `${rate}%`}</b><span className="muted">{phone ? "التسليم" : "نسبة التسليم"}</span></div>
                   </div>
-                  <div className="mt-3 flex gap-2">
+                  <div className={`flex gap-1.5 ${phone ? "mt-2" : "mt-3 gap-2"}`}>
                     <button className="btn btn-ghost min-h-9 flex-1 text-xs" onClick={(e) => { e.stopPropagation(); navigate(`/campaigns/${c.id}/stats`); }}>
                       <Icon name="eye" size={16} />{!compact && "الإحصائيات"}
                     </button>
@@ -253,7 +261,7 @@ export function CampaignsPage() {
               </div>
             );
           })}
-          <Link to="/campaigns/new" className="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--border)] text-center transition hover:border-violet-400">
+          <Link to="/campaigns/new" className="flex min-h-[180px] flex-col items-center sm:min-h-[220px] justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--border)] text-center transition hover:border-violet-400">
             <span className="grad flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/30"><Icon name="plus" size={26} /></span>
             <b className="font-display mt-2 text-base">حملة جديدة</b>
             <span className="muted text-xs">ابدأ واختبرها في المحاكاة قبل التفعيل</span>
