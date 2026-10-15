@@ -42,7 +42,7 @@ export function DateTimeField({
   onChange,
   dateOnly = false,
   label,
-  emptyLabel = "حدد تاريخًا",
+  emptyLabel = "اختر التاريخ والوقت",
   clearable = true,
 }: {
   value: string;
@@ -92,113 +92,52 @@ export function DateTimeField({
     );
   }
   const year = new Date().getFullYear();
-  const years = Array.from(
-    new Set([p.y, year - 1, year, year + 1, year + 2]),
-  ).sort();
+  const years = Array.from(new Set([p.y, year - 1, year, year + 1, year + 2])).sort();
   const h12 = p.h % 12 === 0 ? 12 : p.h % 12;
   const pm = p.h >= 12;
-  const sel = "input !w-auto min-w-0 px-2 text-center";
+  // Fixed rows so nothing wraps unpredictably in narrow columns: date on one row, time on the next.
+  const sel = "input !w-full min-w-0 !px-2 text-center";
+  const minutes = Array.from(new Set([...Array.from({ length: 12 }, (_, i) => i * 5), p.mi])).sort((a, b) => a - b);
   return (
-    <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-2"
-      role="group"
-      aria-label={label}
-    >
-      <div className="flex items-center gap-1.5">
-        <select
-          className={sel}
-          aria-label="اليوم"
-          value={p.d}
-          onChange={(e) => emit({ ...p, d: +e.target.value })}
-        >
-          {Array.from({ length: daysIn(p.y, p.mo) }, (_, i) => i + 1).map(
-            (d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ),
-          )}
-        </select>
-        <select
-          className={sel}
-          aria-label="الشهر"
-          value={p.mo}
-          onChange={(e) => emit({ ...p, mo: +e.target.value })}
-        >
-          {MONTHS.map((m, i) => (
-            <option key={m} value={i + 1}>
-              {m}
-            </option>
-          ))}
-        </select>
-        <select
-          className={sel}
-          aria-label="السنة"
-          value={p.y}
-          onChange={(e) => emit({ ...p, y: +e.target.value })}
-        >
-          {years.map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          ))}
-        </select>
+    <div className="surface-2 space-y-2 rounded-xl border border-[var(--border)] p-2.5" role="group" aria-label={label}>
+      <div className="grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-2">
+        <span className="muted text-xs font-semibold">التاريخ</span>
+        <div className="grid grid-cols-[minmax(0,4.2rem)_minmax(0,1fr)_minmax(0,5.2rem)] gap-1.5">
+          <select className={sel} aria-label="اليوم" value={p.d} onChange={(e) => emit({ ...p, d: +e.target.value })}>
+            {Array.from({ length: daysIn(p.y, p.mo) }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <select className={sel} aria-label="الشهر" value={p.mo} onChange={(e) => emit({ ...p, mo: +e.target.value })}>
+            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+          </select>
+          <select className={sel} aria-label="السنة" value={p.y} onChange={(e) => emit({ ...p, y: +e.target.value })}>
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
       </div>
       {!dateOnly && (
-        <div className="flex items-center gap-1.5">
-          <span className="muted px-0.5 text-sm">الساعة</span>
-          <select
-            className={sel}
-            aria-label="الساعة"
-            value={h12}
-            onChange={(e) =>
-              emit({ ...p, h: (+e.target.value % 12) + (pm ? 12 : 0) })
-            }
-          >
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => (
-              <option key={h} value={h}>
-                {h}
-              </option>
-            ))}
-          </select>
-          <span aria-hidden>:</span>
-          <select
-            className={sel}
-            aria-label="الدقيقة"
-            value={p.mi}
-            onChange={(e) => emit({ ...p, mi: +e.target.value })}
-          >
-            {Array.from(
-              new Set([...Array.from({ length: 12 }, (_, i) => i * 5), p.mi]),
-            )
-              .sort((a, b) => a - b)
-              .map((m) => (
-                <option key={m} value={m}>
-                  {pad(m)}
-                </option>
-              ))}
-          </select>
-          <select
-            className={sel}
-            aria-label="صباحًا أو مساءً"
-            value={pm ? "pm" : "am"}
-            onChange={(e) =>
-              emit({ ...p, h: (p.h % 12) + (e.target.value === "pm" ? 12 : 0) })
-            }
-          >
-            <option value="am">ص</option>
-            <option value="pm">م</option>
-          </select>
+        <div className="grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-2">
+          <span className="muted text-xs font-semibold">الوقت</span>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,4.2rem)] items-center gap-1.5">
+            <select className={sel} aria-label="الساعة" value={h12} onChange={(e) => emit({ ...p, h: (+e.target.value % 12) + (pm ? 12 : 0) })}>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+            <span aria-hidden className="font-bold">:</span>
+            <select className={sel} aria-label="الدقيقة" value={p.mi} onChange={(e) => emit({ ...p, mi: +e.target.value })}>
+              {minutes.map((m) => <option key={m} value={m}>{pad(m)}</option>)}
+            </select>
+            <select className={sel} aria-label="صباحًا أو مساءً" value={pm ? "pm" : "am"} onChange={(e) => emit({ ...p, h: (p.h % 12) + (e.target.value === "pm" ? 12 : 0) })}>
+              <option value="am">ص</option>
+              <option value="pm">م</option>
+            </select>
+          </div>
         </div>
       )}
       {clearable && (
-        <button
-          type="button"
-          className="btn btn-ghost min-h-10 px-3 text-xs"
-          onClick={() => onChange("")}
-        >
-          مسح
-        </button>
+        <div className="flex justify-end">
+          <button type="button" className="inline-flex min-h-8 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-red-600 hover:bg-red-500/10 dark:text-red-400" onClick={() => onChange("")}>
+            ✕ مسح التاريخ
+          </button>
+        </div>
       )}
     </div>
   );

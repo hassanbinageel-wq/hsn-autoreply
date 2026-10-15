@@ -192,11 +192,11 @@ function SettingsFields({ form, set }: { form: DrawForm; set: (p: Partial<DrawFo
         <Field label="عدد الفائزين">
           <input className="input" type="number" min={1} max={500} value={form.winners_count} onChange={(e) => set({ winners_count: Math.max(1, Number(e.target.value) || 1) })} />
         </Field>
-        <Field label="بداية فترة المشاركات (اختياري)" hint={dateHint(form.starts_at, deviceTz, "فاضية = من أول تعليق")}>
-          <DateTimeField label="بداية فترة المشاركات" emptyLabel="بدون — من أول تعليق" value={toLocalInput(form.starts_at)} onChange={(v) => set({ starts_at: fromLocalInput(v) })} />
+        <Field label="بداية فترة المشاركات (اختياري)" hint={form.starts_at ? dateHint(form.starts_at, deviceTz) : undefined}>
+          <DateTimeField label="بداية فترة المشاركات" value={toLocalInput(form.starts_at)} onChange={(v) => set({ starts_at: fromLocalInput(v) })} />
         </Field>
-        <Field label="نهاية فترة المشاركات (اختياري)" hint={dateHint(form.ends_at, deviceTz, "فاضية = لين لحظة جلب المشاركات")}>
-          <DateTimeField label="نهاية فترة المشاركات" emptyLabel="بدون — لين لحظة الجلب" value={toLocalInput(form.ends_at)} onChange={(v) => set({ ends_at: fromLocalInput(v) })} />
+        <Field label="نهاية فترة المشاركات (اختياري)" hint={form.ends_at ? dateHint(form.ends_at, deviceTz) : undefined}>
+          <DateTimeField label="نهاية فترة المشاركات" value={toLocalInput(form.ends_at)} onChange={(v) => set({ ends_at: fromLocalInput(v) })} />
         </Field>
         <Field label="كلمة أو عبارة يجب وجودها (اختياري)" hint="المقارنة تتجاهل التشكيل والفرق بين أ/إ/ا و ة/ه و ى/ي.">
           <input className="input" value={form.keyword} maxLength={100} onChange={(e) => set({ keyword: e.target.value })} placeholder="مثال: مسابقة" />
@@ -259,8 +259,8 @@ function SettingsFields({ form, set }: { form: DrawForm; set: (p: Partial<DrawFo
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The picked moment in plain Arabic under the date field (the native picker's format depends on the browser). */
-function dateHint(ms: number | null | undefined, tz: string, empty = ""): string {
-  if (!ms) return `${empty ? `${empty} · ` : ""}بتوقيت جهازك (${tz})`;
+function dateHint(ms: number | null | undefined, tz: string): string {
+  if (!ms) return `بتوقيت جهازك (${tz})`;
   const f = new Intl.DateTimeFormat("ar-SA-u-ca-gregory-nu-latn", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
   return `${f.format(new Date(ms))} — بتوقيت جهازك (${tz})`;
 }
