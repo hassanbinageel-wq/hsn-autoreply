@@ -191,10 +191,10 @@ function SettingsFields({ form, set }: { form: DrawForm; set: (p: Partial<DrawFo
         <Field label="عدد الفائزين">
           <input className="input" type="number" min={1} max={500} value={form.winners_count} onChange={(e) => set({ winners_count: Math.max(1, Number(e.target.value) || 1) })} />
         </Field>
-        <Field label="بداية فترة المشاركات (اختياري)" hint={dateHint(form.starts_at, deviceTz)}>
+        <Field label="بداية فترة المشاركات (اختياري)" hint={dateHint(form.starts_at, deviceTz, "فاضية = من أول تعليق")}>
           <input className="input" type="datetime-local" value={toLocalInput(form.starts_at)} onChange={(e) => set({ starts_at: fromLocalInput(e.target.value) })} />
         </Field>
-        <Field label="نهاية فترة المشاركات (اختياري)" hint={dateHint(form.ends_at, deviceTz)}>
+        <Field label="نهاية فترة المشاركات (اختياري)" hint={dateHint(form.ends_at, deviceTz, "فاضية = لين لحظة جلب المشاركات")}>
           <input className="input" type="datetime-local" value={toLocalInput(form.ends_at)} onChange={(e) => set({ ends_at: fromLocalInput(e.target.value) })} />
         </Field>
         <Field label="كلمة أو عبارة يجب وجودها (اختياري)" hint="المقارنة تتجاهل التشكيل والفرق بين أ/إ/ا و ة/ه و ى/ي.">
@@ -258,8 +258,8 @@ function SettingsFields({ form, set }: { form: DrawForm; set: (p: Partial<DrawFo
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The picked moment in plain Arabic under the date field (the native picker's format depends on the browser). */
-function dateHint(ms: number | null | undefined, tz: string): string {
-  if (!ms) return `بتوقيت جهازك (${tz})`;
+function dateHint(ms: number | null | undefined, tz: string, empty = ""): string {
+  if (!ms) return `${empty ? `${empty} · ` : ""}بتوقيت جهازك (${tz})`;
   const f = new Intl.DateTimeFormat("ar-SA-u-ca-gregory-nu-latn", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
   return `${f.format(new Date(ms))} — بتوقيت جهازك (${tz})`;
 }

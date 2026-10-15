@@ -635,13 +635,28 @@ export function CampaignWizard({ id }: { id: number | null }) {
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label={`بداية التشغيل (${form.timezone})`}>
-                <input className="input" type="datetime-local" value={utcToLocalInput(form.schedule_start, form.timezone)} onChange={(e) => set("schedule_start", localInputToUtc(e.target.value, form.timezone))} />
+              <Field label={`بداية التشغيل — اختياري (${form.timezone})`} hint={form.schedule_start ? `تبدأ ${fmtTime(form.schedule_start, form.timezone)}` : "فاضية = تبدأ من لحظة التفعيل"}>
+                <div className="flex gap-2">
+                  <input className="input min-w-0 flex-1" type="datetime-local" value={utcToLocalInput(form.schedule_start, form.timezone)} onChange={(e) => set("schedule_start", localInputToUtc(e.target.value, form.timezone))} />
+                  {form.schedule_start && <button type="button" className="btn btn-ghost shrink-0 px-3 text-xs" onClick={() => set("schedule_start", null)}>مسح</button>}
+                </div>
               </Field>
-              <Field label={`نهاية التشغيل (${form.timezone})`}>
-                <input className="input" type="datetime-local" value={utcToLocalInput(form.schedule_end, form.timezone)} onChange={(e) => set("schedule_end", localInputToUtc(e.target.value, form.timezone))} />
+              <Field label={`نهاية التشغيل — اختياري (${form.timezone})`} hint={form.schedule_end ? `تتوقف ${fmtTime(form.schedule_end, form.timezone)}` : "فاضية = تستمر لين توقفها أنت"}>
+                <div className="flex gap-2">
+                  <input className="input min-w-0 flex-1" type="datetime-local" value={utcToLocalInput(form.schedule_end, form.timezone)} onChange={(e) => set("schedule_end", localInputToUtc(e.target.value, form.timezone))} />
+                  {form.schedule_end && <button type="button" className="btn btn-ghost shrink-0 px-3 text-xs" onClick={() => set("schedule_end", null)}>مسح</button>}
+                </div>
               </Field>
             </div>
+            <p className="surface-2 rounded-xl px-3 py-2.5 text-sm text-[var(--text-2)]">
+              {!form.schedule_start && !form.schedule_end
+                ? "ما حددت تاريخ: الحملة تشتغل طول ما هي «نشطة»، من لحظة تفعيلها لين توقفها بنفسك."
+                : form.schedule_start && form.schedule_end
+                  ? `الحملة ترد على التعليقات من ${fmtTime(form.schedule_start, form.timezone)} إلى ${fmtTime(form.schedule_end, form.timezone)} فقط. خارج هالفترة ما ترد على أحد.`
+                  : form.schedule_start
+                    ? `الحملة ترد على التعليقات من ${fmtTime(form.schedule_start, form.timezone)}، وتستمر لين توقفها أنت.`
+                    : `الحملة ترد من لحظة تفعيلها لين ${fmtTime(form.schedule_end!, form.timezone)}، وبعدها ما ترد على أحد.`}
+            </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Field label="الأولوية" hint="عند تطابق عدة حملات تُنفَّذ الأعلى فقط.">
                 <input className="input" type="number" min={0} max={1000} value={form.priority} onChange={(e) => set("priority", Number(e.target.value))} />

@@ -20,7 +20,16 @@ if (APP_TARGET === "web" && "serviceWorker" in navigator && import.meta.env.PROD
   import("virtual:pwa-register").then(({ registerSW }) => {
     const update = registerSW({
       onNeedRefresh() {
-        askConfirm({ title: "يتوفر إصدار أحدث", message: "فيه تحديث جديد للواجهة. التحديث يعيد تحميل الصفحة.", confirmLabel: "حدّث الآن", cancelLabel: "لاحقًا" }).then((ok) => { if (ok) void update(true); });
+        askConfirm({ title: "يتوفر إصدار أحدث", message: "فيه تحديث جديد للواجهة. التحديث يعيد تحميل الصفحة.", confirmLabel: "حدّث الآن", cancelLabel: "لاحقًا" }).then((ok) => {
+          if (ok) return void update(true);
+          // "Later": switch to the new version the next time the page is in the background, so nobody stays on an old one.
+          const onHide = () => {
+            if (document.visibilityState !== "hidden") return;
+            document.removeEventListener("visibilitychange", onHide);
+            void update(true);
+          };
+          document.addEventListener("visibilitychange", onHide);
+        });
       },
     });
   });
