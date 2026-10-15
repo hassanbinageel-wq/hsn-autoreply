@@ -635,7 +635,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
       case 10:
         return (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3">
               <Field label={`بداية التشغيل — اختياري (${form.timezone})`} hint={form.schedule_start ? `تبدأ ${fmtTime(form.schedule_start, form.timezone)}` : undefined}>
                 <DateTimeField label="بداية التشغيل" emptyLabel="بدون — تبدأ من التفعيل" value={utcToLocalInput(form.schedule_start, form.timezone)} onChange={(v) => set("schedule_start", localInputToUtc(v, form.timezone))} />
               </Field>

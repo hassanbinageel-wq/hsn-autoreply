@@ -99,10 +99,10 @@ export function DateTimeField({
   const sel = "input !w-full min-w-0 !px-2 text-center";
   const minutes = Array.from(new Set([...Array.from({ length: 12 }, (_, i) => i * 5), p.mi])).sort((a, b) => a - b);
   return (
-    <div className="surface-2 space-y-2 rounded-xl border border-[var(--border)] p-2.5" role="group" aria-label={label}>
-      <div className="grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-2">
+    <div className="@container surface-2 space-y-2 rounded-xl border border-[var(--border)] p-2.5" role="group" aria-label={label}>
+      <div className="grid gap-1 @[19rem]:grid-cols-[3rem_minmax(0,1fr)] @[19rem]:items-center @[19rem]:gap-2">
         <span className="muted text-xs font-semibold">التاريخ</span>
-        <div className="grid grid-cols-[minmax(0,4.2rem)_minmax(0,1fr)_minmax(0,5.2rem)] gap-1.5">
+        <div className="grid grid-cols-[minmax(3.4rem,0.8fr)_minmax(5rem,1.6fr)_minmax(4.4rem,1fr)] gap-1.5">
           <select className={sel} aria-label="اليوم" value={p.d} onChange={(e) => emit({ ...p, d: +e.target.value })}>
             {Array.from({ length: daysIn(p.y, p.mo) }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
@@ -115,9 +115,9 @@ export function DateTimeField({
         </div>
       </div>
       {!dateOnly && (
-        <div className="grid grid-cols-[3rem_minmax(0,1fr)] items-center gap-2">
+        <div className="grid gap-1 @[19rem]:grid-cols-[3rem_minmax(0,1fr)] @[19rem]:items-center @[19rem]:gap-2">
           <span className="muted text-xs font-semibold">الوقت</span>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,4.2rem)] items-center gap-1.5">
+          <div className="grid grid-cols-[minmax(3.4rem,1fr)_auto_minmax(3.4rem,1fr)_minmax(3.4rem,1fr)] items-center gap-1.5">
             <select className={sel} aria-label="الساعة" value={h12} onChange={(e) => emit({ ...p, h: (+e.target.value % 12) + (pm ? 12 : 0) })}>
               {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => <option key={h} value={h}>{h}</option>)}
             </select>
