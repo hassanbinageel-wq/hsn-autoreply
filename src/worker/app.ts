@@ -1217,7 +1217,8 @@ export function createApp() {
     if (!(await rateLimit(c.env.DB, `audit:${T(c)}`, 20, 3_600_000))) return apiError(c, 429, "rate_limited", "انتظر قليلًا قبل فحص التعليقات مرة أخرى");
     let used = 0;
     const ctx = engineContext(c.env, () => used++);
-    const r = await auditCampaignComments(ctx, T(c), id, { importMissing });
+    const mediaId = typeof (body as any)?.media_id === "string" && (body as any).media_id.length <= 64 ? (body as any).media_id : undefined;
+    const r = await auditCampaignComments(ctx, T(c), id, { importMissing, mediaId });
     if (!r) return apiError(c, 404, "not_found", "الحملة غير موجودة");
     if (r.imported > 0) {
       await audit(c.env.DB, T(c), c.get("session").username, "comments.recovered", String(id), { imported: r.imported, via: "campaign_audit" });

@@ -202,14 +202,16 @@ const AUDIT: Array<[string, string, string]> = [
 ];
 
 /** Every comment Instagram has on the campaign's posts, compared with what we recorded and answered. */
-function CommentAudit({ id, mediaById }: { id: number; mediaById: Map<string, any> }) {
+function CommentAudit({ id, mediaById, mediaIds }: { id: number; mediaById: Map<string, any>; mediaIds: string[] }) {
   const [r, setR] = useState<any>(null);
   const [busy, setBusy] = useState<"" | "check" | "import">("");
   const [tab, setTab] = useState("all");
+  const [post, setPost] = useState("");
+  const [q, setQ] = useState("");
   const run = async (importMissing: boolean) => {
     setBusy(importMissing ? "import" : "check");
     try {
-      const res = await api<any>(`/api/campaigns/${id}/audit`, { method: "POST", body: { import: importMissing } });
+      const res = await api<any>(`/api/campaigns/${id}/audit`, { method: "POST", body: { import: importMissing, ...(post ? { media_id: post } : {}) } });
       setR(res);
       if (importMissing) toast(res.imported ? `تمت إضافة ${res.imported} تعليق للمعالجة — بيوصلهم الرد خلال دقائق` : "ما فيه تعليقات جديدة للإضافة");
     } catch (e: any) {
@@ -218,14 +220,17 @@ function CommentAudit({ id, mediaById }: { id: number; mediaById: Map<string, an
       setBusy("");
     }
   };
-  const list = (r?.items ?? []).filter((i: any) => tab === "all" || i.status === tab);
-  const why = (x: string | null) => (x ? REASONS[x.split(" ")[0]] ?? AR_LABELS[x] ?? x : "");
+  const needle = q.trim().toLowerCase().replace(/^@/, "");
+  const list = (r?.items ?? []).filter((i: any) => (tab === "all" || i.status === tab) && (!needle || (i.username ?? "").toLowerCase().includes(needle) || (i.text ?? "").toLowerCase().includes(needle)));
+  const why = (x: string | null) => (x === "already_replied" ? "سبق الرد على نفس الشخص" : x ? REASONS[x.split(" ")[0]] ?? AR_LABELS[x] ?? x : "");
+  const postName = (m: string) => mediaById.get(m)?.caption?.slice(0, 40) || `منشور ${m.slice(-6)}`;
   const ERR: Record<string, string> = {
     no_account: "اربط حساب إنستقرام أولًا.",
     no_token: "التفويض غير متاح — أعد ربط الحساب.",
     no_media: "ما فيه منشورات مرتبطة بهذه الحملة بعد.",
     auth: "انتهى تفويض الحساب — أعد الربط.",
     rate_limited: "بلغت حد طلبات Meta مؤقتًا — النتيجة جزئية، جرّب بعد شوي.",
+    media_not_in_campaign: "هذا المنشور مو ضمن منشورات الحملة.",
   };
   return (
     <Card
@@ -239,7 +244,16 @@ function CommentAudit({ id, mediaById }: { id: number; mediaById: Map<string, an
       <p className="muted text-sm">
         يقرأ كل التعليقات الموجودة فعلًا على منشورات الحملة من إنستقرام (الواجهة الرسمية) ويقارنها بسجلّك: مين انرد عليه، ومين وصلنا وما انرد (مثل ما طابق الكلمات أو مكرر)، ومين ما وصلنا أصلًا.
       </p>
-      <p className="muted mt-1 text-xs">💡 السحوبات تجلب المشاركين مباشرة من إنستقرام وقت السحب، فكل المعلّقين يدخلون السحب حتى لو ما وصلتنا تعليقاتهم.</p>
+      <p className="muted mt-1 text-xs">💡 السحوبات تجلب المشاركين مباشرة من إنستقرام وقت السحب، فكل المعلّقين يدخلون السحب حتى لو ما وصلتنا تعليقاتهم. ردودك أنت تحت التعليقات ما تنحسب، واللي سبق ورديت عليه وعلّق مرة ثانية ينحسب «تم الرد».</p>
+      {mediaIds.length > 1 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          <span className="muted">افحص:</span>
+          <select className="input max-w-xs" value={post} onChange={(e) => setPost(e.target.value)}>
+            <option value="">كل منشورات الحملة</option>
+            {mediaIds.map((m) => <option key={m} value={m}>{postName(m)}</option>)}
+          </select>
+        </div>
+      )}
       {r && (
         <div className="mt-4 space-y-3">
           {r.error && ERR[r.error] && <Alert tone="warn">{ERR[r.error]}</Alert>}
@@ -247,6 +261,17 @@ function CommentAudit({ id, mediaById }: { id: number; mediaById: Map<string, an
           <div className="muted text-xs">
             فُحص {r.checked.toLocaleString("en-US")} تعليق على {r.media} منشور{r.truncated ? " · بعض المنشورات فيها تعليقات أكثر من حد الفحص الواحد، أعد الفحص لاحقًا" : ""}
           </div>
+          {r.posts?.length > 0 && (
+            <ul className="surface-2 space-y-0.5 rounded-xl px-3 py-2 text-xs">
+              {r.posts.map((p: any) => (
+                <li key={p.media_id} className="flex justify-between gap-2">
+                  <span className="truncate">{postName(p.media_id)}</span>
+                  <span className={`shrink-0 tabular-nums ${p.complete ? "muted" : "text-amber-600 dark:text-amber-400"}`}>{p.read} تعليق{p.complete ? " · كامل" : " · جزئي — افحصه لحاله"}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <input className="input max-w-xs" placeholder="ابحث باسم الحساب أو نص التعليق… (مثل @24mb3)" value={q} onChange={(e) => setQ(e.target.value)} />
           <div className="flex flex-wrap gap-1.5">
             {AUDIT.map(([k, label]) => (
               <button key={k} onClick={() => setTab(k)} className={`rounded-full px-3 py-1 text-xs font-semibold ${tab === k ? "bg-brand-600 text-white" : "surface-2"}`}>
@@ -424,7 +449,7 @@ export function CampaignStatsPage({ id }: { id: number }) {
             </div>
           )}
 
-          {isComment && <CommentAudit id={id} mediaById={mediaById} />}
+          {isComment && <CommentAudit id={id} mediaById={mediaById} mediaIds={data.media.map((m: any) => m.media_id).filter(Boolean)} />}
 
           <div ref={peopleRef} className="scroll-mt-4">
             <PeopleList id={id} days={days} isComment={isComment} gated={gated} mediaById={mediaById} filter={filter} setFilter={setFilter} />

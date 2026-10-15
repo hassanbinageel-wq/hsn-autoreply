@@ -48,6 +48,31 @@ describe("campaign comment check", () => {
     expect(r3.counts.missing).toBe(0);
   });
 
+  it("leaves out your own replies and counts people already answered as answered; one post can be checked alone", async () => {
+    const id = await seedCampaign({ scope: "selected", media_ids: ["media_A", "media_B"] });
+    const meta = new MockMeta();
+    await deliver(commentPayload({ text: "كورس", commentId: "c1", mediaId: "media_A", from: "u1", username: "one" }), meta);
+    await deliver(commentPayload({ text: "كورس مرة ثانية", commentId: "c2", mediaId: "media_A", from: "u1", username: "one" }), meta);
+    // your reply typed in the Instagram app: the webhook named your account, the comments list shows another id
+    await deliver(commentPayload({ text: "تم ارسلنا لك", commentId: "mine", mediaId: "media_A", from: "other_form_of_my_id", username: "hsn_shop" }), meta);
+    await drain(meta);
+    const now = Date.now();
+    meta.commentPages["media_A"] = [[
+      { id: "c1", text: "كورس", timestamp: iso(now - 50_000), from: { id: "u1", username: "one" } },
+      { id: "c2", text: "كورس مرة ثانية", timestamp: iso(now - 40_000), from: { id: "u1", username: "one" } },
+      { id: "mine", text: "تم ارسلنا لك", timestamp: iso(now - 30_000), from: { id: "other_form_of_my_id" } },
+    ]];
+    meta.commentPages["media_B"] = [[{ id: "b1", text: "كورس", timestamp: iso(now - 10_000), from: { id: "u9", username: "nine" } }]];
+    const r = (await auditCampaignComments(makeCtx(meta), 1, id))!;
+    expect(r.checked).toBe(3);
+    expect(r.counts).toMatchObject({ replied: 2, not_replied: 0, missing: 1 });
+    expect(r.items.find((i) => i.comment_id === "c2")!.reason).toBe("already_replied");
+    expect(r.posts.map((p) => [p.media_id, p.read, p.complete])).toEqual([["media_A", 3, true], ["media_B", 1, true]]);
+    const one = (await auditCampaignComments(makeCtx(meta), 1, id, { mediaId: "media_B" }))!;
+    expect(one.items.map((i) => i.comment_id)).toEqual(["b1"]);
+    expect((await auditCampaignComments(makeCtx(meta), 1, id, { mediaId: "someone_elses" }))!.error).toBe("media_not_in_campaign");
+  });
+
   it("is scoped to the customer: another tenant cannot check this campaign", async () => {
     const id = await seedCampaign({ scope: "selected", media_ids: ["media_A"] });
     const now = Date.now();

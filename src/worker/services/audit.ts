@@ -27,8 +27,10 @@ export interface AuditItem {
 export interface AuditResult {
   media: number;
   checked: number;
-  /** True when a post has more comments than one audit reads (run it again later / per post). */
+  /** True when a post has more comments than one audit reads (check that post on its own). */
   truncated: boolean;
+  /** Per post: how many comments were read and whether the post was read to the end. */
+  posts: Array<{ media_id: string; read: number; complete: boolean }>;
   counts: Record<AuditStatus, number>;
   items: AuditItem[];
   imported: number;
@@ -46,10 +48,10 @@ export async function auditCampaignComments(
   ctx: EngineContext,
   tenantId: number,
   campaignId: number,
-  opts: { importMissing?: boolean } = {},
+  opts: { importMissing?: boolean; mediaId?: string } = {},
 ): Promise<AuditResult | null> {
   const counts: Record<AuditStatus, number> = { replied: 0, in_progress: 0, not_replied: 0, missing: 0, missing_old: 0 };
-  const empty = (error?: string): AuditResult => ({ media: 0, checked: 0, truncated: false, counts, items: [], imported: 0, error });
+  const empty = (error?: string): AuditResult => ({ media: 0, checked: 0, truncated: false, posts: [], counts, items: [], imported: 0, error });
   const campaign = await first<{ id: number; type: string; scope: string; auto_new_media: number }>(
     ctx.db,
     "SELECT id, type, scope, auto_new_media FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL",
@@ -61,30 +63,47 @@ export async function auditCampaignComments(
   const account = await first<AccountRow>(ctx.db, "SELECT * FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1", tenantId);
   if (!account) return empty("no_account");
 
-  // The posts: the ones the campaign selected, plus the posts its matched comments came from (campaigns on "all posts").
+  // The posts: the ones the campaign selected, the posts its matched comments came from and, for "all posts" /
+  // auto-new campaigns, every post with comment activity or published in the last 30 days. Or one chosen post.
   const ids: string[] = [];
   const add = (m: string | null | undefined) => m && !ids.includes(m) && ids.push(m);
-  for (const r of await all<{ media_id: string }>(
+  const since = ctx.now() - 30 * 86_400_000;
+  const selected = await all<{ media_id: string }>(
     ctx.db,
     `SELECT cm.media_id FROM campaign_media cm JOIN campaigns c ON c.id = cm.campaign_id
       LEFT JOIN media_cache m ON m.media_id = cm.media_id AND m.account_id = ?
-      WHERE c.id = ? AND c.tenant_id = ? ORDER BY COALESCE(m.posted_at, 0) DESC LIMIT 20`,
+      WHERE c.id = ? AND c.tenant_id = ? ORDER BY COALESCE(m.posted_at, 0) DESC LIMIT 30`,
     account.id,
     campaignId,
     tenantId,
-  ))
-    add(r.media_id);
-  for (const r of await all<{ media_id: string }>(
+  );
+  const matched = await all<{ media_id: string }>(
     ctx.db,
     `SELECT media_id FROM webhook_events
       WHERE account_ig_id IN (SELECT ig_user_id FROM instagram_accounts WHERE tenant_id = ?)
         AND campaign_id = ? AND event_type = 'comment' AND is_demo = 0 AND media_id IS NOT NULL
-      GROUP BY media_id ORDER BY MAX(received_at) DESC LIMIT 20`,
+      GROUP BY media_id ORDER BY MAX(received_at) DESC LIMIT 30`,
     tenantId,
     campaignId,
-  ))
-    add(r.media_id);
-  const media = ids.slice(0, MAX_MEDIA);
+  );
+  const broad =
+    campaign.scope === "all" || campaign.auto_new_media
+      ? await all<{ media_id: string }>(
+          ctx.db,
+          `SELECT media_id FROM (
+             SELECT media_id, MAX(received_at) AS t FROM webhook_events WHERE account_ig_id = ? AND event_type = 'comment' AND is_demo = 0 AND received_at > ? AND media_id IS NOT NULL GROUP BY media_id
+             UNION ALL
+             SELECT media_id, posted_at AS t FROM media_cache WHERE account_id = ? AND kind = 'media' AND posted_at > ?
+           ) GROUP BY media_id ORDER BY MAX(t) DESC LIMIT 30`,
+          account.ig_user_id,
+          since,
+          account.id,
+          since,
+        )
+      : [];
+  for (const r of [...selected, ...matched, ...broad]) add(r.media_id);
+  if (opts.mediaId && !ids.includes(opts.mediaId)) return empty("media_not_in_campaign");
+  const media = opts.mediaId ? [opts.mediaId] : ids.slice(0, MAX_MEDIA);
   if (!media.length) return empty("no_media");
 
   const client = ctx.meta(false);
@@ -93,15 +112,21 @@ export async function auditCampaignComments(
 
   // 1) Read the comments (top level, with the first page of replies expanded).
   const found: Array<CommentItem & { media_id: string; is_reply: boolean }> = [];
+  const posts: AuditResult["posts"] = [];
   let calls = 0;
   let truncated = false;
   let error: string | undefined;
-  outer: for (const mediaId of media) {
+  outer: for (let i = 0; i < media.length; i++) {
+    const mediaId = media[i];
+    // Each post gets a fair share of what is left, so a busy post cannot starve the others.
+    const share = Math.max(1, Math.floor((MAX_CALLS - calls) / (media.length - i)));
+    const post = { media_id: mediaId, read: 0, complete: false };
+    posts.push(post);
     let after: string | undefined;
-    for (;;) {
-      if (calls >= MAX_CALLS) {
+    for (let n = 0; ; n++) {
+      if (n >= share || calls >= MAX_CALLS) {
         truncated = true;
-        break outer;
+        break;
       }
       calls++;
       const r = await client.listCommentsPage(token, mediaId, after);
@@ -120,11 +145,18 @@ export async function auditCampaignComments(
       }
       for (const c of r.data.data ?? []) {
         found.push({ ...c, media_id: mediaId, is_reply: false });
-        for (const rep of c.replies?.data ?? []) found.push({ ...rep, parent_id: rep.parent_id ?? c.id, media_id: mediaId, is_reply: true });
+        post.read++;
+        for (const rep of c.replies?.data ?? []) {
+          found.push({ ...rep, parent_id: rep.parent_id ?? c.id, media_id: mediaId, is_reply: true });
+          post.read++;
+        }
         if (c.replies?.paging?.next) truncated = true;
       }
       const next = r.data.paging?.next ? r.data.paging?.cursors?.after : undefined;
-      if (!next) break;
+      if (!next) {
+        post.complete = true;
+        break;
+      }
       after = next;
     }
   }
@@ -160,10 +192,28 @@ export async function auditCampaignComments(
     for (const r of rows) flows.set(r.source_comment_id, r);
   }
 
+  // Comments the engine recognised as the account's own (e.g. your replies under people's comments) are not participants.
+  const people = comments.filter((c) => events.get(c.id)?.reason !== "own_account");
+  // People already answered on another comment in this campaign: their extra comments are not "missed".
+  const answeredPeople = new Set<string>();
+  for (const c of people) {
+    const f = flows.get(c.id);
+    if (f && (f.private_reply_status === "accepted" || f.public_reply_status === "accepted" || f.state === "content_sent") && c.from?.id) answeredPeople.add(c.from.id);
+  }
+  for (const r of await all<{ igsid: string }>(
+    ctx.db,
+    `SELECT DISTINCT p.igsid FROM conversation_flows f JOIN participants p ON p.id = f.participant_id
+      WHERE f.campaign_id = ? AND f.account_id = ? AND f.is_demo = 0
+        AND (f.private_reply_status = 'accepted' OR f.public_reply_status = 'accepted' OR f.state = 'content_sent')`,
+    campaignId,
+    account.id,
+  ))
+    answeredPeople.add(r.igsid);
+
   const now = ctx.now();
   const items: AuditItem[] = [];
   const toImport: NormalizedEvent[] = [];
-  for (const c of comments) {
+  for (const c of people) {
     const t = c.timestamp ? Date.parse(c.timestamp) : NaN;
     const time = Number.isFinite(t) ? t : 0;
     const ev = events.get(c.id);
@@ -175,6 +225,9 @@ export async function auditCampaignComments(
       const open = !["content_sent", "verification_unavailable", "expired", "failed", "cancelled"].includes(flow.state);
       status = answered ? "replied" : open ? "in_progress" : "not_replied";
       if (!answered) reason = flow.state_reason ?? flow.state;
+    } else if (c.from?.id && answeredPeople.has(c.from.id) && ev?.status !== "pending") {
+      status = "replied";
+      reason = "already_replied";
     } else if (ev) {
       status = ev.status === "pending" ? "in_progress" : "not_replied";
       reason = ev.reason ?? (ev.status === "pending" ? "pending" : null);
@@ -203,5 +256,5 @@ export async function auditCampaignComments(
   let imported = 0;
   if (opts.importMissing && toImport.length) imported = await storeEvents(ctx.db, toImport, { now, touchAccount: false, recovered: true });
   items.sort((a, b) => b.time - a.time);
-  return { media: media.length, checked: comments.length, truncated, counts, items: items.slice(0, 1000), imported, error };
+  return { media: media.length, checked: people.length, truncated, posts, counts, items: items.slice(0, 1000), imported, error };
 }
