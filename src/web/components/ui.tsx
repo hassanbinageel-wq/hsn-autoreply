@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AR_LABELS } from "../../shared/states";
 
 export function Card({ children, className = "", title, action }: { children: ReactNode; className?: string; title?: ReactNode; action?: ReactNode }) {
@@ -37,41 +37,70 @@ const STAT_ACCENT: Record<string, string> = {
 /** A small "?" that explains a number: hover on desktop, tap on phones (the tap never triggers the card under it). */
 export function InfoDot({ text, className = "" }: { text: string; className?: string }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ left: number; top: number; width: number; above: boolean } | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+  // The box is placed on the screen itself (fixed), centred under the "?" and pushed back inside the
+  // viewport with a 12px margin, so it is never cut off by the screen edge or by the card around it.
+  const place = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const vw = window.innerWidth;
+    const width = Math.min(280, vw - 24);
+    const left = Math.min(Math.max(12, r.left + r.width / 2 - width / 2), vw - 12 - width);
+    const above = r.bottom + 140 > window.innerHeight && r.top > 160;
+    setPos({ left, top: above ? r.top - 8 : r.bottom + 8, width, above });
+  };
+  const show = () => {
+    place();
+    // Only one explanation at a time: tell the others to close.
+    window.dispatchEvent(new CustomEvent("hsn:tip-open", { detail: ref.current }));
+    setOpen(true);
+  };
   useEffect(() => {
     if (!open) return;
     const close = () => setOpen(false);
+    const other = (e: Event) => (e as CustomEvent).detail !== ref.current && close();
+    window.addEventListener("hsn:tip-open", other);
     const t = setTimeout(() => document.addEventListener("click", close), 0);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
     return () => {
       clearTimeout(t);
       document.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("hsn:tip-open", other);
     };
   }, [open]);
+  const toggle = (e: { stopPropagation: () => void; preventDefault: () => void }) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (open) setOpen(false);
+    else show();
+  };
   return (
     <span
+      ref={ref}
       role="button"
       tabIndex={0}
       aria-label={`شرح: ${text}`}
-      onClick={(e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        setOpen((v) => !v);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.stopPropagation();
-          e.preventDefault();
-          setOpen((v) => !v);
-        }
-      }}
-      className={`group/info relative inline-flex h-6 w-6 shrink-0 cursor-help items-center justify-center rounded-full bg-[var(--border)] text-[11px] font-bold text-[var(--text-2)] outline-none ${className}`}
+      aria-expanded={open}
+      onClick={toggle}
+      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && toggle(e)}
+      onPointerEnter={(e) => e.pointerType === "mouse" && show()}
+      onPointerLeave={(e) => e.pointerType === "mouse" && setOpen(false)}
+      className={`relative inline-flex h-6 w-6 shrink-0 cursor-help items-center justify-center rounded-full bg-[var(--border)] text-[11px] font-bold text-[var(--text-2)] outline-none ${className}`}
     >
       ?
-      <span
-        role="tooltip"
-        className={`absolute top-full left-0 z-40 mt-2 w-60 max-w-[75vw] rounded-xl bg-[#16122b] px-3 py-2 text-right text-xs font-normal leading-relaxed text-white shadow-lg transition-opacity dark:bg-white dark:text-[#16122b] ${open ? "visible opacity-100" : "pointer-events-none invisible opacity-0 group-hover/info:visible group-hover/info:opacity-100"}`}
-      >
-        {text}
-      </span>
+      {open && pos && (
+        <span
+          role="tooltip"
+          style={{ left: pos.left, top: pos.top, width: pos.width, transform: pos.above ? "translateY(-100%)" : undefined }}
+          className="pointer-events-none fixed z-[60] rounded-xl bg-[#16122b] px-3 py-2 text-right text-xs font-normal leading-relaxed text-white shadow-lg dark:bg-white dark:text-[#16122b]"
+        >
+          {text}
+        </span>
+      )}
     </span>
   );
 }
@@ -279,15 +308,51 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
 
 /** Hover (or tap/focus on touch) explanation box for a short label. */
 export function Tip({ text, children, className = "" }: { text?: string; children: ReactNode; className?: string }) {
+  const [pos, setPos] = useState<{ left: number; top: number; width: number; above: boolean } | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!pos) return;
+    const close = () => setPos(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [pos]);
   if (!text) return <span className={className}>{children}</span>;
+  // Same placement as InfoDot: fixed on the screen, above the text, kept inside the viewport.
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const vw = window.innerWidth;
+    const width = Math.min(260, vw - 24);
+    const above = r.top > 150;
+    setPos({ left: Math.min(Math.max(12, r.right - width), vw - 12 - width), top: above ? r.top - 8 : r.bottom + 8, width, above });
+  };
   return (
-    <span className={`group/tip relative inline cursor-help outline-none ${className}`} tabIndex={0}>
+    <span
+      ref={ref}
+      className={`relative inline cursor-help outline-none ${className}`}
+      tabIndex={0}
+      onPointerEnter={(e) => e.pointerType === "mouse" && show()}
+      onPointerLeave={(e) => e.pointerType === "mouse" && setPos(null)}
+      onFocus={show}
+      onBlur={() => setPos(null)}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (pos) setPos(null);
+        else show();
+      }}
+    >
       {children}
       {"\u200F"}
       <span className="muted mr-1 text-[0.75em]" aria-hidden>ⓘ</span>
-      <span role="tooltip" className="pointer-events-none invisible absolute bottom-full right-0 z-40 mb-2 w-64 max-w-[78vw] rounded-xl bg-[#16122b] px-3 py-2 text-xs font-normal leading-relaxed text-white no-underline opacity-0 shadow-lg transition-opacity group-hover/tip:visible group-hover/tip:opacity-100 group-focus/tip:visible group-focus/tip:opacity-100 dark:bg-white dark:text-[#16122b]">
-        {text}
-      </span>
+      {pos && (
+        <span role="tooltip" style={{ left: pos.left, top: pos.top, width: pos.width, transform: pos.above ? "translateY(-100%)" : undefined }} className="pointer-events-none fixed z-[60] rounded-xl bg-[#16122b] px-3 py-2 text-right text-xs font-normal leading-relaxed text-white no-underline shadow-lg dark:bg-white dark:text-[#16122b]">
+          {text}
+        </span>
+      )}
     </span>
   );
 }

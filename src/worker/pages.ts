@@ -13,7 +13,7 @@ const operatorFooter = () =>
   `<footer style="margin-top:32px;padding-top:14px;border-top:1px solid rgba(127,127,127,.25);font-size:.85rem;opacity:.75;text-align:center">HSN AutoReply خدمة تقدّمها ${esc(OPERATOR.name)} — الرقم الوطني الموحد (السجل التجاري): ${esc(OPERATOR.cr)} — ${esc(OPERATOR.country)}</footer>`;
 
 function layout(title: string, body: string): string {
-  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>${esc(title)} — HSN AutoReply</title>
 <style>body{font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;max-width:760px;margin:0 auto;padding:24px 16px;line-height:1.8;background:#fff;color:#111}
 @media (prefers-color-scheme:dark){body{background:#0b0f14;color:#e7ecf2}a{color:#7cc4ff}}
