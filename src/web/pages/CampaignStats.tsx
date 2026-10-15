@@ -2,10 +2,11 @@ import { useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Link } from "../App";
 import { Icon } from "../components/Icon";
-import { Alert, Badge, Card, Empty, PageHeader, Spinner, Stat, fmtTime, useAsync } from "../components/ui";
+import { Alert, Badge, Card, Empty, PageHeader, Spinner, Stat, fmtTime, toast, useAsync } from "../components/ui";
 import { toCsv } from "../../shared/csv";
 import { saveFile } from "../lib/save";
 import { AR_LABELS } from "../../shared/states";
+import { REASONS } from "./Logs";
 
 const PERIODS: Array<[number, string]> = [
   [1, "اليوم"],
@@ -191,6 +192,110 @@ function PeopleList({ id, days, isComment, gated, mediaById, filter, setFilter }
   );
 }
 
+const AUDIT: Array<[string, string, string]> = [
+  ["all", "الكل", ""],
+  ["replied", "تم الرد", "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"],
+  ["in_progress", "قيد المعالجة", "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"],
+  ["not_replied", "وصلنا وما انرد", "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"],
+  ["missing", "ما وصلنا (يمكن الرد)", "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300"],
+  ["missing_old", "ما وصلنا (أقدم من 7 أيام)", "surface-2"],
+];
+
+/** Every comment Instagram has on the campaign's posts, compared with what we recorded and answered. */
+function CommentAudit({ id, mediaById }: { id: number; mediaById: Map<string, any> }) {
+  const [r, setR] = useState<any>(null);
+  const [busy, setBusy] = useState<"" | "check" | "import">("");
+  const [tab, setTab] = useState("all");
+  const run = async (importMissing: boolean) => {
+    setBusy(importMissing ? "import" : "check");
+    try {
+      const res = await api<any>(`/api/campaigns/${id}/audit`, { method: "POST", body: { import: importMissing } });
+      setR(res);
+      if (importMissing) toast(res.imported ? `تمت إضافة ${res.imported} تعليق للمعالجة — بيوصلهم الرد خلال دقائق` : "ما فيه تعليقات جديدة للإضافة");
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy("");
+    }
+  };
+  const list = (r?.items ?? []).filter((i: any) => tab === "all" || i.status === tab);
+  const why = (x: string | null) => (x ? REASONS[x.split(" ")[0]] ?? AR_LABELS[x] ?? x : "");
+  const ERR: Record<string, string> = {
+    no_account: "اربط حساب إنستقرام أولًا.",
+    no_token: "التفويض غير متاح — أعد ربط الحساب.",
+    no_media: "ما فيه منشورات مرتبطة بهذه الحملة بعد.",
+    auth: "انتهى تفويض الحساب — أعد الربط.",
+    rate_limited: "بلغت حد طلبات Meta مؤقتًا — النتيجة جزئية، جرّب بعد شوي.",
+  };
+  return (
+    <Card
+      title="فحص التعليقات"
+      action={
+        <button className="btn btn-primary text-sm" disabled={!!busy} onClick={() => run(false)}>
+          <Icon name="scan" size={16} />{busy === "check" ? "جارٍ الفحص…" : r ? "إعادة الفحص" : "افحص كل التعليقات"}
+        </button>
+      }
+    >
+      <p className="muted text-sm">
+        يقرأ كل التعليقات الموجودة فعلًا على منشورات الحملة من إنستقرام (الواجهة الرسمية) ويقارنها بسجلّك: مين انرد عليه، ومين وصلنا وما انرد (مثل ما طابق الكلمات أو مكرر)، ومين ما وصلنا أصلًا.
+      </p>
+      <p className="muted mt-1 text-xs">💡 السحوبات تجلب المشاركين مباشرة من إنستقرام وقت السحب، فكل المعلّقين يدخلون السحب حتى لو ما وصلتنا تعليقاتهم.</p>
+      {r && (
+        <div className="mt-4 space-y-3">
+          {r.error && ERR[r.error] && <Alert tone="warn">{ERR[r.error]}</Alert>}
+          {(r.checked > 0 || !r.error) && <>
+          <div className="muted text-xs">
+            فُحص {r.checked.toLocaleString("en-US")} تعليق على {r.media} منشور{r.truncated ? " · بعض المنشورات فيها تعليقات أكثر من حد الفحص الواحد، أعد الفحص لاحقًا" : ""}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {AUDIT.map(([k, label]) => (
+              <button key={k} onClick={() => setTab(k)} className={`rounded-full px-3 py-1 text-xs font-semibold ${tab === k ? "bg-brand-600 text-white" : "surface-2"}`}>
+                {label} <span className="tabular-nums opacity-70">{k === "all" ? r.checked : r.counts[k] ?? 0}</span>
+              </button>
+            ))}
+          </div>
+          {r.counts.missing > 0 && (
+            <Alert tone="warn">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{r.counts.missing} تعليق ما وصلنا وما زال ضمن مهلة الـ7 أيام المسموحة من Meta للرد الخاص.</span>
+                <button className="btn btn-primary text-sm" disabled={!!busy} onClick={() => run(true)}>{busy === "import" ? "…" : `رد عليهم الآن (${r.counts.missing})`}</button>
+              </div>
+            </Alert>
+          )}
+          {!list.length ? (
+            <p className="muted py-4 text-center text-sm">لا توجد تعليقات في هذا التصنيف.</p>
+          ) : (
+            <div className="divide-y divide-[var(--border)]">
+              {list.slice(0, 300).map((i: any) => {
+                const st = AUDIT.find(([k]) => k === i.status);
+                const m = mediaById.get(i.media_id);
+                return (
+                  <div key={i.comment_id} className="flex flex-wrap items-start gap-x-2 gap-y-1 py-2 text-sm">
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] ${st?.[2] ?? ""}`}>{st?.[1]}</span>
+                    {i.username ? (
+                      <a href={`https://www.instagram.com/${i.username}`} target="_blank" rel="noreferrer" className="font-bold hover:underline" dir="ltr">@{i.username}</a>
+                    ) : (
+                      <span className="muted font-bold">حساب غير معروف</span>
+                    )}
+                    <span className="min-w-0 flex-1 break-words">«{i.text}»{i.is_reply ? <span className="muted text-xs"> · رد على تعليق</span> : null}</span>
+                    <span className="muted w-full text-xs">
+                      {i.time ? fmtTime(i.time) : ""}
+                      {m?.caption ? ` · على: ${m.caption.slice(0, 40)}` : ""}
+                      {i.reason && i.status !== "replied" ? ` · السبب: ${why(i.reason)}` : ""}
+                    </span>
+                  </div>
+                );
+              })}
+              {list.length > 300 && <p className="muted pt-2 text-center text-xs">يُعرض أول 300.</p>}
+            </div>
+          )}
+          </>}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function CampaignStatsPage({ id }: { id: number }) {
   const [days, setDays] = useState(0);
   const [filter, setFilter] = useState<{ segment: Segment; media: string | null }>({ segment: "all", media: null });
@@ -318,6 +423,8 @@ export function CampaignStatsPage({ id }: { id: number }) {
               ))}
             </div>
           )}
+
+          {isComment && <CommentAudit id={id} mediaById={mediaById} />}
 
           <div ref={peopleRef} className="scroll-mt-4">
             <PeopleList id={id} days={days} isComment={isComment} gated={gated} mediaById={mediaById} filter={filter} setFilter={setFilter} />

@@ -336,6 +336,17 @@ describe("owner tools", () => {
     expect((await SELF.fetch(new Request(BASE + "/api/public/login-banner"))).status).toBe(404);
   });
 
+  it("the owner sets the order of the plan points; unknown keys are dropped and missing ones appended", async () => {
+    const def = (await call("/api/public/plans")).body.feature_order;
+    expect(def.slice(0, 4)).toEqual(["events", "active_campaigns", "monthly_messages", "draws_per_month"]);
+    expect((await call("/api/owner/feature-order", OWNER, "PUT", { order: ["recover", "bogus", "events", "recover"] })).status).toBe(200);
+    const got = (await call("/api/public/plans")).body.feature_order;
+    expect(got.slice(0, 2)).toEqual(["recover", "events"]);
+    expect(got).not.toContain("bogus");
+    expect([...got].sort()).toEqual([...def].sort());
+    expect((await call("/api/owner/feature-order", {}, "PUT", { order: [] })).status).toBe(401);
+  });
+
   it("the featured badge goes on any plan with the owner's text, or none; wallets are a payment kind", async () => {
     expect((await call("/api/public/plans")).body.featured).toEqual({ plan_id: "pro", label: "الأكثر طلبًا" });
     expect((await call("/api/owner/featured-plan", OWNER, "PUT", { plan_id: "max", label: "الأفضل قيمة" })).status).toBe(200);

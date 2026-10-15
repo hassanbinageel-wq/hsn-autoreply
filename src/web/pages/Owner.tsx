@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api } from "../api";
 import { API_BASE } from "../platform";
 import { BANNER_SIZES, DEFAULT_TEXTS, DesktopBanner, MobileBanner, toCm, type BannerTexts, type Branding } from "../components/LoginBanner";
 import { Icon } from "../components/Icon";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtTime, toast, useAsync } from "../components/ui";
-import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, formatPrice } from "../../shared/plans";
+import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, LIMIT_ROW_LABELS, PRICE_PERIODS, formatPrice, orderFeatures } from "../../shared/plans";
 
 /** A random 16-character password (the owner gives it to the customer, who can change it later). */
 function generatePassword(): string {
@@ -364,6 +364,7 @@ const LIMIT_FIELDS: Array<[string, string]> = [
 
 function PlansTab() {
   const { data, reload } = useAsync(() => api<any[]>("/api/owner/plans"), []);
+  const { data: catalog, reload: reloadCatalog } = useAsync(() => api<any>("/api/public/plans"), []);
   const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string; exchange_rates: Record<string, number> }>("/api/owner/settings"), []);
   const [contact, setContact] = useState<string | null>(null);
   const [download, setDownload] = useState<string | null>(null);
@@ -401,14 +402,15 @@ function PlansTab() {
       </Card>
       <RatesCard rates={settings.exchange_rates} onSaved={reloadSettings} />
       <FeaturedCard plans={data} />
+      {catalog && <FeatureOrderCard saved={orderFeatures(catalog.feature_order)} onSaved={reloadCatalog} />}
       <div className="grid gap-5 xl:grid-cols-3">
-        {data.map((p) => <PlanEditor key={p.id} plan={p} onSaved={reload} />)}
+        {data.map((p) => <PlanEditor key={p.id} plan={p} order={catalog?.feature_order} onSaved={reload} />)}
       </div>
     </div>
   );
 }
 
-function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
+function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onSaved: () => void }) {
   const [f, setF] = useState(() => ({ ...plan, limits: { ...plan.limits } }));
   const [busy, setBusy] = useState(false);
   const setL = (k: string, v: unknown) => setF((x: any) => ({ ...x, limits: { ...x.limits, [k]: v } }));
@@ -463,7 +465,7 @@ function PlanEditor({ plan, onSaved }: { plan: any; onSaved: () => void }) {
           </div>
         </div>
         <div className="divide-y divide-[var(--border)]">
-          {Object.entries(FEATURE_LABELS).map(([k, label]) => <Toggle key={k} checked={!!f.limits[k]} onChange={(v) => setL(k, v)} label={<Tip text={FEATURE_HINTS[k]}>{label}</Tip>} />)}
+          {orderFeatures(order).filter((k) => k in FEATURE_LABELS).map((k) => [k, FEATURE_LABELS[k]] as const).map(([k, label]) => <Toggle key={k} checked={!!f.limits[k]} onChange={(v) => setL(k, v)} label={<Tip text={FEATURE_HINTS[k]}>{label}</Tip>} />)}
           <Toggle checked={!!f.active} onChange={(v) => setF({ ...f, active: v })} label="معروضة للعملاء" description="تظهر في صفحة الأسعار وصفحة «اشتراكي». إخفاؤها لا يوقف المشتركين الحاليين فيها، وتقدر تولّد لها أكواد." />
         </div>
         <button className="btn btn-primary w-full" disabled={busy} onClick={save}>{busy ? "…" : "حفظ الباقة"}</button>
@@ -781,6 +783,97 @@ function FeaturedCard({ plans }: { plans: any[] }) {
         <Field label="نص الشارة"><input className="input" value={text} onChange={(e) => setLabel(e.target.value)} maxLength={30} disabled={!cur} /></Field>
         <button className="btn btn-primary" disabled={!!cur && !text.trim()} onClick={save}>حفظ</button>
       </div>
+    </Card>
+  );
+}
+
+/** Drag (mouse or finger) or use the arrows to set the order the plan points are listed in, everywhere. */
+function FeatureOrderCard({ saved, onSaved }: { saved: string[]; onSaved: () => void }) {
+  const [order, setOrder] = useState<string[] | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const list = useRef<HTMLOListElement>(null);
+  const cur = order ?? saved;
+  const dirty = cur.join() !== saved.join();
+  const label = (k: string) => LIMIT_ROW_LABELS[k] ?? FEATURE_LABELS[k] ?? k;
+  const move = (k: string, to: number) => {
+    const next = cur.filter((x) => x !== k);
+    next.splice(Math.max(0, Math.min(next.length, to)), 0, k);
+    setOrder(next);
+  };
+  const onDown = (k: string) => (e: ReactPointerEvent) => {
+    e.preventDefault();
+    setDragging(k);
+    let last = cur;
+    const onMove = (ev: PointerEvent) => {
+      const items = [...(list.current?.querySelectorAll<HTMLElement>("[data-key]") ?? [])];
+      const over = items.find((el) => {
+        const r = el.getBoundingClientRect();
+        return ev.clientY >= r.top && ev.clientY <= r.bottom && ev.clientX >= r.left && ev.clientX <= r.right;
+      });
+      const target = over?.dataset.key;
+      if (!target || target === k) return;
+      const next = last.filter((x) => x !== k);
+      next.splice(last.indexOf(target), 0, k);
+      last = next;
+      setOrder(next);
+    };
+    const onUp = () => {
+      setDragging(null);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+  const save = async (value: string[]) => {
+    setBusy(true);
+    try {
+      await api("/api/owner/feature-order", { method: "PUT", body: { order: value } });
+      toast("تم حفظ الترتيب");
+      setOrder(null);
+      onSaved();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card
+      title="ترتيب مزايا الباقات"
+      action={
+        <div className="flex gap-2">
+          <button className="btn btn-ghost text-sm" disabled={busy} onClick={() => save([])}>الترتيب الافتراضي</button>
+          <button className="btn btn-primary text-sm" disabled={busy || !dirty} onClick={() => save(cur)}>{busy ? "…" : "حفظ الترتيب"}</button>
+        </div>
+      }
+    >
+      <p className="muted mb-3 text-sm">امسك أي ميزة من المقبض <Icon name="grip" size={14} className="inline" /> واسحبها لمكانها، أو استخدم الأسهم. نفس الترتيب يظهر في صفحة الباقات وصفحة «اشتراكي».</p>
+      <ol ref={list} className="grid max-w-2xl select-none gap-1.5">
+        {cur.map((k, i) => (
+          <li
+            key={k}
+            data-key={k}
+            className={`surface-2 flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm transition ${dragging === k ? "ring-2 ring-violet-500 opacity-80" : ""}`}
+          >
+            <button
+              type="button"
+              aria-label={`اسحب لترتيب: ${label(k)}`}
+              onPointerDown={onDown(k)}
+              className="muted flex h-9 w-8 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg active:cursor-grabbing"
+            >
+              <Icon name="grip" size={18} />
+            </button>
+            <span className="font-display w-5 shrink-0 text-center text-xs font-bold text-violet-600 dark:text-violet-300">{i + 1}</span>
+            <span className="min-w-0 flex-1 truncate">{label(k)}</span>
+            <button type="button" className="btn btn-ghost min-h-8 px-2" aria-label="لأعلى" disabled={i === 0} onClick={() => move(k, i - 1)}>↑</button>
+            <button type="button" className="btn btn-ghost min-h-8 px-2" aria-label="لأسفل" disabled={i === cur.length - 1} onClick={() => move(k, i + 1)}>↓</button>
+          </li>
+        ))}
+      </ol>
     </Card>
   );
 }

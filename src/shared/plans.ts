@@ -51,6 +51,26 @@ export const FEATURE_LABELS: Record<string, string> = {
   undo: "التراجع عن آخر العمليات",
 };
 
+/** The four limit rows shown before the on/off features, by key. */
+export const LIMIT_ROW_LABELS: Record<string, string> = {
+  events: "الأحداث المدعومة",
+  active_campaigns: "عدد الحملات النشطة",
+  monthly_messages: "الرسائل شهريًا",
+  draws_per_month: "السحوبات",
+};
+
+/** Default display order of every plan point (limits first, then features). */
+export const DEFAULT_FEATURE_ORDER: string[] = [...Object.keys(LIMIT_ROW_LABELS), ...Object.keys(FEATURE_LABELS)];
+
+/** The owner's saved order, cleaned: unknown keys dropped, duplicates removed, new points appended at the end. */
+export function orderFeatures(order?: readonly string[] | null): string[] {
+  const known = new Set(DEFAULT_FEATURE_ORDER);
+  const out: string[] = [];
+  for (const k of order ?? []) if (known.has(k) && !out.includes(k)) out.push(k);
+  for (const k of DEFAULT_FEATURE_ORDER) if (!out.includes(k)) out.push(k);
+  return out;
+}
+
 /** One-line explanation of each plan point, shown in a hover box on the plans. */
 export const FEATURE_HINTS: Record<string, string> = {
   public_reply: "رد علني قصير تحت تعليق المتابع (مثل «أرسلنا لك في الخاص») بصيغ متنوعة، إضافةً للرسالة الخاصة.",

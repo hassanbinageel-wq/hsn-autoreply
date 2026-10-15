@@ -416,7 +416,7 @@ export function App() {
       )}
       <ToastHost />
       {bioOffer && (
-        <Modal open onClose={() => setBioOffer(null)} title="الدخول بالبصمة">
+        <Modal open center onClose={() => setBioOffer(null)} title="الدخول بالبصمة">
           <div className="space-y-4 text-center">
             <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600 dark:text-violet-300"><Icon name="fingerprint" size={28} /></span>
             <p className="text-sm leading-relaxed">تبي تدخل المرة الجاية ببصمتك بدون كلمة مرور؟ بيانات الدخول تنحفظ مشفّرة في خزنة الجوال الآمنة، وما تنفتح إلا ببصمتك.</p>

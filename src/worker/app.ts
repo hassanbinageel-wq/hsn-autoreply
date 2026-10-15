@@ -45,6 +45,7 @@ import {
   exchangeRatesSchema,
   brandingSchema,
   featuredSchema,
+  featureOrderSchema,
   campaignInputSchema,
   drawInputSchema,
   loginSchema,
@@ -60,6 +61,7 @@ import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegra
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage } from "./services/usage";
 import { recoverMissedComments } from "./services/recover";
+import { auditCampaignComments } from "./services/audit";
 import { deleteDraws, DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
 import { instagramShortcode } from "../shared/draw";
 import { cardDesignInputSchema } from "../shared/card";
@@ -67,7 +69,7 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 import { toCsv } from "../shared/csv";
-import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, type ExchangeRates, type PlanLimits } from "../shared/plans";
+import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, orderFeatures, type ExchangeRates, type PlanLimits } from "../shared/plans";
 import { listPaymentMethods } from "./services/payments";
 import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
@@ -156,12 +158,13 @@ async function appDownloadUrl(c: C): Promise<string> {
 
 /** What a buyer needs to see: active plans (with structured prices), exchange rates, payment accounts and the contact link. */
 async function publicCatalog(c: C) {
-  const [plans, rates, payment_methods, contact, featured] = await Promise.all([
+  const [plans, rates, payment_methods, contact, featured, order] = await Promise.all([
     listPlans(c.env.DB),
     getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES),
     listPaymentMethods(c.env.DB),
     getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", ""),
     getSetting<{ plan_id: string | null; label: string } | null>(c.env.DB, OWNER_TENANT, "featured_plan", null),
+    getSetting<string[] | null>(c.env.DB, OWNER_TENANT, "feature_order", null),
   ]);
   return {
     plans: plans
@@ -172,6 +175,8 @@ async function publicCatalog(c: C) {
     sales_contact: contact || null,
     // Which plan carries the highlight badge (default: the "pro" plan, "الأكثر طلبًا").
     featured: featured ?? { plan_id: "pro", label: "الأكثر طلبًا" },
+    // The order the plan points are listed in (set by the owner by dragging).
+    feature_order: orderFeatures(order),
   };
 }
 
@@ -812,6 +817,14 @@ export function createApp() {
     return c.json({ ok: true });
   });
 
+  // The order of the plan points everywhere they are listed.
+  owner.put("/feature-order", async (c) => {
+    const p = await parseBody(c, featureOrderSchema);
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "feature_order", orderFeatures(p.data.order));
+    return c.json({ ok: true });
+  });
+
   // ---- Payment methods (banks / exchange offices and their accounts), shown to buyers
   owner.get("/payment-methods", async (c) => c.json(await listPaymentMethods(c.env.DB)));
   owner.post("/payment-providers", async (c) => {
@@ -1188,6 +1201,33 @@ export function createApp() {
   });
 
   // Who interacted with a campaign: one row per person (latest interaction), with the same flags as the stats.
+  // Comment check: every comment Instagram has on the campaign's posts vs what we recorded and answered.
+  // import=true also queues the ones we never received (still inside Meta's 7-day private-reply window).
+  api.post("/campaigns/:id/audit", async (c) => {
+    const blocked = await planBlock(c, "campaign_stats");
+    if (blocked) return blocked;
+    const id = idParam(c);
+    if (!id) return apiError(c, 404, "not_found", "الحملة غير موجودة");
+    const body = await c.req.json().catch(() => ({}));
+    const importMissing = (body as any)?.import === true;
+    if (importMissing) {
+      const b = await planBlock(c, "recover");
+      if (b) return b;
+    }
+    if (!(await rateLimit(c.env.DB, `audit:${T(c)}`, 20, 3_600_000))) return apiError(c, 429, "rate_limited", "انتظر قليلًا قبل فحص التعليقات مرة أخرى");
+    let used = 0;
+    const ctx = engineContext(c.env, () => used++);
+    const r = await auditCampaignComments(ctx, T(c), id, { importMissing });
+    if (!r) return apiError(c, 404, "not_found", "الحملة غير موجودة");
+    if (r.imported > 0) {
+      await audit(c.env.DB, T(c), c.get("session").username, "comments.recovered", String(id), { imported: r.imported, via: "campaign_audit" });
+      c.executionCtx.waitUntil(
+        runQueue(ctx, { maxJobs: 20, includeDemo: false, deadlineMs: 25_000, budget: { used: () => used, limit: 44 } }).catch((e) => console.error("audit queue", sanitize(String(e)))),
+      );
+    }
+    return c.json(r);
+  });
+
   api.get("/campaigns/:id/people", async (c) => {
     const blocked = await planBlock(c, "campaign_stats");
     if (blocked) return blocked;

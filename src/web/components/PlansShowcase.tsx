@@ -1,37 +1,37 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { Field, Modal, Tip, toast } from "./ui";
-import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, convertPrice, formatAmount, type ExchangeRates, type PlanLimits } from "../../shared/plans";
+import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, convertPrice, formatAmount, orderFeatures, type ExchangeRates, type PlanLimits } from "../../shared/plans";
 
 export interface Catalog {
   plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits }>;
   rates: ExchangeRates;
   featured?: { plan_id: string | null; label: string };
+  feature_order?: string[];
   payment_methods: Array<{ id: number; name: string; kind: "bank" | "exchange" | "wallet"; logo: string | null; accounts: Array<{ id: number; holder: string; number: string; currency: string | null; note: string | null }> }>;
   sales_contact: string | null;
 }
 
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
 
-/** Every point of a plan, each with a hover / tap explanation. */
-export function Features({ limits }: { limits: PlanLimits }) {
-  const row = (on: boolean, text: string, hint?: string) => (
-    <li className="flex items-start gap-2">
+/** Every point of a plan, each with a hover / tap explanation, in the order the owner set. */
+export function Features({ limits, order }: { limits: PlanLimits; order?: string[] }) {
+  const row = (key: string, on: boolean, text: string, hint?: string) => (
+    <li key={key} className="flex items-start gap-2">
       <span className={`mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full ${on ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-[var(--border)] text-[var(--text-2)]"}`}>
         <Icon name={on ? "check" : "x"} size={11} />
       </span>
       <Tip text={hint}><span className={on ? "" : "muted line-through decoration-1"}>{text}</span></Tip>
     </li>
   );
-  return (
-    <ul className="space-y-2 text-sm">
-      {row(true, limits.events.map((e) => EVENT_LABELS[e] ?? e).join(" · ") || "—", LIMIT_HINTS.events)}
-      {row(true, `الحملات النشطة: ${n(limits.active_campaigns)}`, LIMIT_HINTS.active_campaigns)}
-      {row(true, `الرسائل شهريًا: ${n(limits.monthly_messages)}`, LIMIT_HINTS.monthly_messages)}
-      {row(limits.draws_per_month !== 0, `السحوبات: ${limits.draws_per_month === null ? "غير محدودة" : `${limits.draws_per_month} شهريًا`}`, LIMIT_HINTS.draws_per_month)}
-      {Object.entries(FEATURE_LABELS).map(([k, label]) => <span key={k} className="contents">{row(!!(limits as any)[k], label, FEATURE_HINTS[k])}</span>)}
-    </ul>
-  );
+  const render = (k: string) => {
+    if (k === "events") return row(k, true, limits.events.map((e) => EVENT_LABELS[e] ?? e).join(" · ") || "—", LIMIT_HINTS.events);
+    if (k === "active_campaigns") return row(k, true, `الحملات النشطة: ${n(limits.active_campaigns)}`, LIMIT_HINTS.active_campaigns);
+    if (k === "monthly_messages") return row(k, true, `الرسائل شهريًا: ${n(limits.monthly_messages)}`, LIMIT_HINTS.monthly_messages);
+    if (k === "draws_per_month") return row(k, limits.draws_per_month !== 0, `السحوبات: ${limits.draws_per_month === null ? "غير محدودة" : `${limits.draws_per_month} شهريًا`}`, LIMIT_HINTS.draws_per_month);
+    return row(k, !!(limits as any)[k], FEATURE_LABELS[k], FEATURE_HINTS[k]);
+  };
+  return <ul className="space-y-2 text-sm">{orderFeatures(order).map(render)}</ul>;
 }
 
 /** "أرسل السند هنا" → WhatsApp / Instagram / any link the owner set. */
@@ -262,7 +262,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: 
                   <span className="font-display text-2xl font-extrabold text-violet-600 dark:text-violet-300">{p.price_label || "تواصل معنا"}</span>
                 )}
               </div>
-              <div className="mt-4 flex-1"><Features limits={p.limits} /></div>
+              <div className="mt-4 flex-1"><Features limits={p.limits} order={catalog.feature_order} /></div>
               {onChoose && (
                 <button type="button" onClick={onChoose} className={`btn mt-5 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>اشترك في {p.name}</button>
               )}

@@ -123,7 +123,7 @@ export function Alert({ tone = "info", children }: { tone?: "info" | "warn" | "b
   return <div className={`rounded-2xl border border-current/10 px-4 py-3 text-sm ${TONES[tone]}`}>{children}</div>;
 }
 
-export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
+export function Modal({ open, onClose, title, children, center = false }: { open: boolean; onClose: () => void; title: string; children: ReactNode; center?: boolean }) {
   useEffect(() => {
     if (!open) return;
     const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -132,8 +132,14 @@ export function Modal({ open, onClose, title, children }: { open: boolean; onClo
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={title} className="card max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-b-none p-5 sm:m-4 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className={`fixed inset-0 z-50 flex justify-center bg-black/50 ${center ? "items-center p-4" : "items-end sm:items-center"}`} onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={center ? "card max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl p-5" : "card max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-b-none p-5 sm:m-4 sm:rounded-2xl"}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-bold">{title}</h2>
           <button className="btn btn-ghost min-h-10 px-3" onClick={onClose} aria-label="إغلاق">

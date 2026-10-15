@@ -2,6 +2,8 @@
 import type { SVGProps } from "react";
 
 const PATHS: Record<string, string> = {
+  grip: `<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>`,
+  scan: `<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/>`,
   fingerprint: `<path d="M12 11v3a8 8 0 0 1-1.2 4.2M8.5 8.6A4 4 0 0 1 16 11v2a12 12 0 0 1-.6 3.8M4.5 15.5A12 12 0 0 0 5 11a7 7 0 0 1 11.6-5.3M19 11a16 16 0 0 1-.5 4M8 11v1a10 10 0 0 1-1.5 5.3"/>`,
   bank: `<path d="M3 10 12 4l9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/>`,
   whatsapp: `<path d="M20.5 11.7a8.5 8.5 0 0 1-12.6 7.4L3.5 20.5l1.5-4.3A8.5 8.5 0 1 1 20.5 11.7z"/><path d="M9 8.5c.3 2.6 2.4 5 5.5 6l1.4-1.3-1.9-1.1-.9.8c-1-.4-2-1.4-2.4-2.4l.8-.9-1.1-1.9z"/>`,
