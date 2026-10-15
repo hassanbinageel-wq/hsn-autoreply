@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Link, navigate } from "../App";
-import { Alert, Card, Field, Modal, PageHeader, Spinner, Toggle, fmtTime, toast, useAsync } from "../components/ui";
+import { Alert, Card, Field, InfoDot, Modal, PageHeader, Spinner, Toggle, fmtTime, toast, useAsync } from "../components/ui";
 import { toCsv } from "../../shared/csv";
 import { canvasesToPdf, renderPages, saveBlob, type PdfLine } from "../lib/pdf";
 import { DrawStage } from "../components/DrawStage";
@@ -845,10 +845,10 @@ export function DrawPage({ id }: { id: number }) {
 
       <Card title="3) المعاينة قبل السحب">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div className="surface-2 rounded-xl p-3 text-center"><div className="text-2xl font-bold">{pv.total}</div><div className="muted text-xs">مشاركات مجلوبة</div></div>
-          <div className="surface-2 rounded-xl p-3 text-center"><div className="text-2xl font-bold text-emerald-600">{pv.eligible_count}</div><div className="muted text-xs">مؤهلة</div></div>
-          <div className="surface-2 rounded-xl p-3 text-center"><div className="text-2xl font-bold">{pv.total - pv.eligible_count}</div><div className="muted text-xs">مستبعدة</div></div>
-          <div className="surface-2 rounded-xl p-3 text-center"><div className="text-2xl font-bold">{pv.unique_people}</div><div className="muted text-xs">حسابات فريدة مؤهلة</div></div>
+          <div className="surface-2 rounded-xl p-3 text-center"><div className="text-2xl font-bold">{pv.total}</div><div className="muted flex items-center justify-center gap-1 text-xs">مشاركات مجلوبة<InfoDot text="كل التعليقات والردود اللي جبناها من إنستقرام مباشرة على المنشور (مع المكرر وتعليقات حسابك)." /></div></div>
+          <div className="surface-2 rounded-xl p-3 text-center"><div className="text-2xl font-bold text-emerald-600">{pv.eligible_count}</div><div className="muted flex items-center justify-center gap-1 text-xs">مؤهلة<InfoDot text="التعليقات اللي تنطبق عليها شروط السحب وتدخل القرعة." /></div></div>
+          <div className="surface-2 rounded-xl p-3 text-center"><div className="text-2xl font-bold">{pv.total - pv.eligible_count}</div><div className="muted flex items-center justify-center gap-1 text-xs">مستبعدة<InfoDot text="التعليقات اللي انشالت حسب شروطك، مثل: تعليقات حسابك، أو ما فيها الكلمة المطلوبة، أو خارج فترة السحب، أو ردود على تعليقات، أو فائز سابق. الأسباب بالتفصيل تحت." /></div></div>
+          <div className="surface-2 rounded-xl p-3 text-center"><div className="text-2xl font-bold">{pv.unique_people}</div><div className="muted flex items-center justify-center gap-1 text-xs">حسابات فريدة مؤهلة<InfoDot text="عدد الأشخاص المختلفين بين المشاركات المؤهلة. اللي علّق أكثر من مرة ينحسب هنا شخص واحد." /></div></div>
         </div>
         {Object.keys(pv.reasons ?? {}).length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5 text-xs">

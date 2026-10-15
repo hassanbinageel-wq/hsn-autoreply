@@ -34,13 +34,56 @@ const STAT_ACCENT: Record<string, string> = {
   orange: "bg-orange-500/10 text-orange-600 dark:text-orange-300",
   sky: "bg-sky-500/10 text-sky-600 dark:text-sky-300",
 };
-export function Stat({ label, value, hint, tone = "default", icon, accent = "violet" }: { label: string; value: ReactNode; hint?: ReactNode; tone?: "default" | "good" | "warn" | "bad"; icon?: ReactNode; accent?: keyof typeof STAT_ACCENT }) {
+/** A small "?" that explains a number: hover on desktop, tap on phones (the tap never triggers the card under it). */
+export function InfoDot({ text, className = "" }: { text: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    const t = setTimeout(() => document.addEventListener("click", close), 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", close);
+    };
+  }, [open]);
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={`شرح: ${text}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        setOpen((v) => !v);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.stopPropagation();
+          e.preventDefault();
+          setOpen((v) => !v);
+        }
+      }}
+      className={`group/info relative inline-flex h-5 w-5 shrink-0 cursor-help items-center justify-center rounded-full bg-[var(--border)] text-[11px] font-bold text-[var(--text-2)] outline-none ${className}`}
+    >
+      ?
+      <span
+        role="tooltip"
+        className={`absolute top-full left-0 z-40 mt-2 w-60 max-w-[75vw] rounded-xl bg-[#16122b] px-3 py-2 text-right text-xs font-normal leading-relaxed text-white shadow-lg transition-opacity dark:bg-white dark:text-[#16122b] ${open ? "visible opacity-100" : "pointer-events-none invisible opacity-0 group-hover/info:visible group-hover/info:opacity-100"}`}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
+export function Stat({ label, value, hint, tone = "default", icon, accent = "violet", info }: { label: string; value: ReactNode; hint?: ReactNode; tone?: "default" | "good" | "warn" | "bad"; icon?: ReactNode; accent?: keyof typeof STAT_ACCENT; info?: string }) {
   const color = { default: "", good: "text-emerald-600 dark:text-emerald-400", warn: "text-amber-600 dark:text-amber-400", bad: "text-red-600 dark:text-red-400" }[tone];
   return (
     <div className="card p-4">
       <div className="muted flex items-center gap-2.5 text-[13px] font-semibold">
         {icon && <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${STAT_ACCENT[accent]}`}>{icon}</span>}
-        {label}
+        <span className="flex-1">{label}</span>
+        {info && <InfoDot text={info} />}
       </div>
       <div className={`font-display mt-2 text-[26px] font-extrabold leading-tight tabular-nums ${color}`}>{value}</div>
       {hint && <div className="muted mt-1 text-xs">{hint}</div>}
