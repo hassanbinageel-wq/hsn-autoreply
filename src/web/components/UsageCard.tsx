@@ -80,7 +80,7 @@ function Bar({ label, used, limit, pct, info }: { label: string; used: number; l
           </button>
         </span>
         <span className="tabular-nums">
-          <b>{pct}%</b> <span className="muted">({used.toLocaleString("ar")} من {limit.toLocaleString("ar")})</span>
+          <b>{pct}%</b> <span className="muted">({used.toLocaleString("en-US")} من {limit.toLocaleString("en-US")})</span>
         </span>
       </div>
       <div className="surface-2 h-2.5 overflow-hidden rounded-full">

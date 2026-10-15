@@ -4,7 +4,7 @@ import { navigate } from "../App";
 import { renderTemplate, claimsDelivery, claimsFollowRequired, contentLinkButton, publicReplyVariants, pickVariant, SAFE_PUBLIC_REPLIES, MAX_PUBLIC_VARIANTS, TEMPLATE_VARIABLES } from "../../shared/template";
 import { evaluateMatch } from "../../shared/match";
 import { AR_LABELS } from "../../shared/states";
-import { Alert, Card, Field, Spinner, Toggle, currentTz, toast } from "../components/ui";
+import { Alert, Card, Field, Spinner, Toggle, currentTz, toast, fmtTime } from "../components/ui";
 import { PhonePreview, type ChatMsg, type CommentMsg } from "../components/PhonePreview";
 import { Icon } from "../components/Icon";
 
@@ -427,7 +427,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
                   label="اربط تلقائيًا كل منشور/ريل جديد أنشره"
                   description={
                     form.auto_new_media && form.auto_new_since
-                      ? `أي منشور تنشره بعد ${new Date(form.auto_new_since).toLocaleString("ar")} يدخل الحملة تلقائيًا عند أول تعليق عليه — بدون تعديل.`
+                      ? `أي منشور تنشره بعد ${fmtTime(form.auto_new_since)} يدخل الحملة تلقائيًا عند أول تعليق عليه — بدون تعديل.`
                       : "أي منشور جديد تنشره من الآن يدخل الحملة تلقائيًا عند أول تعليق عليه. يمكنك أيضًا اختيار منشورات حالية بالأسفل."
                   }
                 />

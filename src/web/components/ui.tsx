@@ -231,12 +231,24 @@ export function ToastHost() {
 }
 
 /** Formats UTC milliseconds in the configured time zone (default Asia/Aden). */
+// One date style everywhere: day, month name, year ("13 أكتوبر 2026"), Gregorian calendar and Latin digits, so the
+// order never flips inside right-to-left text and nobody has to guess which number is the day or the month.
+const AR = "ar-SA-u-ca-gregory-nu-latn";
 export function fmtTime(ms: number | null | undefined, tz = currentTz()): string {
   if (!ms) return "—";
   try {
-    return new Intl.DateTimeFormat("ar", { timeZone: tz, dateStyle: "medium", timeStyle: "short" }).format(new Date(ms));
+    return new Intl.DateTimeFormat(AR, { timeZone: tz, day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(ms));
   } catch {
     return new Date(ms).toISOString();
+  }
+}
+/** Date only: "13 أكتوبر 2026". */
+export function fmtDate(ms: number | null | undefined, tz = currentTz()): string {
+  if (!ms) return "—";
+  try {
+    return new Intl.DateTimeFormat(AR, { timeZone: tz, day: "numeric", month: "long", year: "numeric" }).format(new Date(ms));
+  } catch {
+    return new Date(ms).toISOString().slice(0, 10);
   }
 }
 let tzValue = "Asia/Aden";

@@ -154,6 +154,14 @@ export async function deleteTenantData(db: D1Database, tenantId: number): Promis
   const PART = `(SELECT id FROM participants WHERE account_id IN ${ACC})`;
   const t = tenantId;
   await db.batch([
+    // Keep who used each code (name and username) before the customer's rows disappear.
+    db
+      .prepare(
+        `UPDATE activation_codes SET used_by_name = COALESCE(used_by_name, (SELECT name FROM tenants WHERE id = ?)),
+                used_by_username = COALESCE(used_by_username, (SELECT username FROM admin_users WHERE tenant_id = ? ORDER BY id LIMIT 1))
+          WHERE used_by_tenant = ?`,
+      )
+      .bind(t, t, t),
     db.prepare(`DELETE FROM draw_cards WHERE winner_id IN (SELECT id FROM draw_winners WHERE draw_id IN ${DRAWS})`).bind(t),
     db.prepare(`DELETE FROM draw_winners WHERE draw_id IN ${DRAWS}`).bind(t),
     db.prepare(`DELETE FROM draw_entries WHERE draw_id IN ${DRAWS}`).bind(t),

@@ -4,7 +4,7 @@ import { api } from "../api";
 import { API_BASE } from "../platform";
 import { BANNER_SIZES, DEFAULT_TEXTS, DesktopBanner, MobileBanner, toCm, type BannerTexts, type Branding } from "../components/LoginBanner";
 import { Icon } from "../components/Icon";
-import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtTime, toast, useAsync } from "../components/ui";
+import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, LIMIT_ROW_LABELS, PRICE_PERIODS, formatPrice, orderFeatures } from "../../shared/plans";
 
 /** A random 16-character password (the owner gives it to the customer, who can change it later). */
@@ -191,7 +191,7 @@ function SubscriptionBar({ t, onEdit }: { t: any; onEdit: () => void }) {
         <div className={`h-full rounded-full ${tone} transition-all`} style={{ width: `${pct}%` }} />
       </div>
       <div className="muted mt-1.5 flex justify-between text-[11px]">
-        <span>{exp ? `${active ? "ينتهي" : "انتهى"} ${new Date(exp).toLocaleDateString("ar")}` : "اضغط لتعيين باقة"}</span>
+        <span>{exp ? `${active ? "ينتهي" : "انتهى"} ${fmtDate(exp)}` : "اضغط لتعيين باقة"}</span>
         <span>رسائل الشهر: {(t.messages_month ?? 0).toLocaleString("en-US")}</span>
       </div>
     </button>
@@ -217,13 +217,13 @@ function SetPlan({ t, plans, onClose, onDone }: { t: any; plans: any[]; onClose:
       setBusy(false);
     }
   };
-  const preview = (d: number) => new Date((active ? t.plan_expires_at : now) + d * DAY).toLocaleDateString("ar");
+  const preview = (d: number) => fmtDate((active ? t.plan_expires_at : now) + d * DAY);
   return (
     <Modal open onClose={onClose} title={`اشتراك «${t.name}»`}>
       <div className="space-y-4">
         <div className="rounded-2xl bg-[var(--surface-2)] p-3 text-sm">
           {t.plan_expires_at ? (
-            <>الباقة الحالية: <b>{t.plan_name ?? "—"}</b> · {active ? `ينتهي ${new Date(t.plan_expires_at).toLocaleDateString("ar")} (باقي ${Math.ceil((t.plan_expires_at - now) / DAY)} يوم)` : "منتهي"}</>
+            <>الباقة الحالية: <b>{t.plan_name ?? "—"}</b> · {active ? `ينتهي ${fmtDate(t.plan_expires_at)} (باقي ${Math.ceil((t.plan_expires_at - now) / DAY)} يوم)` : "منتهي"}</>
           ) : (
             "لا يوجد اشتراك بعد"
           )}
@@ -256,7 +256,7 @@ function SetPlan({ t, plans, onClose, onDone }: { t: any; plans: any[]; onClose:
         )}
         <Field label="أو حدّد تاريخ انتهاء بالضبط">
           <div className="flex gap-2">
-            <input className="input" type="date" dir="ltr" value={date} onChange={(e) => setDate(e.target.value)} />
+            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             <button className="btn btn-ghost shrink-0" disabled={busy || !planId || !date} onClick={() => save({ plan_id: planId, expires_at: new Date(`${date}T23:59:59`).getTime() }, "تم تحديد تاريخ الانتهاء")}>حفظ التاريخ</button>
           </div>
         </Field>
@@ -339,9 +339,19 @@ function CodesTab() {
                     {c.note && <div className="flex gap-1.5"><dt className="muted">ملاحظة:</dt><dd>{c.note}</dd></div>}
                     {state === "used" && (
                       <>
-                        <div className="flex gap-1.5"><dt className="muted">استخدمه:</dt><dd><b>{c.used_by ?? "—"}</b>{c.used_by_username && <span className="muted" dir="ltr"> @{c.used_by_username}</span>}{!c.customer_exists && <span className="text-red-600"> (محذوف)</span>}</dd></div>
+                        <div className="flex flex-wrap gap-x-1.5"><dt className="muted">استخدمه:</dt><dd>
+                          {c.used_by_username || c.used_by ? (
+                            <>
+                              {c.used_by_username && <b dir="ltr">@{c.used_by_username}</b>}
+                              {c.used_by && <span className={c.used_by_username ? "muted" : "font-bold"}>{c.used_by_username ? ` — ${c.used_by}` : c.used_by}</span>}
+                              {!c.customer_exists && <span className="text-red-600"> (العميل محذوف)</span>}
+                            </>
+                          ) : (
+                            <span className="muted">عميل محذوف قبل ما يبدأ النظام يحفظ الأسماء</span>
+                          )}
+                        </dd></div>
                         <div className="flex gap-1.5"><dt className="muted">وقت التفعيل:</dt><dd>{fmtTime(c.used_at)}</dd></div>
-                        {c.customer_exists && c.customer_expires_at ? <div className="flex gap-1.5"><dt className="muted">اشتراكه الحالي حتى:</dt><dd>{new Date(c.customer_expires_at).toLocaleDateString("ar")}</dd></div> : null}
+                        {c.customer_exists && c.customer_expires_at ? <div className="flex gap-1.5"><dt className="muted">اشتراكه الحالي حتى:</dt><dd>{fmtDate(c.customer_expires_at)}</dd></div> : null}
                       </>
                     )}
                     {state === "revoked" && <div className="flex gap-1.5"><dt className="muted">أُلغي:</dt><dd>{fmtTime(c.revoked_at)}</dd></div>}

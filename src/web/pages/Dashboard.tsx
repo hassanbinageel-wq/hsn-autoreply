@@ -94,13 +94,13 @@ export function DashboardPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
         {[
-          { label: "تفاعلات مستلمة", value: received, hint: "تعليقات وردود ومنشن ستوري", icon: "msg", accent: "violet", s: series?.comments, c: "#7c3aed" },
-          { label: "رسائل وصلت", value: sent, hint: "قبلتها Meta (≠ قُرئت)", icon: "send", accent: "pink", s: undefined, c: "#db2777" },
-          { label: "محتوى سُلِّم", value: delivered, hint: "وصل الرابط النهائي", icon: "check", accent: "green", s: series?.delivered, c: "#10b981" },
-          { label: "متابعات تم التحقق منها", value: verified, hint: "ليست «جددًا» بالضرورة", icon: "userplus", accent: "orange", s: undefined, c: "#f97316" },
+          { label: "تفاعلات مستلمة", value: received, hint: "تعليقات وردود ومنشن ستوري", info: "كل تعليق أو رد على ستوري أو منشن في ستوري وصل للنظام خلال المدة المختارة، ومعها المكرر واللي ما طابق كلمات الحملات.", icon: "msg", accent: "violet", s: series?.comments, c: "#7c3aed" },
+          { label: "رسائل وصلت", value: sent, hint: "قبلتها Meta (≠ قُرئت)", info: "عدد الرسائل الخاصة اللي أرسلها النظام وقبلتها Meta. القبول يعني إنها انرسلت، مو بالضرورة إن الشخص قرأها.", icon: "send", accent: "pink", s: undefined, c: "#db2777" },
+          { label: "محتوى سُلِّم", value: delivered, hint: "وصل الرابط النهائي", info: "عدد الأشخاص اللي وصلتهم الرسالة الأخيرة فيها المحتوى أو الرابط، يعني أكملوا خطوات الحملة.", icon: "check", accent: "green", s: series?.delivered, c: "#10b981" },
+          { label: "متابعات تم التحقق منها", value: verified, hint: "ليست «جددًا» بالضرورة", info: "عدد الأشخاص اللي تأكد النظام من Meta إنهم متابعين لحسابك خلال المدة. يشمل اللي كانوا متابعين من قبل، فمو كلهم متابعين جدد.", icon: "userplus", accent: "orange", s: undefined, c: "#f97316" },
         ].map((k) => (
           <div key={k.label} className="relative">
-            <Stat label={k.label} value={fmt(k.value)} hint={k.hint} icon={<Icon name={k.icon} size={19} />} accent={k.accent as any} />
+            <Stat label={k.label} value={fmt(k.value)} hint={k.hint} info={k.info} icon={<Icon name={k.icon} size={19} />} accent={k.accent as any} />
             <div className="pointer-events-none absolute bottom-4 left-4 hidden sm:block"><Sparkline values={spark(k.s)} color={k.c} /></div>
           </div>
         ))}

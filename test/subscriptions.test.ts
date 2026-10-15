@@ -296,6 +296,8 @@ describe("owner tools", () => {
     let list = (await call("/api/owner/codes", OWNER)).body;
     expect(list[0]).toMatchObject({ used_by: "متجر سارة", used_by_username: "shop_sara", customer_exists: 1 });
     const tid = (await DB.prepare("SELECT tenant_id FROM admin_users WHERE username = 'shop_sara'").first<any>()).tenant_id;
+    // a code redeemed before names were stored: deleting the customer still records who it was
+    await DB.prepare("UPDATE activation_codes SET used_by_name = NULL, used_by_username = NULL WHERE used_by_tenant = ?").bind(tid).run();
     await call(`/api/owner/tenants/${tid}`, OWNER, "DELETE", { confirm: "متجر سارة" });
     list = (await call("/api/owner/codes", OWNER)).body;
     expect(list[0]).toMatchObject({ used_by: "متجر سارة", used_by_username: "shop_sara", customer_exists: 0 });

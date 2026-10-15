@@ -12,11 +12,19 @@ function left(ms: number): string {
   return h > 0 ? `${h} ساعة و${m} دقيقة` : `${m} دقيقة`;
 }
 
-function Thread({ id, onSent }: { id: number; onSent: () => void }) {
+function Thread({ id, onSent, onBack }: { id: number; onSent: () => void; onBack: () => void }) {
   const [data, setData] = useState<any>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // The reply box grows with the text (up to about 5 lines), then scrolls.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  }, [text]);
   const load = () => api(`/api/inbox/${id}`).then(setData).catch((e) => toast(e.message, "bad"));
   useEffect(() => {
     setData(null);
@@ -51,61 +59,70 @@ function Thread({ id, onSent }: { id: number; onSent: () => void }) {
   const remaining = data.window_expires_at ? data.window_expires_at - Date.now() : 0;
   return (
     <div className="flex flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] pb-3">
-        <UserAvatar url={p.profile_pic_url} name={p.username} size={46} />
+      <div className="flex items-center gap-2.5 border-b border-[var(--border)] pb-3">
+        <button type="button" className="btn btn-ghost h-10 w-10 shrink-0 p-0 lg:hidden" aria-label="رجوع للمحادثات" onClick={onBack}>
+          <Icon name="arrowL" size={18} className="rotate-180" />
+        </button>
+        <UserAvatar url={p.profile_pic_url} name={p.username} size={40} />
         <div className="min-w-0 flex-1">
           {p.username ? (
-            <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="block truncate text-base font-bold hover:underline" dir="ltr" style={{ textAlign: "right" }}>@{p.username}</a>
+            <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="block truncate font-bold hover:underline" dir="ltr" style={{ textAlign: "right" }}>@{p.username}</a>
           ) : (
-            <span className="muted text-base font-bold">حساب غير معروف</span>
+            <span className="muted font-bold">حساب غير معروف</span>
           )}
           <div className="muted truncate text-xs">
             {data.flows.length ? data.flows.map((f: any) => `${f.campaign_name} · ${f.state === "content_sent" ? "استلم المحتوى" : "لم يكتمل"}${f.link_clicks ? " · ضغط الرابط" : ""}`).join(" | ") : "بدون حملات"}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {p.last_follow_status && <Badge value={p.last_follow_status} />}
-          {data.window_open ? (
-            <span className="chip bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"><Icon name="clock" size={13} />النافذة مفتوحة · {left(remaining)}</span>
-          ) : (
-            <span className="chip surface-2 muted"><Icon name="clock" size={13} />النافذة مغلقة</span>
-          )}
-          {p.username && (
-            <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="btn btn-ghost min-h-9 px-3 text-xs"><Icon name="instagram" size={16} />إنستقرام</a>
-          )}
-        </div>
+        {p.username && (
+          <a href={`https://www.instagram.com/${p.username}`} target="_blank" rel="noreferrer" className="btn btn-ghost h-10 shrink-0 px-2.5 text-xs" aria-label="فتح المحادثة في إنستقرام">
+            <Icon name="instagram" size={17} /><span className="hidden sm:inline">إنستقرام</span>
+          </a>
+        )}
       </div>
-      <div ref={boxRef} className="-mx-4 h-[56vh] min-h-[280px] space-y-2.5 overflow-y-auto overscroll-contain bg-[var(--surface-2)] px-4 py-4">
+      <div className="flex gap-1.5 overflow-x-auto py-2 [scrollbar-width:none]">
+        {data.window_open ? (
+          <span className="chip shrink-0 bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"><Icon name="clock" size={13} />يمكن الرد · باقي {left(remaining)}</span>
+        ) : (
+          <span className="chip surface-2 muted shrink-0"><Icon name="clock" size={13} />انتهت مدة الرد</span>
+        )}
+        {p.last_follow_status && <span className="shrink-0"><Badge value={p.last_follow_status} /></span>}
+      </div>
+      <div ref={boxRef} className="-mx-3 h-[calc(100dvh-23rem)] min-h-[220px] space-y-2 overflow-y-auto overscroll-contain bg-[var(--surface-2)] px-3 py-3 sm:-mx-4 sm:px-4 lg:h-[56vh] lg:min-h-[280px]">
         {data.messages.map((m: any) => (
           <div key={m.id} className={`flex ${m.direction === "in" ? "justify-start" : "justify-end"}`}>
-            <div className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm ${m.direction === "in" ? "rounded-br-md border border-[var(--border)] bg-[var(--surface)]" : "rounded-bl-md bg-gradient-to-br from-violet-600 to-indigo-500 text-white"}`}>
+            <div className={`max-w-[86%] rounded-2xl px-3 py-2 text-[15px] leading-relaxed shadow-sm sm:max-w-[78%] sm:px-3.5 sm:py-2.5 sm:text-sm ${m.direction === "in" ? "rounded-br-md border border-[var(--border)] bg-[var(--surface)]" : "rounded-bl-md bg-gradient-to-br from-violet-600 to-indigo-500 text-white"}`}>
               {m.direction === "out" && SOURCE[m.source] && <div className="mb-0.5 text-[10.5px] opacity-75">{SOURCE[m.source]}</div>}
               <div className="whitespace-pre-wrap break-words">{m.text || <span className="opacity-60">(مرفق أو رسالة بدون نص)</span>}</div>
-              <div className={`mt-1 text-[10px] ${m.direction === "in" ? "muted" : "opacity-70"}`}>{fmtTime(m.created_at)}</div>
+              <div className={`mt-1 text-[10.5px] ${m.direction === "in" ? "muted" : "opacity-75"}`}>{fmtTime(m.created_at)}</div>
             </div>
           </div>
         ))}
       </div>
       {data.window_open ? (
-        <div className="border-t border-[var(--border)] pt-3">
+        <div className="border-t border-[var(--border)] pt-2.5">
           <div className="flex items-end gap-2">
             <textarea
-              className="input min-h-[46px] min-w-0 flex-1 rounded-2xl"
+              ref={inputRef}
+              className="input min-h-[44px] min-w-0 flex-1 resize-none rounded-3xl py-2.5 leading-snug"
               rows={1}
               maxLength={1000}
               value={text}
+              aria-label="ردك"
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send();
               }}
-              placeholder="اكتب ردك… (يُرسل من حسابك)"
+              placeholder="اكتب ردك…"
             />
-            <button className="btn btn-primary shrink-0" disabled={busy || !text.trim()} onClick={send}><Icon name="send" size={17} />{busy ? "…" : "إرسال"}</button>
+            <button className="btn btn-primary h-11 w-11 shrink-0 rounded-full p-0 sm:w-auto sm:px-5" disabled={busy || !text.trim()} onClick={send} aria-label="إرسال">
+              <Icon name="send" size={18} /><span className="hidden sm:inline">{busy ? "…" : "إرسال"}</span>
+            </button>
           </div>
-          <div className="muted mt-1.5 text-[11px]">يمكنك الرد خلال {left(remaining)} — نافذة 24 ساعة من آخر رسالة من الشخص.</div>
+          <div className="muted mt-1.5 text-[11px]">يُرسل من حسابك · تقدر ترد خلال {left(remaining)} (24 ساعة من آخر رسالة منه).</div>
         </div>
       ) : (
-        <div className="pt-3"><Alert tone="info">مرّت 24 ساعة على آخر رسالة من هذا الشخص — إنستقرام لا يسمح بالرد حتى يراسلك مرة أخرى.</Alert></div>
+        <div className="pt-3"><Alert tone="info">مرّت 24 ساعة على آخر رسالة من هذا الشخص، وإنستقرام ما يسمح بالرد لين يراسلك مرة ثانية.</Alert></div>
       )}
     </div>
   );
@@ -140,7 +157,9 @@ export function InboxPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="الرسائل" subtitle="المحادثات التي بدأتها الأتمتة أو وصلتك عبر الخاص. الرد اليدوي متاح خلال 24 ساعة من آخر رسالة من الشخص." />
+      <div className={open !== null ? "hidden lg:block" : ""}>
+        <PageHeader title="الرسائل" subtitle="المحادثات التي بدأتها الأتمتة أو وصلتك عبر الخاص. الرد اليدوي متاح خلال 24 ساعة من آخر رسالة من الشخص." />
+      </div>
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
         <div className={`card min-w-0 p-2 sm:p-3 ${open !== null ? "hidden lg:block" : ""}`}>
           <input className="input mb-2" placeholder="بحث باسم الحساب…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -170,16 +189,11 @@ export function InboxPage() {
             </div>
           )}
         </div>
-        <div className={`card min-w-0 p-4 ${open === null ? "hidden lg:block" : ""}`}>
+        <div className={`card min-w-0 p-3 sm:p-4 ${open === null ? "hidden lg:block" : ""}`}>
           {open === null ? (
             <p className="muted py-10 text-center text-sm">اختر محادثة من القائمة.</p>
           ) : (
-            <>
-              <div className="mb-2 lg:hidden">
-                <button className="btn btn-ghost" onClick={() => setOpen(null)}>→ رجوع</button>
-              </div>
-              <Thread id={open} onSent={load} />
-            </>
+            <Thread id={open} onSent={load} onBack={() => setOpen(null)} />
           )}
         </div>
       </div>
