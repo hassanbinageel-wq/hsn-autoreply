@@ -909,7 +909,18 @@ export function createApp() {
       all(db, `SELECT event_type, status, COUNT(*) AS n FROM webhook_events WHERE account_ig_id IN ${TENANT_IG_IDS} AND is_demo = 0 AND received_at > ? GROUP BY event_type, status`, t, since),
       all(db, `SELECT kind, purpose, status, COUNT(*) AS n FROM action_jobs WHERE account_id IN ${TENANT_ACCOUNTS} AND is_demo = 0 AND created_at > ? AND kind != 'process_event' GROUP BY kind, purpose, status`, t, since),
       all(db, `SELECT state, COUNT(*) AS n FROM conversation_flows WHERE account_id IN ${TENANT_ACCOUNTS} AND is_demo = 0 AND created_at > ? GROUP BY state`, t, since),
-      first(db, `SELECT COUNT(DISTINCT fc.participant_id) AS verified FROM follow_checks fc JOIN participants p ON p.id = fc.participant_id WHERE p.account_id IN ${TENANT_ACCOUNTS} AND fc.is_demo = 0 AND fc.result = 'following' AND fc.checked_at > ?`, t, since),
+      // New followers: people Meta first reported as not following who were following at a later check in the period.
+      first(
+        db,
+        `SELECT COUNT(DISTINCT fc.participant_id) AS verified,
+                COUNT(DISTINCT CASE WHEN EXISTS (
+                  SELECT 1 FROM follow_checks f0 WHERE f0.participant_id = fc.participant_id AND f0.is_demo = 0
+                     AND f0.result = 'not_following' AND f0.checked_at < fc.checked_at) THEN fc.participant_id END) AS new_followers
+           FROM follow_checks fc JOIN participants p ON p.id = fc.participant_id
+          WHERE p.account_id IN ${TENANT_ACCOUNTS} AND fc.is_demo = 0 AND fc.result = 'following' AND fc.checked_at > ?`,
+        t,
+        since,
+      ),
       getSetting(db, t, "automation_enabled", true),
     ]);
     // Daily series (UTC days) for the activity chart, best campaigns and the latest activity.

@@ -101,6 +101,22 @@ describe("customers (tenants) are isolated", () => {
     expect((await call("/api/dashboard", B)).body.campaigns.active).toBe(1);
   });
 
+  it("dashboard counts only new followers, per customer", async () => {
+    const now = Date.now();
+    const accB = (await DB.prepare("SELECT id FROM instagram_accounts WHERE ig_user_id = ?").bind(IG_B).first<any>()).id;
+    const accA = (await DB.prepare("SELECT id FROM instagram_accounts WHERE ig_user_id = ?").bind(IG_ID).first<any>()).id;
+    const person = async (acc: number, igsid: string, results: string[]) => {
+      const p = await DB.prepare("INSERT INTO participants (account_id, igsid, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id").bind(acc, igsid, now, now).first<any>();
+      for (const [i, r] of results.entries()) await DB.prepare("INSERT INTO follow_checks (participant_id, result, checked_at) VALUES (?, ?, ?)").bind(p.id, r, now - 60_000 + i * 1000).run();
+    };
+    await person(accB, "b_new", ["not_following", "following"]); // followed because of the campaign
+    await person(accB, "b_old", ["following"]); // was already following
+    await person(accA, "a_new", ["not_following", "following"]); // the owner's, never counted for B
+    const f = (await call("/api/dashboard?days=7", B)).body.follows;
+    expect(f).toMatchObject({ new_followers: 1, verified: 2 });
+    expect((await call("/api/dashboard?days=7", OWNER)).body.follows).toMatchObject({ new_followers: 1, verified: 1 });
+  });
+
   it("an Instagram account already used by one customer cannot be connected to another", async () => {
     const { accountAvailableTo } = await import("../src/worker/services/account");
     expect(await accountAvailableTo(DB, IG_ID, tenantB)).toBe(false); // the owner's account

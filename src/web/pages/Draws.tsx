@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DateTimeField } from "../components/DateTimeField";
 import { askConfirm, askText } from "../components/Confirm";
 import { api } from "../api";
 import { Link, navigate } from "../App";
@@ -192,10 +193,10 @@ function SettingsFields({ form, set }: { form: DrawForm; set: (p: Partial<DrawFo
           <input className="input" type="number" min={1} max={500} value={form.winners_count} onChange={(e) => set({ winners_count: Math.max(1, Number(e.target.value) || 1) })} />
         </Field>
         <Field label="بداية فترة المشاركات (اختياري)" hint={dateHint(form.starts_at, deviceTz, "فاضية = من أول تعليق")}>
-          <input className="input" type="datetime-local" value={toLocalInput(form.starts_at)} onChange={(e) => set({ starts_at: fromLocalInput(e.target.value) })} />
+          <DateTimeField label="بداية فترة المشاركات" emptyLabel="بدون — من أول تعليق" value={toLocalInput(form.starts_at)} onChange={(v) => set({ starts_at: fromLocalInput(v) })} />
         </Field>
         <Field label="نهاية فترة المشاركات (اختياري)" hint={dateHint(form.ends_at, deviceTz, "فاضية = لين لحظة جلب المشاركات")}>
-          <input className="input" type="datetime-local" value={toLocalInput(form.ends_at)} onChange={(e) => set({ ends_at: fromLocalInput(e.target.value) })} />
+          <DateTimeField label="نهاية فترة المشاركات" emptyLabel="بدون — لين لحظة الجلب" value={toLocalInput(form.ends_at)} onChange={(v) => set({ ends_at: fromLocalInput(v) })} />
         </Field>
         <Field label="كلمة أو عبارة يجب وجودها (اختياري)" hint="المقارنة تتجاهل التشكيل والفرق بين أ/إ/ا و ة/ه و ى/ي.">
           <input className="input" value={form.keyword} maxLength={100} onChange={(e) => set({ keyword: e.target.value })} placeholder="مثال: مسابقة" />

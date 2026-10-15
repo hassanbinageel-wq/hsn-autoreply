@@ -1,4 +1,5 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { DateTimeField } from "../components/DateTimeField";
 import { askConfirm, askText, showCopy } from "../components/Confirm";
 import { api } from "../api";
 import { API_BASE } from "../platform";
@@ -255,8 +256,8 @@ function SetPlan({ t, plans, onClose, onDone }: { t: any; plans: any[]; onClose:
           </div>
         )}
         <Field label="أو حدّد تاريخ انتهاء بالضبط">
-          <div className="flex gap-2">
-            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <div className="flex flex-wrap items-center gap-2">
+            <DateTimeField dateOnly clearable={false} label="تاريخ انتهاء الاشتراك" value={date} onChange={setDate} />
             <button className="btn btn-ghost shrink-0" disabled={busy || !planId || !date} onClick={() => save({ plan_id: planId, expires_at: new Date(`${date}T23:59:59`).getTime() }, "تم تحديد تاريخ الانتهاء")}>حفظ التاريخ</button>
           </div>
         </Field>

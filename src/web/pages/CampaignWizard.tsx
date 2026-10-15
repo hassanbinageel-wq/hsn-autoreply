@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { DateTimeField } from "../components/DateTimeField";
 import { api, ApiError } from "../api";
 import { navigate } from "../App";
 import { renderTemplate, claimsDelivery, claimsFollowRequired, contentLinkButton, publicReplyVariants, pickVariant, SAFE_PUBLIC_REPLIES, MAX_PUBLIC_VARIANTS, TEMPLATE_VARIABLES } from "../../shared/template";
@@ -312,7 +313,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
       const friendly = (d: { path: string; message: string }) =>
         d.path.startsWith("media_ids") ? { path: "", message: "معرّف منشور غير صالح في «المعرفات اليدوية» — امسح الخانة واختر المنشور من الصور، أو اختر «جميع المنشورات»." } : d;
       setErrors((err.details ?? [{ path: "", message: err.message }]).map(friendly));
-      toast(err.message, "bad");
+      toast(err.details?.length ? friendly(err.details[0]).message : err.message, "bad");
       return null;
     } finally {
       setSaving(false);
@@ -634,18 +635,12 @@ export function CampaignWizard({ id }: { id: number | null }) {
       case 10:
         return (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
               <Field label={`بداية التشغيل — اختياري (${form.timezone})`} hint={form.schedule_start ? `تبدأ ${fmtTime(form.schedule_start, form.timezone)}` : "فاضية = تبدأ من لحظة التفعيل"}>
-                <div className="flex gap-2">
-                  <input className="input min-w-0 flex-1" type="datetime-local" value={utcToLocalInput(form.schedule_start, form.timezone)} onChange={(e) => set("schedule_start", localInputToUtc(e.target.value, form.timezone))} />
-                  {form.schedule_start && <button type="button" className="btn btn-ghost shrink-0 px-3 text-xs" onClick={() => set("schedule_start", null)}>مسح</button>}
-                </div>
+                <DateTimeField label="بداية التشغيل" emptyLabel="بدون — تبدأ من التفعيل" value={utcToLocalInput(form.schedule_start, form.timezone)} onChange={(v) => set("schedule_start", localInputToUtc(v, form.timezone))} />
               </Field>
               <Field label={`نهاية التشغيل — اختياري (${form.timezone})`} hint={form.schedule_end ? `تتوقف ${fmtTime(form.schedule_end, form.timezone)}` : "فاضية = تستمر لين توقفها أنت"}>
-                <div className="flex gap-2">
-                  <input className="input min-w-0 flex-1" type="datetime-local" value={utcToLocalInput(form.schedule_end, form.timezone)} onChange={(e) => set("schedule_end", localInputToUtc(e.target.value, form.timezone))} />
-                  {form.schedule_end && <button type="button" className="btn btn-ghost shrink-0 px-3 text-xs" onClick={() => set("schedule_end", null)}>مسح</button>}
-                </div>
+                <DateTimeField label="نهاية التشغيل" emptyLabel="بدون — تستمر لين توقفها" value={utcToLocalInput(form.schedule_end, form.timezone)} onChange={(v) => set("schedule_end", localInputToUtc(v, form.timezone))} />
               </Field>
             </div>
             <p className="surface-2 rounded-xl px-3 py-2.5 text-sm text-[var(--text-2)]">
