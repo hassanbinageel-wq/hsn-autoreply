@@ -32,6 +32,9 @@ export default defineConfig(async () => {
     test: {
       include: ["test/**/*.test.ts"],
       setupFiles: ["./test/setup.ts"],
+      // Each test boots the Workers runtime with D1 and runs whole request flows; shared CI runners are slower
+      // than a laptop, so the 5 s default cut off tests that were passing.
+      testTimeout: 30_000,
     },
   };
 });
