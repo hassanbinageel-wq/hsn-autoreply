@@ -67,10 +67,10 @@ export function PhonePreview(p: PhonePreviewProps) {
           <span className="text-lg" aria-hidden>›</span>
           <Avatar url={p.avatarUrl} />
           <span className="truncate text-sm font-bold" dir="ltr">{p.accountUsername}</span>
-          <span className="mr-auto text-sm opacity-70" aria-hidden>📞 🎥</span>
+          <span className="mr-auto text-sm text-white/70" aria-hidden>📞 🎥</span>
         </div>
         {/* body */}
-        <div ref={bodyRef} className="h-[460px] overflow-y-auto scroll-smooth px-3 py-3 text-[13px] leading-relaxed text-white">
+        <div ref={bodyRef} tabIndex={0} role="region" aria-label="معاينة المحادثة" className="h-[460px] overflow-y-auto scroll-smooth px-3 py-3 text-[13px] leading-relaxed text-white">
           {tab === "post" && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">

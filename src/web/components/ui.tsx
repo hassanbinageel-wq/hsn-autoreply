@@ -5,7 +5,7 @@ export function Card({ children, className = "", title, action }: { children: Re
   return (
     <section className={`card ${title || action ? "" : "p-4 sm:p-5"} ${className}`}>
       {(title || action) && (
-        <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3.5 sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3.5 sm:px-5">
           {title && <h2 className="text-[15.5px] font-bold">{title}</h2>}
           {action}
         </div>
@@ -18,11 +18,11 @@ export function Card({ children, className = "", title, action }: { children: Re
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
     <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-2xl font-extrabold leading-tight sm:text-[26px]">{title}</h1>
         {subtitle && <p className="muted mt-1 text-sm">{subtitle}</p>}
       </div>
-      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+      {actions && <div className="flex min-w-0 max-w-full flex-wrap gap-2">{actions}</div>}
     </header>
   );
 }
@@ -63,7 +63,7 @@ export function InfoDot({ text, className = "" }: { text: string; className?: st
           setOpen((v) => !v);
         }
       }}
-      className={`group/info relative inline-flex h-5 w-5 shrink-0 cursor-help items-center justify-center rounded-full bg-[var(--border)] text-[11px] font-bold text-[var(--text-2)] outline-none ${className}`}
+      className={`group/info relative inline-flex h-6 w-6 shrink-0 cursor-help items-center justify-center rounded-full bg-[var(--border)] text-[11px] font-bold text-[var(--text-2)] outline-none ${className}`}
     >
       ?
       <span
@@ -76,17 +76,19 @@ export function InfoDot({ text, className = "" }: { text: string; className?: st
   );
 }
 
-export function Stat({ label, value, hint, tone = "default", icon, accent = "violet", info }: { label: string; value: ReactNode; hint?: ReactNode; tone?: "default" | "good" | "warn" | "bad"; icon?: ReactNode; accent?: keyof typeof STAT_ACCENT; info?: string }) {
+export function Stat({ label, value, hint, tone = "default", icon, accent = "violet", info, onClick, actionLabel }: { label: string; value: ReactNode; hint?: ReactNode; tone?: "default" | "good" | "warn" | "bad"; icon?: ReactNode; accent?: keyof typeof STAT_ACCENT; info?: string; onClick?: () => void; actionLabel?: string }) {
   const color = { default: "", good: "text-emerald-600 dark:text-emerald-400", warn: "text-amber-600 dark:text-amber-400", bad: "text-red-600 dark:text-red-400" }[tone];
   return (
-    <div className="card p-4">
-      <div className="muted flex items-center gap-2.5 text-[13px] font-semibold">
+    <div className={`card relative h-full p-4 ${onClick ? "transition hover:ring-1 hover:ring-[var(--color-brand-500)]" : ""}`}>
+      {/* A clickable tile is one full-size button under the content; the "?" sits above it and never triggers it. */}
+      {onClick && <button type="button" className="absolute inset-0 rounded-2xl" aria-label={actionLabel ?? `${label}: عرض التفاصيل`} onClick={onClick} />}
+      <div className="muted pointer-events-none relative flex items-center gap-2.5 text-[13px] font-semibold">
         {icon && <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${STAT_ACCENT[accent]}`}>{icon}</span>}
         <span className="flex-1">{label}</span>
-        {info && <InfoDot text={info} />}
+        {info && <InfoDot text={info} className="pointer-events-auto" />}
       </div>
-      <div className={`font-display mt-2 text-[26px] font-extrabold leading-tight tabular-nums ${color}`}>{value}</div>
-      {hint && <div className="muted mt-1 text-xs">{hint}</div>}
+      <div className={`font-display pointer-events-none relative mt-2 text-[26px] font-extrabold leading-tight tabular-nums ${color}`}>{value}</div>
+      {hint && <div className="muted pointer-events-none relative mt-1 text-xs">{hint}</div>}
     </div>
   );
 }
@@ -199,6 +201,7 @@ let toastSetter: ((t: { text: string; tone: string } | null) => void) | null = n
 export function toast(text: string, tone: "good" | "bad" | "info" = "good") {
   toastSetter?.({ text, tone });
 }
+/** Success / info messages fade after a few seconds; errors stay until closed (they often explain what to fix). */
 export function ToastHost() {
   const [t, setT] = useState<{ text: string; tone: string } | null>(null);
   useEffect(() => {
@@ -208,14 +211,21 @@ export function ToastHost() {
     };
   }, []);
   useEffect(() => {
-    if (!t) return;
-    const id = setTimeout(() => setT(null), 3500);
+    if (!t || t.tone === "bad") return;
+    const id = setTimeout(() => setT(null), 5000);
     return () => clearTimeout(id);
   }, [t]);
-  if (!t) return null;
+  // The live region is always in the page so screen readers announce every new message.
   return (
-    <div className="fixed inset-x-0 bottom-24 z-50 flex justify-center px-4 sm:bottom-6" aria-live="polite">
-      <div className={`rounded-2xl px-4 py-3 text-sm font-semibold shadow-xl ${TONES[t.tone] ?? TONES.info}`}>{t.text}</div>
+    <div className="pointer-events-none fixed inset-x-0 bottom-24 z-50 flex justify-center px-4 sm:bottom-6" role="status" aria-live="polite" aria-atomic="true">
+      {t && (
+        <div className={`pointer-events-auto flex max-w-lg items-start gap-3 rounded-2xl px-4 py-3 text-sm font-semibold shadow-xl ${TONES[t.tone] ?? TONES.info}`}>
+          <span className="min-w-0 flex-1">{t.text}</span>
+          {t.tone === "bad" && (
+            <button type="button" className="-my-1 -ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg opacity-70 hover:opacity-100" aria-label="إغلاق الرسالة" onClick={() => setT(null)}>✕</button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -261,6 +271,7 @@ export function Tip({ text, children, className = "" }: { text?: string; childre
   return (
     <span className={`group/tip relative inline cursor-help outline-none ${className}`} tabIndex={0}>
       {children}
+      {"\u200F"}
       <span className="muted mr-1 text-[0.75em]" aria-hidden>ⓘ</span>
       <span role="tooltip" className="pointer-events-none invisible absolute bottom-full right-0 z-40 mb-2 w-64 max-w-[78vw] rounded-xl bg-[#16122b] px-3 py-2 text-xs font-normal leading-relaxed text-white no-underline opacity-0 shadow-lg transition-opacity group-hover/tip:visible group-hover/tip:opacity-100 group-focus/tip:visible group-focus/tip:opacity-100 dark:bg-white dark:text-[#16122b]">
         {text}

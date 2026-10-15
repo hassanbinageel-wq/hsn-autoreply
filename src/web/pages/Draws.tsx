@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { askConfirm, askText } from "../components/Confirm";
 import { api } from "../api";
 import { Link, navigate } from "../App";
 import { Alert, Card, Field, InfoDot, Modal, PageHeader, Spinner, Toggle, fmtTime, toast, useAsync } from "../components/ui";
@@ -190,11 +191,11 @@ function SettingsFields({ form, set }: { form: DrawForm; set: (p: Partial<DrawFo
         <Field label="عدد الفائزين">
           <input className="input" type="number" min={1} max={500} value={form.winners_count} onChange={(e) => set({ winners_count: Math.max(1, Number(e.target.value) || 1) })} />
         </Field>
-        <Field label="بداية فترة المشاركات (اختياري)" hint={`بتوقيت جهازك: ${deviceTz}`}>
-          <input className="input" type="datetime-local" value={toLocalInput(form.starts_at)} onChange={(e) => set({ starts_at: fromLocalInput(e.target.value) })} />
+        <Field label="بداية فترة المشاركات (اختياري)" hint={dateHint(form.starts_at, deviceTz)}>
+          <input className="input" type="datetime-local" dir="ltr" value={toLocalInput(form.starts_at)} onChange={(e) => set({ starts_at: fromLocalInput(e.target.value) })} />
         </Field>
-        <Field label="نهاية فترة المشاركات (اختياري)" hint={`بتوقيت جهازك: ${deviceTz}`}>
-          <input className="input" type="datetime-local" value={toLocalInput(form.ends_at)} onChange={(e) => set({ ends_at: fromLocalInput(e.target.value) })} />
+        <Field label="نهاية فترة المشاركات (اختياري)" hint={dateHint(form.ends_at, deviceTz)}>
+          <input className="input" type="datetime-local" dir="ltr" value={toLocalInput(form.ends_at)} onChange={(e) => set({ ends_at: fromLocalInput(e.target.value) })} />
         </Field>
         <Field label="كلمة أو عبارة يجب وجودها (اختياري)" hint="المقارنة تتجاهل التشكيل والفرق بين أ/إ/ا و ة/ه و ى/ي.">
           <input className="input" value={form.keyword} maxLength={100} onChange={(e) => set({ keyword: e.target.value })} placeholder="مثال: مسابقة" />
@@ -256,11 +257,18 @@ function SettingsFields({ form, set }: { form: DrawForm; set: (p: Partial<DrawFo
 // Campaign draws list + create
 // ---------------------------------------------------------------------------------------------------------------
 
+/** The picked moment in plain Arabic under the date field (the native picker's format depends on the browser). */
+function dateHint(ms: number | null | undefined, tz: string): string {
+  if (!ms) return `بتوقيت جهازك (${tz})`;
+  const f = new Intl.DateTimeFormat("ar-SA-u-ca-gregory-nu-latn", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return `${f.format(new Date(ms))} — بتوقيت جهازك (${tz})`;
+}
+
 export function DrawsHomePage() {
   const { data: draws, reload: reloadDraws } = useAsync(() => api<any[]>("/api/draws"), []);
   const removeDraw = async (d: any) => {
     const done = d.status !== "draft";
-    if (!confirm(`حذف «${d.name}» من السجل؟${done ? "\nسيُحذف مع فائزيه وبطاقاتهم ولن يُحسب في «استبعاد الفائزين السابقين»." : ""}\nلا يمكن التراجع.`)) return;
+    if (!(await askConfirm({ title: `حذف «${d.name}» من السجل؟`, message: `${done ? "ينحذف مع فائزيه وبطاقاتهم، وما يُحسب في «استبعاد الفائزين السابقين».\n" : ""}ما يمكن التراجع.`, confirmLabel: "حذف السحب", danger: true }))) return;
     try {
       await api(`/api/draws/${d.id}`, { method: "DELETE" });
       toast("تم الحذف");
@@ -270,9 +278,8 @@ export function DrawsHomePage() {
     }
   };
   const clearAll = async () => {
-    const word = prompt("مسح سجل السحوبات بالكامل (كل السحوبات وفائزيها وبطاقاتهم)؟ لا يمكن التراجع.\nاكتب: مسح");
+    const word = await askText({ title: "مسح سجل السحوبات بالكامل؟", message: "تنحذف كل السحوبات وفائزيها وبطاقاتهم. ما يمكن التراجع.", label: "للتأكيد اكتب: مسح", expect: "مسح", confirmLabel: "مسح السجل", danger: true });
     if (word === null) return;
-    if (word.trim() !== "مسح") return toast("لم يُمسح شيء — اكتب «مسح» للتأكيد", "bad");
     try {
       const r = await api<{ deleted: number }>("/api/draws/clear", { body: { confirm: "مسح" } });
       toast(`تم مسح ${r.deleted} سحب`);
@@ -469,7 +476,7 @@ function WinnerCardModal({ draw, winner, design, account, onClose, onSent }: { d
   const send = async () => {
     if (!src || !plan?.can) return;
     const how = plan.channel === "dm" ? "صورة البطاقة + رسالة التهنئة في الخاص" : "رد خاص واحد على تعليقه (نص التهنئة + زر يفتح البطاقة)";
-    if (!confirm(`إرسال إلى ${winner.author_username ? "@" + winner.author_username : "الفائز"}؟\n${how}\nهذه رسالة حقيقية ولا يمكن التراجع عنها.`)) return;
+    if (!(await askConfirm({ title: `إرسال إلى ${winner.author_username ? "@" + winner.author_username : "الفائز"}؟`, message: `${how}\nهذه رسالة حقيقية وما يمكن التراجع عنها.`, confirmLabel: "إرسال" }))) return;
     setBusy(true);
     try {
       await api(`/api/draws/${draw.id}/winners/${winner.id}/card`, { body: { image: src } });
@@ -486,7 +493,7 @@ function WinnerCardModal({ draw, winner, design, account, onClose, onSent }: { d
   };
   const publicReply = async () => {
     if (!replyText.trim()) return;
-    if (!confirm(`نشر هذا الرد العام تحت تعليق ${winner.author_username ? "@" + winner.author_username : "الفائز"}؟\n\n${replyText}\n\nسيظهر للجميع ولا يمكن التراجع عنه من هنا.`)) return;
+    if (!(await askConfirm({ title: `نشر رد عام تحت تعليق ${winner.author_username ? "@" + winner.author_username : "الفائز"}؟`, message: `«${replyText}»\n\nيظهر للجميع، وما يمكن التراجع عنه من هنا.`, confirmLabel: "نشر الرد" }))) return;
     setBusy(true);
     try {
       await api(`/api/draws/${draw.id}/winners/${winner.id}/public-reply`, { body: { text: replyText } });
@@ -816,7 +823,7 @@ export function DrawPage({ id }: { id: number }) {
                   </button>
                   {fetching && <button className="btn btn-ghost" onClick={() => (stopFetch.current = true)}>إيقاف</button>}
                   {d.fetch_status !== "idle" && !fetching && (
-                    <button className="btn btn-ghost" onClick={() => confirm("حذف المشاركات المجلوبة والجلب من البداية؟") && fetchAll(true)}>إعادة الجلب من البداية</button>
+                    <button className="btn btn-ghost" onClick={async () => (await askConfirm({ title: "إعادة الجلب من البداية؟", message: "تنحذف المشاركات المجلوبة وتنجلب من جديد.", confirmLabel: "إعادة الجلب" })) && fetchAll(true)}>إعادة الجلب من البداية</button>
                   )}
                 </div>
               )}
@@ -860,7 +867,10 @@ export function DrawPage({ id }: { id: number }) {
         {!pv.identity_reliable && (
           <Alert tone="warn">بعض المشاركات بدون معرّف حساب ثابت من Meta؛ تُميَّز هذه الحسابات باسم المستخدم فقط، فلا يمكن ضمان منع التكرار لها بالكامل.</Alert>
         )}
-        {pv.max_winners != null && d.winners_count > pv.max_winners && (
+        {d.fetch_status !== "complete" && d.status === "draft" && (
+          <Alert tone="info">اجلب المشاركات أولًا (الخطوة 1)، وبعدها نحسب لك عدد المؤهلين والمستبعدين.</Alert>
+        )}
+        {d.fetch_status === "complete" && pv.max_winners != null && d.winners_count > pv.max_winners && (
           <Alert tone="bad">عدد الفائزين المطلوب ({d.winners_count}) أكبر من الممكن وفق إعداداتك ({pv.max_winners}). عدّل العدد أو الإعدادات — لن يُغيَّر تلقائيًا.</Alert>
         )}
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -896,6 +906,7 @@ export function DrawPage({ id }: { id: number }) {
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <select
             className="input w-auto"
+            aria-label="تصميم بطاقة التهنئة"
             value={d.card_design_id ?? ""}
             onChange={async (e) => {
               try {
@@ -941,7 +952,7 @@ export function DrawPage({ id }: { id: number }) {
                   </button>
                 );
               return (
-                <div key={pos} className="surface-2 rounded-xl p-4 text-center text-sm opacity-60">
+                <div key={pos} className="surface-2 rounded-xl p-4 text-center text-sm text-[var(--muted)]">
                   المركز {pos} — الفائز {ordinal(pos)} (بعد اختيار السابق)
                 </div>
               );

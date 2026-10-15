@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type AnchorHTMLAttributes, type ComponentType, type ReactNode } from "react";
 import { api, setCsrf, setUnauthorizedHandler } from "./api";
 import { deviceToken, initNative, isNative, watchNetwork } from "./platform";
 import { Alert, Modal, Spinner, ToastHost, setTz, toast } from "./components/ui";
@@ -8,21 +8,40 @@ import { Icon } from "./components/Icon";
 import { AccountAvatar } from "./components/UserAvatar";
 import { LoginPage } from "./pages/Login";
 import { DashboardPage } from "./pages/Dashboard";
-import { ConnectionPage } from "./pages/Connection";
-import { MediaPage } from "./pages/Media";
 import { CampaignsPage } from "./pages/Campaigns";
-import { CampaignWizard } from "./pages/CampaignWizard";
-import { CampaignStatsPage } from "./pages/CampaignStats";
-import { InboxPage } from "./pages/Inbox";
-import { DrawsHomePage, DrawPage } from "./pages/Draws";
-import { CardDesignsPage } from "./pages/CardDesigns";
-import { TemplatesPage } from "./pages/Templates";
-import { LogsPage } from "./pages/Logs";
-import { SimulatorPage } from "./pages/Simulator";
-import { OwnerPage } from "./pages/Owner";
-import { SubscriptionPage } from "./pages/Subscription";
-import { SettingsPage } from "./pages/Settings";
-import { DownloadPage } from "./pages/Download";
+
+// Every other screen loads on first visit, so sign-in and the dashboard download only what they need.
+// A tab left open across a release may ask for a chunk that no longer exists: reload once to get the new files.
+const lazyPage = <K extends string>(load: () => Promise<Record<K, ComponentType<any>>>, name: K) =>
+  lazy(() =>
+    load().then(
+      (m) => {
+        try { sessionStorage.removeItem("hsn.chunkReload"); } catch { /* storage blocked */ }
+        return { default: m[name] };
+      },
+      (e) => {
+        let again = false;
+        try { again = !sessionStorage.getItem("hsn.chunkReload"); sessionStorage.setItem("hsn.chunkReload", "1"); } catch { /* storage blocked */ }
+        if (again) location.reload();
+        throw e;
+      },
+    ),
+  );
+const ConnectionPage = lazyPage(() => import("./pages/Connection"), "ConnectionPage");
+const MediaPage = lazyPage(() => import("./pages/Media"), "MediaPage");
+const CampaignWizard = lazyPage(() => import("./pages/CampaignWizard"), "CampaignWizard");
+const CampaignStatsPage = lazyPage(() => import("./pages/CampaignStats"), "CampaignStatsPage");
+const InboxPage = lazyPage(() => import("./pages/Inbox"), "InboxPage");
+const DrawsHomePage = lazyPage(() => import("./pages/Draws"), "DrawsHomePage");
+const DrawPage = lazyPage(() => import("./pages/Draws"), "DrawPage");
+const CardDesignsPage = lazyPage(() => import("./pages/CardDesigns"), "CardDesignsPage");
+const TemplatesPage = lazyPage(() => import("./pages/Templates"), "TemplatesPage");
+const LogsPage = lazyPage(() => import("./pages/Logs"), "LogsPage");
+const SimulatorPage = lazyPage(() => import("./pages/Simulator"), "SimulatorPage");
+const OwnerPage = lazyPage(() => import("./pages/Owner"), "OwnerPage");
+const SubscriptionPage = lazyPage(() => import("./pages/Subscription"), "SubscriptionPage");
+const SettingsPage = lazyPage(() => import("./pages/Settings"), "SettingsPage");
+const DownloadPage = lazyPage(() => import("./pages/Download"), "DownloadPage");
 
 // ---------------- tiny hash router ----------------
 export function useRoute(): string {
@@ -37,9 +56,9 @@ export function useRoute(): string {
 export function navigate(to: string) {
   location.hash = to;
 }
-export function Link({ to, children, className }: { to: string; children: ReactNode; className?: string }) {
+export function Link({ to, children, ...rest }: { to: string; children: ReactNode } & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href">) {
   return (
-    <a href={`#${to}`} className={className}>
+    <a href={`#${to}`} {...rest}>
       {children}
     </a>
   );
@@ -247,12 +266,26 @@ export function App() {
       case "/download": page = <DownloadPage />; break;
       case "/owner": page = isOwner ? <OwnerPage /> : <DashboardPage />; break;
       case "/subscription": page = <SubscriptionPage />; break;
-      default: page = <Alert tone="warn">الصفحة غير موجودة</Alert>;
+      default:
+        page = (
+          <div className="card mx-auto mt-6 max-w-md p-8 text-center">
+            <span className="surface-2 mx-auto flex h-14 w-14 items-center justify-center rounded-2xl"><Icon name="search" size={26} /></span>
+            <h1 className="mt-4 text-xl font-extrabold">الصفحة غير موجودة</h1>
+            <p className="muted mt-2 text-sm">ربما تغيّر الرابط أو انحذفت الصفحة.</p>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <Link to="/" className="btn btn-primary">الرجوع للرئيسية</Link>
+              <Link to="/campaigns" className="btn btn-ghost">الحملات</Link>
+            </div>
+          </div>
+        );
     }
 
   const isActive = (to: string) => (to === "/" ? route === "/" : route.startsWith(to));
 
   const current = NAV.find((n) => isActive(n.to));
+  // A distinct tab title per screen (browser tabs, history, screen-reader page announcements).
+  const pageTitle = m ? (m[1] === "new" ? "حملة جديدة" : "تعديل الحملة") : ms ? "إحصائيات الحملة" : mdr ? "السحب" : route === "/draws/designs" ? "تصاميم البطاقات" : current?.label ?? "الصفحة غير موجودة";
+  if (document.title !== `${pageTitle} · HSN AutoReply`) document.title = `${pageTitle} · HSN AutoReply`;
   // Sections a customer's plan does not include: the menu item shows a lock and opens the upgrade box.
   const lockedFeature = (to: string): string | null => {
     if (isOwner || !limits) return null;
@@ -272,7 +305,7 @@ export function App() {
     return to === "/download" && downloadUrl ? (
       <a href={downloadUrl} download rel="noopener" className={className}>{children}</a>
     ) : (
-      <Link to={to} className={className}>{children}</Link>
+      <Link to={to} className={className} aria-current={isActive(to) ? "page" : undefined}>{children}</Link>
     );
   };
   const nextTheme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
@@ -328,7 +361,7 @@ export function App() {
 
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)]/90 px-4 backdrop-blur lg:h-[68px] lg:px-8">
-          <Link to="/" className="flex items-center gap-2 lg:hidden">
+          <Link to="/" className="flex items-center gap-2 lg:hidden" aria-label="الرئيسية">
             <span className="grad flex h-9 w-9 items-center justify-center rounded-xl text-white"><Icon name="zap" size={19} /></span>
           </Link>
           <div className="min-w-0">
@@ -364,7 +397,7 @@ export function App() {
               <Alert tone="warn">لا يوجد اتصال بالإنترنت. الأتمتة مستمرة على الخادم؛ ستتحدث البيانات عند عودة الاتصال.</Alert>
             </div>
           )}
-          {page}
+          <Suspense fallback={<Spinner />}>{page}</Suspense>
         </main>
       </div>
 
@@ -379,9 +412,9 @@ export function App() {
           );
         })}
         <div className="flex justify-center">
-          <Link to="/campaigns/new" className="grad -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/40" aria-label="حملة جديدة">
+          {!route.startsWith("/campaigns/") && <Link to="/campaigns/new" className="grad -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/40" aria-label="حملة جديدة">
             <Icon name="plus" size={26} />
-          </Link>
+          </Link>}
         </div>
         {(() => {
           const n = NAV.find((x) => x.to === "/inbox")!;

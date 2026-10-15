@@ -1,3 +1,5 @@
+import { webhookLabel } from "../../shared/states";
+import { askConfirm } from "../components/Confirm";
 import { useMemo, useState } from "react";
 import { api } from "../api";
 import { Link } from "../App";
@@ -50,7 +52,7 @@ export function DashboardPage() {
   const acc = d.account;
 
   const toggleAutomation = async (enabled: boolean) => {
-    if (!enabled && !confirm("إيقاف شامل للأتمتة؟ ستُلغى الرسائل المعلّقة ولن تُعالج الأحداث الجديدة حتى إعادة التشغيل.")) return;
+    if (!enabled && !(await askConfirm({ title: "إيقاف كل الأتمتة؟", message: "تُلغى الرسائل المعلّقة، وما تُعالج التعليقات الجديدة لين تشغّلها من جديد.", confirmLabel: "إيقاف الأتمتة", danger: true }))) return;
     setBusy(true);
     try {
       await api("/api/automation", { body: { enabled } });
@@ -88,6 +90,8 @@ export function DashboardPage() {
         }
       />
 
+      <GettingStarted connected={!!acc && acc.status === "active"} total={(d.campaigns?.active ?? 0) + (d.campaigns?.paused ?? 0) + (d.campaigns?.draft ?? 0)} active={d.campaigns?.active ?? 0} />
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
         {[
           { label: "تفاعلات مستلمة", value: received, hint: "تعليقات وردود ومنشن ستوري", icon: "msg", accent: "violet", s: series?.comments, c: "#7c3aed" },
@@ -102,7 +106,7 @@ export function DashboardPage() {
         ))}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1.65fr_1fr]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
         <Card
           title="نشاط الحملات"
           action={
@@ -119,7 +123,7 @@ export function DashboardPage() {
           )}
         </Card>
 
-        <Card title="حالة النظام" action={<Badge value={d.automation_enabled ? "active" : "paused"} label={d.automation_enabled ? "يعمل" : "متوقف"} />}>
+        <Card className="order-first lg:order-none" title="حالة النظام" action={<Badge value={d.automation_enabled ? "active" : "paused"} label={d.automation_enabled ? "يعمل" : "متوقف"} />}>
           <div className="space-y-4">
             <Toggle
               checked={!!d.automation_enabled}
@@ -134,8 +138,8 @@ export function DashboardPage() {
                 <div className="min-w-0 flex-1">
                   <b className="block truncate" dir="ltr" style={{ textAlign: "right" }}>@{acc.username}</b>
                   <div className="mt-1 flex flex-wrap gap-1.5">
-                    <Badge value={acc.status} label={acc.status === "active" ? "مفوَّض" : undefined} />
-                    <Badge value={acc.webhook_status} label={acc.webhook_status === "subscribed" ? "Webhooks مشتركة" : `Webhooks: ${acc.webhook_status}`} />
+                    <Badge value={acc.status} label={acc.status === "active" ? "متصل" : undefined} />
+                    <Badge value={acc.webhook_status} label={webhookLabel(acc.webhook_status)} />
                   </div>
                   <div className="muted mt-1 text-xs">آخر حدث: {fmtTime(acc.last_webhook_at)}</div>
                 </div>
@@ -160,7 +164,7 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1.65fr_1fr]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
         <Card title="أفضل الحملات" action={<Link to="/campaigns" className="btn btn-ghost min-h-9 px-3 text-xs">عرض الكل</Link>}>
           {!(d.top_campaigns as any[])?.length ? (
             <p className="muted py-6 text-center text-sm">لا توجد تفاعلات في هذه المدة بعد.</p>
@@ -223,8 +227,12 @@ export function DashboardPage() {
 
       <UsageCard />
 
-      <Card title="تفاصيل المدة">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <details className="card group p-0">
+        <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-5 py-3 font-bold [&::-webkit-details-marker]:hidden">
+          تفاصيل المدة
+          <Icon name="chev" size={18} className="muted transition group-open:rotate-180" />
+        </summary>
+        <div className="grid grid-cols-2 gap-3 border-t border-[var(--border)] p-4 sm:grid-cols-3 sm:p-5 lg:grid-cols-4">
           <MiniStat label="تعليقات" value={sum(ev, (r) => r.event_type === "comment")} />
           <MiniStat label="ردود ستوري" value={sum(ev, (r) => r.event_type === "story_reply")} />
           <MiniStat label="منشن ستوري" value={sum(ev, (r) => r.event_type === "story_mention")} />
@@ -239,7 +247,7 @@ export function DashboardPage() {
             hint="غير المؤكدة تحتاج مراجعة يدوية"
           />
         </div>
-      </Card>
+      </details>
     </div>
   );
 }
@@ -252,5 +260,38 @@ function MiniStat({ label, value, tone, hint }: { label: string; value: number |
       <div className={`font-display text-xl font-extrabold tabular-nums ${c}`}>{typeof value === "number" ? fmt(value) : value}</div>
       {hint && <div className="muted text-[11px]">{hint}</div>}
     </div>
+  );
+}
+
+/** First steps for a new account; disappears once the account is connected and a campaign is running. */
+function GettingStarted({ connected, total, active }: { connected: boolean; total: number; active: number }) {
+  if (connected && active > 0) return null;
+  const steps: Array<{ done: boolean; title: string; text: string; to: string; cta: string }> = [
+    { done: connected, title: "اربط حساب إنستقرام حقك", text: "دقيقة وحدة عبر Meta الرسمي، بدون كلمة مرور إنستقرام.", to: "/connection", cta: "اربط حسابي" },
+    { done: total > 0, title: "أنشئ أول حملة", text: "اختر المنشور، والكلمة اللي يكتبها المتابع، والرسالة اللي توصله.", to: "/campaigns/new", cta: "حملة جديدة" },
+    { done: active > 0, title: "جرّبها ثم فعّلها", text: "المحاكاة تبيّن لك وش يصير بالضبط، بدون إرسال أي رسالة حقيقية.", to: total > 0 ? "/campaigns" : "/simulator", cta: total > 0 ? "الحملات" : "المحاكاة" },
+  ];
+  const next = steps.findIndex((s) => !s.done);
+  return (
+    <section className="card border-violet-500/30 p-4 sm:p-5" aria-labelledby="start-title">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="start-title" className="font-display text-lg font-extrabold">ابدأ هنا</h2>
+        <span className="muted text-xs">{steps.filter((s) => s.done).length} من {steps.length} خطوات</span>
+      </div>
+      <ol className="mt-3 grid gap-2 md:grid-cols-3">
+        {steps.map((s, i) => (
+          <li key={s.title} className={`flex gap-3 rounded-2xl border p-3 ${i === next ? "border-violet-500/50 bg-violet-500/5" : "border-[var(--border)]"}`}>
+            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-extrabold ${s.done ? "bg-emerald-500/15 text-emerald-600" : i === next ? "grad text-white" : "surface-2 muted"}`} aria-hidden>
+              {s.done ? <Icon name="check" size={14} /> : i + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <b className={`block text-sm ${s.done ? "muted line-through decoration-1" : ""}`}>{s.title}<span className="sr-only">{s.done ? " (تم)" : ""}</span></b>
+              {!s.done && <p className="muted mt-0.5 text-xs leading-relaxed">{s.text}</p>}
+              {i === next && <Link to={s.to} className="btn btn-primary mt-2 min-h-10 px-4 text-sm">{s.cta}</Link>}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }

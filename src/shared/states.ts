@@ -105,3 +105,11 @@ export const AR_LABELS: Record<string, string> = {
   processed: "تمت المعالجة",
   ignored: "تم التجاهل",
 };
+
+/** Plain wording for the Instagram webhook subscription (customers never need the word "webhook"). */
+export function webhookLabel(status: string | null | undefined): string {
+  if (status === "subscribed") return "استقبال التعليقات يعمل";
+  if (status === "failed") return "استقبال التعليقات متوقف — أعد التفعيل";
+  if (status === "not_subscribed") return "استقبال التعليقات غير مفعّل";
+  return "استقبال التعليقات: بانتظار أول حدث";
+}

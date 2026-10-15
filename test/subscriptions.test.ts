@@ -254,7 +254,11 @@ describe("owner tools", () => {
       expect((await call(`/api/owner/payment-providers/${prov.body.id}/accounts`, OWNER, "POST", { holder: "حسن", number, currency })).status).toBe(200);
     }
     const ex = await call("/api/owner/payment-providers", OWNER, "POST", { name: "صرافة النجم", kind: "exchange" });
+    await call(`/api/owner/payment-providers/${ex.body.id}/accounts`, OWNER, "POST", { holder: "حسن", number: "444", currency: "YER" });
     await call(`/api/owner/payment-providers/${ex.body.id}/move`, OWNER, "POST", { dir: "up" });
+    // a bank with no account yet is not shown to buyers (the owner still sees it)
+    await call("/api/owner/payment-providers", OWNER, "POST", { name: "جهة فارغة", kind: "bank" });
+    expect((await call("/api/owner/payment-methods", OWNER)).body.map((p: any) => p.name)).toContain("جهة فارغة");
     const pub = (await call("/api/public/plans")).body;
     expect(pub.payment_methods.map((p: any) => p.name)).toEqual(["صرافة النجم", "بنك الكريمي"]);
     const bank = pub.payment_methods[1];
@@ -272,7 +276,7 @@ describe("owner tools", () => {
     expect((await call("/api/owner/payment-providers", h, "POST", { name: "x" })).status).toBe(403);
     expect((await call("/api/subscription", h)).body.payment_methods).toHaveLength(2);
     await call(`/api/owner/payment-providers/${prov.body.id}`, OWNER, "DELETE");
-    expect((await DB.prepare("SELECT COUNT(*) AS n FROM payment_accounts").first<any>()).n).toBe(0);
+    expect((await DB.prepare("SELECT COUNT(*) AS n FROM payment_accounts WHERE provider_id = ?").bind(prov.body.id).first<any>()).n).toBe(0);
   });
 
   it("exchange rates are the owner's and come with the catalog; only four currencies", async () => {
@@ -357,6 +361,7 @@ describe("owner tools", () => {
     const { h } = await customerWithAccount();
     expect((await call("/api/owner/featured-plan", h, "PUT", { plan_id: "max", label: "x" })).status).toBe(403);
     const w = await call("/api/owner/payment-providers", OWNER, "POST", { name: "محفظة جيب", kind: "wallet" });
+    await call(`/api/owner/payment-providers/${w.body.id}/accounts`, OWNER, "POST", { holder: "حسن", number: "777", currency: "YER" });
     expect(w.status).toBe(200);
     expect((await call("/api/public/plans")).body.payment_methods[0].kind).toBe("wallet");
   });

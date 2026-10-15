@@ -140,7 +140,7 @@ export function UsageCard() {
         </p>
         </>}
         <div className={u ? "border-t border-[var(--border)] pt-3" : ""}>
-          <div className="mb-2 font-semibold">استرجاع التعليقات الفائتة</div>
+          {u && <div className="mb-2 font-semibold">استرجاع التعليقات الفائتة</div>}
           <p className="muted mb-2 text-xs">
             يقرأ آخر التعليقات على منشورات حملاتك النشطة ويرد على أي تعليق مطابق لم يصل تنبيهه (خلال 7 أيام، وبعد تفعيل الحملة). لا يرد على نفس التعليق مرتين.
           </p>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { askConfirm } from "../components/Confirm";
 import { api } from "../api";
 import { Link, navigate } from "../App";
 import { AR_LABELS } from "../../shared/states";
@@ -106,7 +107,7 @@ function CardMenu({ c, act, onCopy }: { c: any; act: (fn: () => Promise<unknown>
   const item = "block w-full px-4 py-2.5 text-right text-sm hover:bg-[var(--surface-2)]";
   return (
     <div className="relative" ref={ref}>
-      <button className="btn btn-ghost min-h-9 px-2.5" aria-label="خيارات" aria-haspopup="menu" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}><Icon name="more" size={18} /></button>
+      <button className="btn btn-ghost min-h-9 px-2.5" aria-label="خيارات الحملة" aria-haspopup="menu" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}><Icon name="more" size={18} /></button>
       {open && (
         <div role="menu" className="card absolute bottom-9 left-0 z-20 w-44 overflow-hidden p-0 shadow-xl" onClick={(e) => e.stopPropagation()}>
           <button role="menuitem" className={item} onClick={() => navigate(`/campaigns/${c.id}/stats`)}>📊 الإحصائيات</button>
@@ -118,7 +119,7 @@ function CardMenu({ c, act, onCopy }: { c: any; act: (fn: () => Promise<unknown>
           )}
           {c.type === "comment" && <button role="menuitem" className={item} onClick={() => { setOpen(false); onCopy(); }}>🎬 نسخ لريل جديد</button>}
           <button role="menuitem" className={item} onClick={() => act(() => api(`/api/campaigns/${c.id}/duplicate`, { body: {} }), "تم النسخ كمسودة")}>📄 نسخ كمسودة</button>
-          <button role="menuitem" className={`${item} text-red-600`} onClick={() => confirm(`حذف «${c.name}»؟ ستُلغى مهامها المعلّقة.`) && act(() => api(`/api/campaigns/${c.id}`, { method: "DELETE" }), "تم الحذف")}>🗑️ حذف</button>
+          <button role="menuitem" className={`${item} text-red-600`} onClick={async () => { setOpen(false); (await askConfirm({ title: `حذف «${c.name}»؟`, message: "تنحذف الحملة وتُلغى رسائلها المعلّقة.", confirmLabel: "حذف الحملة", danger: true })) && act(() => api(`/api/campaigns/${c.id}`, { method: "DELETE" }), "تم الحذف"); }}>🗑️ حذف</button>
         </div>
       )}
     </div>
@@ -201,14 +202,14 @@ export function CampaignsPage() {
           <Icon name="search" size={17} className="muted absolute right-3 top-1/2 -translate-y-1/2" />
           <input className="input pr-10" placeholder="بحث بالاسم…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="بحث" />
         </div>
-        <div className="seg overflow-x-auto" role="tablist" aria-label="الحالة">
+        <div className="seg max-w-full overflow-x-auto" role="group" aria-label="تصفية حسب الحالة">
           {[["", "الكل"], ["active", "نشطة"], ["paused", "متوقفة"], ["draft", "مسودة"]].map(([v, l]) => (
-            <button key={v} className={status === v ? "on" : ""} onClick={() => setStatus(v)}>{l}</button>
+            <button key={v} type="button" aria-pressed={status === v} className={status === v ? "on" : ""} onClick={() => setStatus(v)}>{l}</button>
           ))}
         </div>
-        <div className="seg overflow-x-auto" role="tablist" aria-label="النوع">
+        <div className="seg max-w-full overflow-x-auto" role="group" aria-label="تصفية حسب النوع">
           {[["", "كل الأنواع"], ["comment", "تعليقات"], ["story_reply", "ردود ستوري"], ["story_mention", "منشن"]].map(([v, l]) => (
-            <button key={v} className={type === v ? "on" : ""} onClick={() => setType(v)}>{l}</button>
+            <button key={v} type="button" aria-pressed={type === v} className={type === v ? "on" : ""} onClick={() => setType(v)}>{l}</button>
           ))}
         </div>
       </div>
@@ -223,14 +224,8 @@ export function CampaignsPage() {
           {data!.map((c) => {
             const rate = c.people_count ? Math.round((c.delivered_count / c.people_count) * 100) : null;
             return (
-              <div
-                key={c.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => navigate(`/campaigns/${c.id}`)}
-                onKeyDown={(e) => e.key === "Enter" && navigate(`/campaigns/${c.id}`)}
-                className="card group flex cursor-pointer flex-col overflow-hidden transition hover:-translate-y-0.5 hover:shadow-xl"
-              >
+              // The name is the card's link and stretches over the whole card; the buttons sit above it.
+              <div key={c.id} className="card group relative flex flex-col overflow-hidden transition hover:-translate-y-0.5 hover:shadow-xl">
                 <div className="relative w-full overflow-hidden" style={{ background: TYPE_GRAD[c.type], height: phone ? 92 : Math.round(size * 0.45) }}>
                   {c.cover_url && <img src={c.cover_url} alt="" loading="lazy" referrerPolicy="no-referrer" className={`h-full w-full object-cover transition group-hover:scale-105 ${c.status !== "active" ? "opacity-60 grayscale-[40%]" : ""}`} />}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent" />
@@ -244,15 +239,15 @@ export function CampaignsPage() {
                   </div>
                 </div>
                 <div className={`flex flex-1 flex-col ${phone ? "p-2.5" : compact ? "p-3" : "p-4"}`}>
-                  <b className={`font-display truncate font-extrabold ${phone ? "text-[13px]" : "text-[15px]"}`}>{c.name}</b>
+                  <Link to={`/campaigns/${c.id}`} className={`font-display truncate font-extrabold after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:rounded-2xl focus-visible:after:ring-2 focus-visible:after:ring-violet-500 ${phone ? "text-[13px]" : "text-[15px]"}`}>{c.name}</Link>
                   <span className="muted text-[11px] sm:text-xs">{AR_LABELS[c.type] ?? c.type}</span>
                   <div className={`grid grid-cols-3 ${phone ? "mt-2 gap-1 text-[10px]" : "mt-3 gap-2 text-xs"}`}>
                     <div><b className={`font-display block ${phone ? "text-sm" : "text-base"}`}>{c.people_count}</b><span className="muted">شخص</span></div>
                     <div><b className={`font-display block ${phone ? "text-sm" : "text-base"}`}>{c.delivered_count}</b><span className="muted">سُلِّم</span></div>
                     <div><b className={`font-display block ${phone ? "text-sm" : "text-base"}`}>{rate == null ? "—" : `${rate}%`}</b><span className="muted">{phone ? "التسليم" : "نسبة التسليم"}</span></div>
                   </div>
-                  <div className={`flex gap-1.5 ${phone ? "mt-2" : "mt-3 gap-2"}`}>
-                    <button className="btn btn-ghost min-h-9 flex-1 text-xs" onClick={(e) => { e.stopPropagation(); navigate(`/campaigns/${c.id}/stats`); }}>
+                  <div className={`relative z-10 flex gap-1.5 ${phone ? "mt-2" : "mt-3 gap-2"}`}>
+                    <button className="btn btn-ghost min-h-9 flex-1 text-xs" aria-label={`إحصائيات ${c.name}`} onClick={(e) => { e.stopPropagation(); navigate(`/campaigns/${c.id}/stats`); }}>
                       <Icon name="eye" size={16} />{!compact && "الإحصائيات"}
                     </button>
                     <CardMenu c={c} act={act} onCopy={() => setCopyFor(c)} />

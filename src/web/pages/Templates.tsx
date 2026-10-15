@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { askConfirm } from "../components/Confirm";
 import { api } from "../api";
 import { TEMPLATE_VARIABLES } from "../../shared/template";
 import { Alert, Card, Field, Modal, PageHeader, Spinner, toast, useAsync } from "../components/ui";
@@ -41,7 +42,7 @@ export function TemplatesPage() {
               <p className="whitespace-pre-wrap text-sm">{t.body}</p>
               <div className="mt-3 flex gap-2">
                 <button className="btn btn-ghost" onClick={() => setEdit(t)}>تعديل</button>
-                <button className="btn btn-ghost text-red-600" onClick={async () => { if (confirm("حذف القالب؟")) { await api(`/api/templates/${t.id}`, { method: "DELETE" }); reload(); } }}>حذف</button>
+                <button className="btn btn-ghost text-red-600" onClick={async () => { if (await askConfirm({ title: "حذف القالب؟", message: `«${t.name ?? ""}» ينحذف نهائيًا.`, confirmLabel: "حذف القالب", danger: true })) { await api(`/api/templates/${t.id}`, { method: "DELETE" }); reload(); } }}>حذف</button>
               </div>
             </Card>
           ))}

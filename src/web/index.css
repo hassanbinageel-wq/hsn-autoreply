@@ -27,7 +27,7 @@
   --border: #ebe8f4;
   --text: #16122b;
   --text-2: #4a4562;
-  --muted: #7d7896;
+  --muted: #6b6684;
   --grad: linear-gradient(135deg, #7c3aed 0%, #c026d3 55%, #f97316 100%);
   --shadow: 0 1px 2px rgba(22, 18, 43, 0.04), 0 8px 24px rgba(22, 18, 43, 0.06);
   --active-bg: linear-gradient(90deg, rgba(124, 58, 237, 0.08), rgba(124, 58, 237, 0.16));
@@ -110,10 +110,21 @@ h1, h2, h3, h4, .font-display {
 }
 .seg {
   display: inline-flex;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 0.75rem;
   padding: 3px;
+}
+.seg::-webkit-scrollbar {
+  display: none;
+}
+@media (max-width: 359px) {
+  .seg > * {
+    padding-inline: 0.6rem;
+  }
 }
 .seg > * {
   padding: 0.3rem 0.85rem;
@@ -146,8 +157,13 @@ h1, h2, h3, h4, .font-display {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  padding: 0.6rem 0.9rem;
   font-size: 1rem;
+}
+/* In the components layer so utilities on the field (pr-10 next to an icon, pl-11 for the password eye) win. */
+@layer components {
+  .input {
+    padding: 0.6rem 0.9rem;
+  }
 }
 .input:focus {
   outline: 2px solid var(--color-brand-500);

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { askConfirm } from "./Confirm";
 import { api } from "../api";
 import { Alert, Card, Field, Spinner, Toggle, toast } from "./ui";
 import { Icon } from "./Icon";
@@ -103,7 +104,7 @@ export function NotificationsCard() {
             <button className="btn btn-ghost text-sm" disabled={busy || !ready} onClick={() => run("/api/notifications/test", { kind: "test" }, "أُرسلت رسالة تجريبية")}><Icon name="send" size={16} />رسالة تجريبية</button>
             <button className="btn btn-ghost text-sm" disabled={busy || !ready} onClick={() => run("/api/notifications/test", { kind: "report" }, "أُرسل التقرير")}>أرسل التقرير الآن</button>
             <button className="btn btn-ghost text-sm" disabled={busy} onClick={() => run("/api/notifications/detect", {}, "تم ربط المحادثة")}><Icon name="search" size={16} />اكتشاف المحادثة</button>
-            <button className="btn btn-ghost text-sm text-red-600" disabled={busy} onClick={() => confirm("إزالة البوت وإيقاف الإشعارات؟") && save({ bot_token: "", enabled: false }, "أُزيل البوت")}>إزالة البوت</button>
+            <button className="btn btn-ghost text-sm text-red-600" disabled={busy} onClick={async () => (await askConfirm({ title: "إزالة بوت تيليجرام؟", message: "تتوقف الإشعارات والتقرير اليومي حتى تربط بوتًا من جديد.", confirmLabel: "إزالة البوت", danger: true })) && save({ bot_token: "", enabled: false }, "أُزيل البوت")}>إزالة البوت</button>
           </div>
         </div>
       )}

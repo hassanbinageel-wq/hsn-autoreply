@@ -15,7 +15,7 @@ export interface Catalog {
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
 
 /** Every point of a plan, each with a hover / tap explanation, in the order the owner set. */
-export function Features({ limits, order }: { limits: PlanLimits; order?: string[] }) {
+export function Features({ limits, order, hideMissing = false }: { limits: PlanLimits; order?: string[]; hideMissing?: boolean }) {
   const row = (key: string, on: boolean, text: string, hint?: string) => (
     <li key={key} className="flex items-start gap-2">
       <span className={`mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full ${on ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-[var(--border)] text-[var(--text-2)]"}`}>
@@ -31,7 +31,25 @@ export function Features({ limits, order }: { limits: PlanLimits; order?: string
     if (k === "draws_per_month") return row(k, limits.draws_per_month !== 0, `السحوبات: ${limits.draws_per_month === null ? "غير محدودة" : `${limits.draws_per_month} شهريًا`}`, LIMIT_HINTS.draws_per_month);
     return row(k, !!(limits as any)[k], FEATURE_LABELS[k], FEATURE_HINTS[k]);
   };
-  return <ul className="space-y-2 text-sm">{orderFeatures(order).map(render)}</ul>;
+  const keys = orderFeatures(order);
+  if (!hideMissing) return <ul className="space-y-2 text-sm">{keys.map(render)}</ul>;
+  // Plan cards: what the plan includes; what it lacks folds into one line so plans compare at a glance.
+  const included = (k: string) => (k === "draws_per_month" ? limits.draws_per_month !== 0 : k in LIMIT_HINTS || !!(limits as any)[k]);
+  const missing = keys.filter((k) => !included(k));
+  return (
+    <div className="text-sm">
+      <ul className="space-y-2">{keys.filter(included).map(render)}</ul>
+      {missing.length > 0 && (
+        <details className="group mt-3">
+          <summary className="muted inline-flex min-h-8 cursor-pointer list-none items-center gap-1.5 text-xs font-semibold [&::-webkit-details-marker]:hidden">
+            <Icon name="chev" size={14} className="transition group-open:rotate-180" />
+            {missing.length} {missing.length <= 10 ? "مزايا" : "ميزة"} في الباقات الأعلى
+          </summary>
+          <ul className="mt-2 space-y-2">{missing.map(render)}</ul>
+        </details>
+      )}
+    </div>
+  );
 }
 
 /** "أرسل السند هنا" → WhatsApp / Instagram / any link the owner set. */
@@ -239,13 +257,13 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: 
   const many = catalog.plans.length > 1;
   return (
     <div className="relative">
-      <div ref={track} className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-[8%] pb-2 pt-4 [scrollbar-width:none] md:mx-0 md:grid md:grid-cols-3 md:items-stretch md:gap-4 md:overflow-visible md:px-0 [&::-webkit-scrollbar]:hidden">
+      <div ref={track} className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-[8%] pb-2 pt-4 [scrollbar-width:none] sm:px-[18%] lg:mx-0 lg:grid lg:grid-cols-3 lg:items-stretch lg:gap-4 lg:overflow-visible lg:px-0 [&::-webkit-scrollbar]:hidden">
         {catalog.plans.map((p, i) => {
           const price = p.price_amount !== null ? convertPrice(p.price_amount, p.price_currency, cur, catalog.rates) : null;
           const isFeatured = p.id === featured;
           const isCurrent = p.id === currentPlanId;
           return (
-            <div key={p.id} ref={(el) => { cards.current[i] = el; }} data-i={i} className={`card relative flex w-[84%] shrink-0 snap-center flex-col p-5 md:w-auto ${isFeatured ? "ring-2 ring-violet-500 md:-translate-y-1 md:shadow-xl md:shadow-violet-500/10" : ""}`}>
+            <div key={p.id} ref={(el) => { cards.current[i] = el; }} data-i={i} className={`card relative flex w-[84%] min-w-0 shrink-0 snap-center flex-col p-5 sm:w-[64%] lg:w-auto ${isFeatured ? "ring-2 ring-violet-500 lg:-translate-y-1 lg:shadow-xl lg:shadow-violet-500/10" : ""}`}>
               {isFeatured && <span className="grad absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-extrabold text-white shadow">{badge}</span>}
               <div className="flex items-start justify-between gap-2">
                 <b className="font-display text-lg font-extrabold">{p.name}</b>
@@ -262,21 +280,25 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: 
                   <span className="font-display text-2xl font-extrabold text-violet-600 dark:text-violet-300">{p.price_label || "تواصل معنا"}</span>
                 )}
               </div>
-              <div className="mt-4 flex-1"><Features limits={p.limits} order={catalog.feature_order} /></div>
               {onChoose && (
-                <button type="button" onClick={onChoose} className={`btn mt-5 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>اشترك في {p.name}</button>
+                <button type="button" onClick={onChoose} className={`btn mt-4 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>اشترك في {p.name}</button>
               )}
+              <div className="mt-4 flex-1"><Features limits={p.limits} order={catalog.feature_order} hideMissing /></div>
             </div>
           );
         })}
       </div>
       {many && (
-        <div className="mt-3 flex items-center justify-center gap-3 md:hidden">
+        <div className="mt-3 flex items-center justify-center gap-3 lg:hidden">
           <button type="button" aria-label="الباقة السابقة" disabled={active === 0} onClick={() => go(active - 1)} className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] shadow-sm disabled:opacity-30">
             <Icon name="arrowL" size={18} className="rotate-180" />
           </button>
           <div className="flex gap-1.5" aria-hidden>
-            {catalog.plans.map((p, i) => <button key={p.id} type="button" tabIndex={-1} onClick={() => go(i)} className={`h-2 rounded-full transition-all ${i === active ? "w-6 bg-violet-600" : "w-2 bg-[var(--border)]"}`} />)}
+            {catalog.plans.map((p, i) => (
+              <button key={p.id} type="button" tabIndex={-1} aria-label={`باقة ${p.name}`} onClick={() => go(i)} className="flex h-6 items-center px-0.5">
+                <span className={`block h-2 rounded-full transition-all ${i === active ? "w-6 bg-violet-600" : "w-2 bg-[var(--border)]"}`} />
+              </button>
+            ))}
           </div>
           <button type="button" aria-label="الباقة التالية" disabled={active === catalog.plans.length - 1} onClick={() => go(active + 1)} className="grad flex h-10 w-10 items-center justify-center rounded-full text-white shadow disabled:opacity-30">
             <Icon name="arrowL" size={18} />

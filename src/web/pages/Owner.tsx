@@ -1,4 +1,5 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { askConfirm, askText, showCopy } from "../components/Confirm";
 import { api } from "../api";
 import { API_BASE } from "../platform";
 import { BANNER_SIZES, DEFAULT_TEXTS, DesktopBanner, MobileBanner, toCm, type BannerTexts, type Branding } from "../components/LoginBanner";
@@ -117,8 +118,8 @@ function CustomersTab() {
                 <div className="mt-2 rounded-2xl border border-amber-300/60 px-3 dark:border-amber-800/60">
                   <Toggle
                     checked={!!t.follow_gate_allowed}
-                    onChange={(v) => {
-                      if (v && !confirm("السماح بشرط المتابعة الإلزامي لهذا الحساب؟ معيار Meta للسبام يمنعه، وهو مخصص لحساباتك أنت فقط.")) return;
+                    onChange={async (v) => {
+                      if (v && !(await askConfirm({ title: "السماح بشرط المتابعة الإلزامي؟", message: "معيار Meta للسبام يمنعه، وهو مخصص لحساباتك أنت فقط.", confirmLabel: "أفهم المخاطرة — اسمح", danger: true }))) return;
                       act(() => api(`/api/owner/tenants/${t.id}/follow-gate`, { body: { allowed: v } }), v ? "سُمح بالشرط" : "أُوقف الشرط");
                     }}
                     label="شرط المتابعة الإلزامي"
@@ -130,16 +131,16 @@ function CustomersTab() {
                 <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setPlanFor(t)}><Icon name="zap" size={15} />الباقة</button>
                 <button
                   className="btn btn-ghost min-h-9 text-xs"
-                  onClick={() => {
+                  onClick={async () => {
                     const pw = generatePassword();
-                    if (!confirm(`تعيين كلمة مرور جديدة لـ «${t.name}»؟ سيتم تسجيل خروجه من كل الأجهزة.`)) return;
-                    act(() => api(`/api/owner/tenants/${t.id}/password`, { body: { password: pw } }).then(() => prompt("كلمة المرور الجديدة (انسخها وأرسلها للعميل):", pw)), "تم تعيين كلمة مرور جديدة");
+                    if (!(await askConfirm({ title: `كلمة مرور جديدة لـ «${t.name}»؟`, message: "يُسجَّل خروجه من كل الأجهزة، وتعطيه كلمة المرور الجديدة بنفسك.", confirmLabel: "تعيين كلمة مرور جديدة" }))) return;
+                    act(() => api(`/api/owner/tenants/${t.id}/password`, { body: { password: pw } }).then(() => showCopy({ title: "كلمة المرور الجديدة", message: "انسخها وأرسلها للعميل. ما راح تظهر مرة ثانية.", text: pw })), "تم تعيين كلمة مرور جديدة");
                   }}
                 >
                   <Icon name="lock" size={15} />كلمة مرور جديدة
                 </button>
                 {t.status === "active" ? (
-                  <button className="btn btn-ghost min-h-9 text-xs text-red-600" onClick={() => confirm(`إيقاف «${t.name}»؟ يُسجَّل خروجه وتتوقف ردوده التلقائية (بياناته تبقى).`) && act(() => api(`/api/owner/tenants/${t.id}/status`, { body: { status: "suspended" } }), "تم إيقاف العميل")}>
+                  <button className="btn btn-ghost min-h-9 text-xs text-red-600" onClick={async () => (await askConfirm({ title: `إيقاف «${t.name}»؟`, message: "يُسجَّل خروجه وتتوقف ردوده التلقائية. بياناته تبقى، وتقدر تفعّله لاحقًا.", confirmLabel: "إيقاف العميل", danger: true })) && act(() => api(`/api/owner/tenants/${t.id}/status`, { body: { status: "suspended" } }), "تم إيقاف العميل")}>
                     إيقاف
                   </button>
                 ) : (
@@ -149,8 +150,8 @@ function CustomersTab() {
                 )}
                 <button
                   className="btn btn-ghost min-h-9 text-xs text-red-600"
-                  onClick={() => {
-                    const typed = prompt(`حذف «${t.name}» نهائيًا مع كل بياناته (حملات، رسائل، سحوبات، سجلات) — لا يمكن التراجع.\nللتأكيد اكتب اسم العميل كما هو:`);
+                  onClick={async () => {
+                    const typed = await askText({ title: `حذف «${t.name}» نهائيًا؟`, message: "تنحذف كل بياناته: الحملات والرسائل والسحوبات والسجلات. ما يمكن التراجع.", label: "للتأكيد اكتب اسم العميل كما هو", expect: t.name, confirmLabel: "حذف العميل نهائيًا", danger: true });
                     if (typed === null) return;
                     act(() => api(`/api/owner/tenants/${t.id}`, { method: "DELETE", body: { confirm: typed } }), "تم حذف العميل");
                   }}
@@ -186,7 +187,7 @@ function SubscriptionBar({ t, onEdit }: { t: any; onEdit: () => void }) {
           {!exp ? "لا يوجد اشتراك" : active ? `باقي ${daysLeft} ${daysLeft === 1 ? "يوم" : daysLeft <= 10 ? "أيام" : "يوم"}` : "منتهي"}
         </span>
       </div>
-      <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+      <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-label="المدة المتبقية من الاشتراك" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
         <div className={`h-full rounded-full ${tone} transition-all`} style={{ width: `${pct}%` }} />
       </div>
       <div className="muted mt-1.5 flex justify-between text-[11px]">
@@ -249,7 +250,7 @@ function SetPlan({ t, plans, onClose, onDone }: { t: any; plans: any[]; onClose:
         {active && (
           <div className="flex flex-wrap gap-2">
             {[1, 7, 30].map((d) => (
-              <button key={d} className="btn btn-ghost min-h-9 flex-1 text-xs" disabled={busy} onClick={() => confirm(`خصم ${d} يوم من اشتراك «${t.name}»؟`) && save({ plan_id: t.plan_id ?? planId, days: -d }, `تم خصم ${d} يوم`)}>−{d} يوم</button>
+              <button key={d} className="btn btn-ghost min-h-9 flex-1 text-xs" disabled={busy} onClick={async () => (await askConfirm({ title: `خصم ${d} يوم من اشتراك «${t.name}»؟`, confirmLabel: `خصم ${d} يوم` })) && save({ plan_id: t.plan_id ?? planId, days: -d }, `تم خصم ${d} يوم`)}>−{d} يوم</button>
             ))}
           </div>
         )}
@@ -259,7 +260,7 @@ function SetPlan({ t, plans, onClose, onDone }: { t: any; plans: any[]; onClose:
             <button className="btn btn-ghost shrink-0" disabled={busy || !planId || !date} onClick={() => save({ plan_id: planId, expires_at: new Date(`${date}T23:59:59`).getTime() }, "تم تحديد تاريخ الانتهاء")}>حفظ التاريخ</button>
           </div>
         </Field>
-        {active && <button className="btn btn-ghost w-full text-red-600" disabled={busy} onClick={() => confirm("إنهاء اشتراك العميل الآن؟ تتوقف ردوده التلقائية.") && save({ plan_id: t.plan_id, expires_at: Date.now() }, "تم إنهاء الاشتراك")}>إنهاء الاشتراك الآن</button>}
+        {active && <button className="btn btn-ghost w-full text-red-600" disabled={busy} onClick={async () => (await askConfirm({ title: "إنهاء اشتراك العميل الآن؟", message: "تتوقف ردوده التلقائية فورًا.", confirmLabel: "إنهاء الاشتراك", danger: true })) && save({ plan_id: t.plan_id, expires_at: Date.now() }, "تم إنهاء الاشتراك")}>إنهاء الاشتراك الآن</button>}
       </div>
     </Modal>
   );
@@ -326,9 +327,9 @@ function CodesTab() {
                     </span>
                     <span className="mr-auto flex gap-1">
                       {state === "open" && (
-                        <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => confirm("إلغاء هذا الكود؟ لن يمكن استخدامه.") && api(`/api/owner/codes/${c.id}/revoke`, { body: {} }).then(() => { toast("أُلغي"); reload(); }, (e) => toast(e.message, "bad"))}>إلغاء</button>
+                        <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={async () => (await askConfirm({ title: "إلغاء هذا الكود؟", message: "ما يقدر أحد يستخدمه بعد الإلغاء.", confirmLabel: "إلغاء الكود", danger: true })) && api(`/api/owner/codes/${c.id}/revoke`, { body: {} }).then(() => { toast("أُلغي"); reload(); }, (e) => toast(e.message, "bad"))}>إلغاء</button>
                       )}
-                      <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" aria-label="حذف الكود" onClick={() => confirm(state === "used" ? "حذف الكود من القائمة؟ اشتراك العميل يبقى كما هو." : "حذف الكود نهائيًا؟") && api(`/api/owner/codes/${c.id}`, { method: "DELETE" }).then(() => { toast("حُذف"); reload(); }, (e) => toast(e.message, "bad"))}>
+                      <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" aria-label="حذف الكود" onClick={async () => (await askConfirm({ title: state === "used" ? "حذف الكود من القائمة؟" : "حذف الكود نهائيًا؟", message: state === "used" ? "اشتراك العميل يبقى كما هو." : undefined, confirmLabel: "حذف الكود", danger: true })) && api(`/api/owner/codes/${c.id}`, { method: "DELETE" }).then(() => { toast("حُذف"); reload(); }, (e) => toast(e.message, "bad"))}>
                         <Icon name="x" size={14} />حذف
                       </button>
                     </span>
@@ -632,7 +633,7 @@ function ProviderCard({ p, first, last, reload }: { p: any; first: boolean; last
           <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={first} aria-label="تحريك لأعلى" onClick={() => call(() => api(`/api/owner/payment-providers/${p.id}/move`, { body: { dir: "up" } }), "تم")}>↑</button>
           <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={last} aria-label="تحريك لأسفل" onClick={() => call(() => api(`/api/owner/payment-providers/${p.id}/move`, { body: { dir: "down" } }), "تم")}>↓</button>
           <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => setEdit(!edit)}>تعديل</button>
-          <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" onClick={() => confirm(`حذف «${p.name}» مع كل حساباته؟`) && call(() => api(`/api/owner/payment-providers/${p.id}`, { method: "DELETE" }), "تم الحذف")}>حذف</button>
+          <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" onClick={async () => (await askConfirm({ title: `حذف «${p.name}»؟`, message: "تنحذف الجهة مع كل حساباتها من صفحة الباقات.", confirmLabel: "حذف", danger: true })) && call(() => api(`/api/owner/payment-providers/${p.id}`, { method: "DELETE" }), "تم الحذف")}>حذف</button>
         </span>
       }
     >
@@ -660,7 +661,7 @@ function ProviderCard({ p, first, last, reload }: { p: any; first: boolean; last
                 {a.note && <div className="muted text-[11px]">{a.note}</div>}
               </div>
               <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => setEditing(a.id)}>تعديل</button>
-              <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" onClick={() => confirm("حذف هذا الحساب؟") && call(() => api(`/api/owner/payment-accounts/${a.id}`, { method: "DELETE" }), "تم الحذف")}>حذف</button>
+              <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" onClick={async () => (await askConfirm({ title: "حذف هذا الحساب البنكي؟", confirmLabel: "حذف", danger: true })) && call(() => api(`/api/owner/payment-accounts/${a.id}`, { method: "DELETE" }), "تم الحذف")}>حذف</button>
             </li>
           ),
         )}
@@ -924,7 +925,7 @@ function BannerUpload({ variant, current, onSaved }: { variant: "desktop" | "mob
             }}
           />
         </label>
-        {current && <button className="btn btn-ghost min-h-9 text-xs" disabled={busy} onClick={() => confirm("الرجوع للخلفية الافتراضية؟") && save(null)}><Icon name="refresh" size={15} />الرجوع للخلفية الافتراضية</button>}
+        {current && <button className="btn btn-ghost min-h-9 text-xs" disabled={busy} onClick={async () => (await askConfirm({ title: "الرجوع للخلفية الافتراضية؟", message: "تنحذف الصورة اللي رفعتها.", confirmLabel: "استرجاع الافتراضي" })) && save(null)}><Icon name="refresh" size={15} />الرجوع للخلفية الافتراضية</button>}
       </div>
     </div>
   );
@@ -986,7 +987,7 @@ function BrandingTab() {
             </Field>
             <div className="flex flex-wrap gap-2">
               <button className="btn btn-primary flex-1" disabled={busy} onClick={() => save({ texts: t, logo: lg ?? null, app_icon: icon }, "تم حفظ النصوص والشعار")}>حفظ</button>
-              <button className="btn btn-ghost" disabled={busy} onClick={() => confirm("استرجاع النصوص الافتراضية وإزالة الشعار؟") && save({ texts: null, logo: null }, "رجعت النصوص الافتراضية")}><Icon name="refresh" size={15} />النصوص الافتراضية</button>
+              <button className="btn btn-ghost" disabled={busy} onClick={async () => (await askConfirm({ title: "استرجاع النصوص الافتراضية؟", message: "ترجع النصوص الأصلية وينشال الشعار.", confirmLabel: "استرجاع الافتراضي" })) && save({ texts: null, logo: null }, "رجعت النصوص الافتراضية")}><Icon name="refresh" size={15} />النصوص الافتراضية</button>
             </div>
           </div>
         </Card>

@@ -171,7 +171,8 @@ async function publicCatalog(c: C) {
       .filter((p) => p.active)
       .map(({ id, name, price_label, price_amount, price_currency, price_period, description, limits }) => ({ id, name, price_label, price_amount, price_currency, price_period, description, limits })),
     rates: { ...DEFAULT_RATES, ...rates, USD: 1 },
-    payment_methods,
+    // A bank / office with no account yet would show buyers an empty box.
+    payment_methods: payment_methods.filter((p) => p.accounts.length > 0),
     sales_contact: contact || null,
     // Which plan carries the highlight badge (default: the "pro" plan, "الأكثر طلبًا").
     featured: featured ?? { plan_id: "pro", label: "الأكثر طلبًا" },

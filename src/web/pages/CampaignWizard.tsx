@@ -223,12 +223,17 @@ function KeywordEditor({ kind, keywords, onChange }: { kind: "include" | "exclud
   );
 }
 
+/** Quick setup for a new campaign: post → keyword → message → activate; everything else keeps its defaults. */
+const QUICK_IDS = [2, 3, 8, 12];
+const QUICK_LABELS = ["المنشور", "الكلمة", "الرسالة", "المراجعة والتفعيل"];
+
 /** Step ids shown: the follow-requirement messages (6, 7) only when the requirement is on. */
 const stepIds = (gated: boolean) => (gated ? STEPS.map((_, i) => i) : STEPS.map((_, i) => i).filter((i) => i !== 6 && i !== 7));
 
 export function CampaignWizard({ id }: { id: number | null }) {
   const [form, setForm] = useState<Form>({ ...EMPTY, timezone: currentTz() });
   const [step, setStep] = useState(0);
+  const [quick, setQuick] = useState(!id);
   const [loading, setLoading] = useState(!!id);
   const [saving, setSaving] = useState(false);
   const [savedId, setSavedId] = useState<number | null>(id);
@@ -275,11 +280,15 @@ export function CampaignWizard({ id }: { id: number | null }) {
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
   const vars = { username: "sara_test", account_username: account?.username ?? "your_account", account_link: `https://www.instagram.com/${account?.username ?? "your_account"}` };
   const isComment = form.type === "comment";
-  const ids = stepIds(form.require_follow);
-  const labels = ids.map((i) => STEPS[i]);
+  const ids = quick ? QUICK_IDS : stepIds(form.require_follow);
+  const labels = quick ? QUICK_LABELS : ids.map((i) => STEPS[i]);
+  // Quick setup does not ask for a name: it is derived from the first keyword (editable later).
+  const firstKeyword = form.keywords.find((k) => k.kind === "include")?.keyword;
+  const autoName = firstKeyword ? `حملة «${firstKeyword}»` : `حملة ${new Intl.DateTimeFormat("ar-SA-u-ca-gregory-nu-latn", { day: "numeric", month: "long" }).format(new Date())}`;
 
   const payload = () => ({
     ...form,
+    name: form.name.trim() || autoName,
     final_url: form.final_url.trim() || null,
     opening_text: form.opening_text || null,
     public_reply_fallback_text: form.public_reply_fallback_text || null,
@@ -399,7 +408,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
         if (form.type === "story_mention") return <Alert tone="info">حملات المنشن تعمل على جميع إشعارات المنشن المؤهلة — لا يوجد نطاق عناصر.</Alert>;
         return (
           <div className="space-y-3">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button type="button" className={`btn ${form.scope === "all" ? "btn-primary" : "btn-ghost"}`} onClick={() => set("scope", "all")}>
                 {isComment ? "جميع المنشورات والريلز" : "جميع ردود الستوري"}
               </button>
@@ -685,6 +694,18 @@ export function CampaignWizard({ id }: { id: number | null }) {
       case 12:
         return (
           <div className="space-y-3">
+            {quick && (
+              <Field label="اسم الحملة (اختياري)" hint="اسم داخلي تشوفه أنت فقط.">
+                <input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder={autoName} />
+              </Field>
+            )}
+            {quick && (
+              <div className="surface-2 space-y-1 rounded-xl p-3 text-sm">
+                <div><span className="muted">المنشور: </span>{form.scope === "all" ? "جميع المنشورات والريلز" : `${form.media_ids.length} منشور محدد`}</div>
+                <div><span className="muted">الكلمات: </span>{form.match_all ? "أي تعليق" : form.keywords.filter((k) => k.kind === "include").map((k) => k.keyword).join("، ") || "— لم تُحدد كلمة"}</div>
+                <div><span className="muted">الرابط: </span><span dir="ltr">{form.final_url || "—"}</span></div>
+              </div>
+            )}
             {!account || account.status !== "active" ? <Alert tone="warn">لا يوجد حساب متصل ونشط — يمكنك الحفظ كمسودة، لكن التفعيل لن يعالج أحداثًا حقيقية قبل الربط.</Alert> : null}
             <p>بعد التفعيل تُعالج الأحداث الجديدة فقط (الأحدث من لحظة التفعيل) ما لم تختر غير ذلك.</p>
             <div className="flex flex-wrap gap-2">
@@ -798,6 +819,16 @@ export function CampaignWizard({ id }: { id: number | null }) {
           ) : null}
         </div>
       </header>
+
+      {!id && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="seg" role="group" aria-label="طريقة الإعداد">
+            <button type="button" aria-pressed={quick} className={quick ? "on" : ""} onClick={() => { setQuick(true); setStep(0); }}>إعداد سريع</button>
+            <button type="button" aria-pressed={!quick} className={!quick ? "on" : ""} onClick={() => { setQuick(false); setStep(0); }}>كل الإعدادات</button>
+          </div>
+          <span className="muted text-xs">{quick ? "4 خطوات، والباقي بقيم افتراضية آمنة تقدر تعدّلها لاحقًا." : "كل الخيارات: النوع، الاستثناءات، الرد العام، الجدولة، والمزيد."}</span>
+        </div>
+      )}
 
       {/* phones: compact horizontal step list */}
       <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden" role="tablist" aria-label="الخطوات">

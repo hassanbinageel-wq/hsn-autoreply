@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { askConfirm } from "../components/Confirm";
 import { api } from "../api";
 import { Link } from "../App";
 import { Alert, Card, Field, PageHeader, Spinner, Toggle, toast, useAsync } from "../components/ui";
@@ -283,7 +284,7 @@ export function CardDesignsPage() {
   const { data: account } = useAsync(() => api("/api/account").then((r) => r.account).catch(() => null), []);
   const [editing, setEditing] = useState<{ id?: number; name: string; design: CardDesign } | null>(null);
   const remove = async (id: number) => {
-    if (!confirm("حذف التصميم؟")) return;
+    if (!(await askConfirm({ title: "حذف التصميم؟", message: "ينحذف التصميم نهائيًا.", confirmLabel: "حذف التصميم", danger: true }))) return;
     try {
       await api(`/api/card-designs/${id}`, { method: "DELETE" });
       reload();

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { askText } from "../components/Confirm";
 import { api, download } from "../api";
 import { APP_VERSION, isNative } from "../platform";
 import { Link } from "../App";
@@ -84,7 +85,7 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
   };
 
   const del = async (scope: string, label: string) => {
-    const c = prompt(`لتأكيد ${label} اكتب DELETE`);
+    const c = await askText({ title: `${label}؟`, message: "ما يمكن التراجع عن الحذف.", label: "للتأكيد اكتب DELETE", expect: "DELETE", confirmLabel: label, danger: true });
     if (c !== "DELETE") return;
     try {
       await api("/api/data/delete", { body: { scope, confirm: "DELETE" } });
@@ -113,14 +114,15 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
           <h1 className="text-2xl font-extrabold leading-tight sm:text-[26px]">الإعدادات</h1>
           <p className="muted mt-1 text-sm">تحكم بسلوك النظام والإشعارات والخصوصية · مسجّل كـ {username}</p>
         </div>
-        <button className="btn btn-primary" onClick={save}>
-          <Icon name="check" size={18} />حفظ التغييرات{dirty ? " •" : ""}
+        <button className="btn btn-primary" onClick={save} disabled={!dirty}>
+          <Icon name="check" size={18} />{dirty ? "حفظ التغييرات" : "لا توجد تغييرات"}
         </button>
       </header>
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-[250px_minmax(0,1fr)]">
         <nav className="card h-fit min-w-0 p-2 lg:sticky lg:top-20" aria-label="أقسام الإعدادات">
-          <div className="flex gap-1 overflow-x-auto lg:flex-col">
+          {/* Faded left edge on phones: more sections are a swipe away. */}
+          <div className="flex gap-1 overflow-x-auto [mask-image:linear-gradient(to_right,transparent,black_40px)] lg:flex-col lg:[mask-image:none]">
             {SECTIONS.map(([id, label, icon]) => (
               <button key={id} onClick={() => go(id)} className={`nav-link shrink-0 ${active === id ? "on" : ""}`}>
                 <Icon name={icon} size={19} />
@@ -159,7 +161,6 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
                   label="استرجاع التعليقات الفائتة"
                   description="كل ساعة، خلال 7 أيام (التعليقات اللي ما وصلت من Meta)"
                 />
-                <Row label="المظهر" hint="فاتح · داكن · تلقائي">{themeSeg}</Row>
               </div>
             </Card>
           </section>
@@ -228,6 +229,15 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
           </section>
         </div>
       </div>
+      {dirty && (
+        <div className="fixed inset-x-0 bottom-20 z-30 flex justify-center px-4 lg:bottom-6" role="region" aria-label="تغييرات غير محفوظة">
+          <div className="card flex w-full max-w-lg items-center gap-3 px-4 py-3 shadow-xl">
+            <span className="min-w-0 flex-1 text-sm font-semibold">عندك تغييرات ما انحفظت</span>
+            <button className="btn btn-ghost min-h-10 text-sm" onClick={() => { setS(data.settings); setDirty(false); }}>تراجع</button>
+            <button className="btn btn-primary min-h-10 text-sm" onClick={save}>حفظ</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

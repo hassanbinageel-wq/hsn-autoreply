@@ -1,9 +1,12 @@
 import { Icon } from "../components/Icon";
-import { useEffect, useState, type FormEvent } from "react";
+import { Suspense, lazy, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, setCsrf } from "../api";
 import { API_BASE, deviceToken, isNative } from "../platform";
 import { Alert, Field } from "../components/ui";
-import { PlansShowcase, type Catalog } from "../components/PlansShowcase";
+import type { Catalog } from "../components/PlansShowcase";
+
+// The plans page (cards, payment accounts, receipt form) loads only when someone opens it.
+const PlansShowcase = lazy(() => import("../components/PlansShowcase").then((m) => ({ default: m.PlansShowcase })));
 import { AppDownloadBox, DesktopBanner, MobileBanner, type Branding } from "../components/LoginBanner";
 import { bioCredentials, bioUser, disableBio, offerBioLater } from "../lib/biometric";
 import { Spinner } from "../components/ui";
@@ -29,6 +32,9 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   }, []);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
+  useEffect(() => {
+    document.title = `${plans ? "الباقات" : register ? "إنشاء حساب" : "تسجيل الدخول"} · HSN AutoReply`;
+  }, [plans, register]);
 
   const [brand, setBrand] = useState<Branding | null>(null);
   useEffect(() => {
@@ -106,7 +112,8 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
       <MobileBanner className="lg:hidden" image={abs(brand?.login_banner_mobile ?? brand?.login_banner)} texts={brand?.texts ?? null} logo={brand?.logo ?? null} />
-      <div className="flex flex-1 items-center justify-center p-5">
+      {/* Top-aligned on phones: boxes that appear after loading (download, fingerprint) never push the form. */}
+      <div className="flex flex-1 items-start justify-center p-5 lg:items-center">
         <form onSubmit={submit} className="w-full max-w-[400px] space-y-4">
           <div className="mb-6 flex items-center gap-3">
             <span className="grad flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-lg shadow-violet-500/30"><Icon name="zap" size={22} /></span>
@@ -144,7 +151,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           <Field label="كلمة المرور" hint={status?.needs_setup || register ? "12 حرفًا على الأقل" : undefined}>
             <div className="relative">
               <input className="input pl-11" dir="ltr" type={show ? "text" : "password"} autoComplete={status?.needs_setup || register ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required />
-              <button type="button" onClick={() => setShow((v) => !v)} className="muted absolute left-3 top-1/2 -translate-y-1/2" aria-label={show ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}><Icon name="eye" size={18} /></button>
+              <button type="button" onClick={() => setShow((v) => !v)} className="muted absolute left-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg" aria-label={show ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}><Icon name="eye" size={18} /></button>
             </div>
           </Field>
           {error && <Alert tone="bad">{error}</Alert>}
@@ -156,18 +163,21 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           <button type="submit" className="btn btn-primary min-h-12 w-full text-[15px]" disabled={busy || !status}>
             {busy ? "…" : status?.needs_setup ? "إنشاء حساب الإدارة والدخول" : register ? "إنشاء الحساب والدخول" : "تسجيل الدخول"}
           </button>
-          {!status?.needs_setup && (
-            <p className="text-center text-sm">
-              {register ? (
-                <button type="button" className="font-semibold text-violet-600 underline dark:text-violet-300" onClick={() => { setRegister(false); setError(null); location.hash = "#/"; }}>عندي حساب — تسجيل الدخول</button>
-              ) : (
-                <>
-                  <button type="button" className="font-semibold text-violet-600 underline dark:text-violet-300" onClick={() => { setRegister(true); setError(null); location.hash = "#/register"; }}>عندك كود تفعيل؟ أنشئ حسابك</button>
-                  <a href="#/plans" className="mr-2 inline-block rounded-lg bg-red-500/10 px-2.5 py-0.5 font-bold text-red-600 no-underline transition hover:bg-red-500/15 dark:text-red-400">الباقات</a>
-                </>
-              )}
-            </p>
-          )}
+          {!status?.needs_setup &&
+            (register ? (
+              <p className="text-center text-sm">
+                <button type="button" className="inline-flex min-h-10 items-center font-semibold text-violet-700 underline dark:text-violet-300" onClick={() => { setRegister(false); setError(null); location.hash = "#/"; }}>عندي حساب — تسجيل الدخول</button>
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <a href="#/plans" className="btn btn-ghost min-h-11 w-full border-red-500/30 text-red-600 dark:text-red-400">
+                  <Icon name="zap" size={17} />جديد؟ شوف الباقات وابدأ
+                </a>
+                <p className="text-center text-sm">
+                  <button type="button" className="inline-flex min-h-10 items-center font-semibold text-violet-700 underline dark:text-violet-300" onClick={() => { setRegister(true); setError(null); location.hash = "#/register"; }}>عندي كود تفعيل</button>
+                </p>
+              </div>
+            ))}
           <div className="flex items-start gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3.5 py-3 text-xs text-[var(--text-2)]">
             <Icon name="shield" size={18} className="text-emerald-500" />
             <span>هذا حساب إدارة التطبيق فقط — لا نطلب كلمة مرور إنستقرام أبدًا. الربط يتم عبر Meta الرسمي.</span>
@@ -183,7 +193,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           <p className="muted text-center text-[11px] leading-relaxed">
             خدمة تقدّمها شركة ارقام المستديرة للدعاية والاعلان — الرقم الوطني الموحد 7042872536
             <br />
-            <a className="underline" href={`${API_BASE || ""}/privacy`} target="_blank" rel="noopener">الخصوصية</a> · <a className="underline" href={`${API_BASE || ""}/terms`} target="_blank" rel="noopener">الشروط</a>
+            <a className="inline-block py-1 underline" href={`${API_BASE || ""}/privacy`} target="_blank" rel="noopener">الخصوصية</a> · <a className="inline-block py-1 underline" href={`${API_BASE || ""}/terms`} target="_blank" rel="noopener">الشروط</a>
           </p>
         </form>
       </div>
@@ -209,11 +219,11 @@ function PublicPlansPage() {
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
           <a href="#/" className="flex items-center gap-2.5">
             <span className="grad flex h-9 w-9 items-center justify-center rounded-xl text-white"><Icon name="zap" size={18} /></span>
-            <b className="font-display">HSN AutoReply</b>
+            <b className="font-display max-[379px]:sr-only">HSN AutoReply</b>
           </a>
           <div className="flex gap-2">
-            <a href="#/" className="btn btn-ghost min-h-9 text-xs">تسجيل الدخول</a>
-            <a href="#/register" className="btn btn-primary min-h-9 text-xs">عندي كود</a>
+            <a href="#/" className="btn btn-ghost min-h-10 text-xs">تسجيل الدخول</a>
+            <a href="#/register" className="btn btn-primary min-h-10 text-xs">عندي كود</a>
           </div>
         </div>
       </header>
@@ -223,7 +233,7 @@ function PublicPlansPage() {
           <h1 className="font-display mt-3 text-[28px] font-extrabold leading-tight sm:text-4xl">اختر الباقة المناسبة لحسابك</h1>
           <p className="muted mx-auto mt-2 max-w-xl text-sm leading-relaxed">ردود تلقائية على تعليقات وستوري إنستقرام عبر واجهة Meta الرسمية — بدون كلمة مرور، وبدون أي أدوات غير رسمية.</p>
         </div>
-        {error ? <p className="text-center text-red-600">{error}</p> : !data ? <Spinner /> : <PlansShowcase catalog={data} />}
+        {error ? <p className="text-center text-red-600">{error}</p> : !data ? <Spinner /> : <Suspense fallback={<Spinner />}><PlansShowcase catalog={data} /></Suspense>}
         <p className="muted text-center text-[11px] leading-relaxed">
           خدمة تقدّمها شركة ارقام المستديرة للدعاية والاعلان — الرقم الوطني الموحد 7042872536
           <br />

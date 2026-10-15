@@ -1,3 +1,5 @@
+import { webhookLabel } from "../../shared/states";
+import { askConfirm, askChoice } from "../components/Confirm";
 import { useState } from "react";
 import { api } from "../api";
 import { isNative, openOAuth } from "../platform";
@@ -62,7 +64,7 @@ export function ConnectionPage() {
             <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
               <div><dt className="muted">حالة التفويض</dt><dd><Badge value={a.status} label={a.status === "active" ? "فعّال" : a.status === "needs_reauth" ? "يحتاج إعادة ربط" : a.status} /></dd></div>
               <div><dt className="muted">انتهاء التفويض</dt><dd>{a.token_expires_at ? fmtTime(a.token_expires_at) : "غير متاح"}</dd></div>
-              <div><dt className="muted">حالة Webhooks</dt><dd><Badge value={a.webhook_status} /> <span className="muted">({a.webhook_fields.join(", ") || "—"})</span></dd></div>
+              <div><dt className="muted">استقبال التعليقات والرسائل</dt><dd><Badge value={a.webhook_status} label={webhookLabel(a.webhook_status)} /> <span className="muted">({a.webhook_fields.join(", ") || "—"})</span></dd></div>
               <div><dt className="muted">آخر حدث وصل</dt><dd>{fmtTime(a.last_webhook_at)}</dd></div>
               <div><dt className="muted">التحقق من المتابعة</dt><dd><Badge value={a.follow_check_support} label={{ supported: "مدعوم (تم رصد الحقل)", unsupported: "غير متاح", unknown: "لم يُختبر بعد" }[a.follow_check_support as string]} /></dd></div>
               <div><dt className="muted">آخر تجديد للتوكن</dt><dd>{fmtTime(a.token_refreshed_at)}</dd></div>
@@ -74,7 +76,7 @@ export function ConnectionPage() {
                 disabled={!!busy}
                 onChange={(v) =>
                   run("gate", async () => {
-                    if (v && !confirm("تفعيل «شرط المتابعة الإلزامي» لهذا الحساب؟\n\nمعيار Meta للسبام يمنع ربط المحتوى بالمتابعة، والمخاطرة على هذا الحساب تتحملها أنت. لا تعرضه في مراجعة Meta ولا تفعّله لحسابات العملاء.")) return;
+                    if (v && !(await askConfirm({ title: "تفعيل شرط المتابعة الإلزامي؟", message: "معيار Meta للسبام يمنع ربط المحتوى بالمتابعة، والمخاطرة على هذا الحساب تتحملها أنت. لا تعرضه في مراجعة Meta ولا تفعّله لحسابات العملاء.", confirmLabel: "أفهم المخاطرة — فعّل", danger: true }))) return;
                     await api("/api/account/follow-gate", { body: { allowed: v } });
                     toast(v ? "تم السماح بشرط المتابعة لهذا الحساب" : "أُوقف شرط المتابعة — الحملات تُرسل المحتوى للجميع");
                     reload();
@@ -95,7 +97,7 @@ export function ConnectionPage() {
           </button>
           {connected && (
             <>
-              <button className="btn btn-ghost" disabled={!!busy} onClick={() => run("sub", async () => { await api("/api/account/resubscribe", { body: {} }); toast("تم الاشتراك في Webhooks"); reload(); })}>إعادة اشتراك Webhooks</button>
+              <button className="btn btn-ghost" disabled={!!busy} onClick={() => run("sub", async () => { await api("/api/account/resubscribe", { body: {} }); toast("تم تفعيل استقبال التعليقات والرسائل"); reload(); })}>إعادة تفعيل الاستقبال</button>
               <button className="btn btn-ghost" disabled={!!busy} onClick={() => run("ref", async () => { await api("/api/account/refresh-token", { body: {} }); toast("تم تجديد التفويض"); reload(); })}>تجديد التفويض</button>
               <button className="btn btn-ghost" disabled={!!busy} onClick={() => run("diag", async () => setDiagData(await api("/api/account/diagnostics")))}>تشخيص الربط</button>
               <button
@@ -103,8 +105,16 @@ export function ConnectionPage() {
                 disabled={!!busy}
                 onClick={() =>
                   run("disc", async () => {
-                    if (!confirm("فصل الحساب؟ ستتوقف الأتمتة وتُلغى المهام المعلّقة ويُحذف التوكن.")) return;
-                    const purge = confirm("حذف بيانات المتفاعلين والمسارات المرتبطة بهذا الحساب أيضًا؟ (موافق = حذف، إلغاء = الإبقاء)");
+                    const choice = await askChoice({
+                      title: "فصل حساب إنستقرام؟",
+                      message: "تتوقف الأتمتة وتُلغى المهام المعلّقة ويُحذف التفويض. تقدر تربط الحساب من جديد في أي وقت.",
+                      choices: [
+                        { label: "فصل الحساب فقط (نحتفظ بالسجل)", value: "keep" },
+                        { label: "فصل وحذف بيانات المتفاعلين والمسارات", value: "purge", danger: true },
+                      ],
+                    });
+                    if (!choice) return;
+                    const purge = choice === "purge";
                     await api("/api/account/disconnect", { body: { purge } });
                     toast("تم فصل الحساب");
                     reload();
@@ -147,7 +157,7 @@ export function ConnectionPage() {
         <dl className="space-y-2 text-sm">
           <div><dt className="muted">OAuth Redirect URI</dt><dd dir="ltr" className="break-all font-mono">{data.redirect_uri}</dd></div>
           <div><dt className="muted">Webhook Callback URL</dt><dd dir="ltr" className="break-all font-mono">{data.webhook_url}</dd></div>
-          <div><dt className="muted">حقول Webhooks</dt><dd dir="ltr" className="font-mono">{(data.webhook_fields as string[]).join(", ")}</dd></div>
+          <div><dt className="muted">الأحداث المستقبَلة (Webhooks)</dt><dd dir="ltr" className="font-mono">{(data.webhook_fields as string[]).join(", ")}</dd></div>
         </dl>
         <p className="muted mt-2 text-sm">الخطوات الكاملة في docs/META_SETUP.md.</p>
       </Card>

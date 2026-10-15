@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { askConfirm } from "../components/Confirm";
 import { api, download } from "../api";
 import { AR_LABELS } from "../../shared/states";
 import { Icon } from "../components/Icon";
@@ -135,7 +136,7 @@ export function LogsPage() {
 
 function UncertainActions({ id, onDone }: { id: number; onDone: () => void }) {
   const act = async (action: string, msg: string) => {
-    if (action === "retry" && !confirm("إعادة الإرسال قد تُنتج رسالة مكررة إن كانت الأولى وصلت. هل تحققت من المحادثة في إنستقرام؟")) return;
+    if (action === "retry" && !(await askConfirm({ title: "إعادة الإرسال؟", message: "إذا كانت الرسالة الأولى وصلت، بتوصل الشخص رسالة مكررة. تأكد من المحادثة في إنستقرام أولًا.", confirmLabel: "تحققت — أعد الإرسال" }))) return;
     try {
       await api(`/api/jobs/${id}/resolve`, { body: { action } });
       toast(msg);
@@ -189,7 +190,7 @@ function UndoPanel() {
   const { data, loading, error, reload } = useAsync(() => api<any[]>("/api/undo"), []);
   const [busy, setBusy] = useState<number | null>(null);
   const undo = async (o: any) => {
-    if (!confirm(`استرجاع: ${o.label}؟`)) return;
+    if (!(await askConfirm({ title: `استرجاع: ${o.label}؟`, confirmLabel: "استرجاع" }))) return;
     setBusy(o.id);
     try {
       await api(`/api/undo/${o.id}`, { body: {} });
