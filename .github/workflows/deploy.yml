@@ -97,6 +97,8 @@ jobs:
           S_INSTAGRAM_APP_SECRET: ${{ secrets.INSTAGRAM_APP_SECRET }}
           S_META_WEBHOOK_VERIFY_TOKEN: ${{ secrets.META_WEBHOOK_VERIFY_TOKEN }}
           S_SETUP_TOKEN: ${{ secrets.SETUP_TOKEN }}
+          # Optional: read-only "Account Analytics: Read" token for exact usage figures in the owner's usage page.
+          S_CF_ANALYTICS_TOKEN: ${{ secrets.CF_ANALYTICS_TOKEN }}
         run: |
           set -euo pipefail
           EXISTING=$(npx wrangler secret list --format json 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).map(s=>s.name).join(" "))}catch{console.log("")}})')
@@ -104,7 +106,8 @@ jobs:
             const crypto=require("crypto"), fs=require("fs");
             const existing=new Set(process.argv[1].split(" ").filter(Boolean));
             const out={};
-            for (const k of ["INSTAGRAM_APP_SECRET","META_WEBHOOK_VERIFY_TOKEN","SETUP_TOKEN"]) { const v=process.env["S_"+k]; if (v) out[k]=v; }
+            for (const k of ["INSTAGRAM_APP_SECRET","META_WEBHOOK_VERIFY_TOKEN","SETUP_TOKEN","CF_ANALYTICS_TOKEN"]) { const v=process.env["S_"+k]; if (v) out[k]=v; }
+            if (process.env.S_CF_ANALYTICS_TOKEN) out.CF_ACCOUNT_ID=process.env.CLOUDFLARE_ACCOUNT_ID;
             // Generated once, only if the Worker does not have them yet. Changing them later would break stored data.
             if (!existing.has("TOKEN_ENC_KEY")) out.TOKEN_ENC_KEY=crypto.randomBytes(32).toString("base64");
             if (!existing.has("PASSWORD_PEPPER")) out.PASSWORD_PEPPER=crypto.randomBytes(32).toString("hex");

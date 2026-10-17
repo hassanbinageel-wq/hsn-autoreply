@@ -60,6 +60,8 @@ import { markRead, recordMessage, refreshAvatars } from "./services/inbox";
 import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
+import { cloudflareUsage } from "./services/cfusage";
+import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
 import { auditCampaignComments } from "./services/audit";
 import { LIMITS, hasPublishScope, isImage, isVideo, optionalScopes, publishScopeMode, removeFiles, validatePost, verifyMediaUrl, wantsPublishScope, type PostKind } from "./services/publish";
@@ -696,7 +698,11 @@ export function createApp() {
     return c.json({ ok: true });
   });
   // Cloudflare free-plan usage (requests, database writes and size, R2 storage) for the owner.
-  owner.get("/usage", async (c) => c.json(await platformUsage(c.env.DB, !!c.env.MEDIA)));
+  owner.get("/usage", async (c) => {
+    const force = c.req.query("refresh") === "1" && (await rateLimit(c.env.DB, "cf_usage_refresh", 12, 3_600_000));
+    const [cf, domain] = await Promise.all([cloudflareUsage(c.env, Date.now(), force), domainInfo(c.env, Date.now(), force)]);
+    return c.json({ ...(await platformUsage(c.env.DB, !!c.env.MEDIA, Date.now(), cf)), cf_connected: !!c.env.CF_ANALYTICS_TOKEN && !!c.env.CF_ACCOUNT_ID, domain });
+  });
   // Plan of one customer, set by hand (e.g. a payment received outside the codes).
   owner.post("/tenants/:tid/plan", async (c) => {
     const t = await tenantParam(c);
@@ -1416,8 +1422,9 @@ export function createApp() {
     if (blocked) return blocked;
     const post = await ownPost(c);
     if (!post) return apiError(c, 404, "not_found", "المنشور غير موجود");
+    post.campaign_name = post.campaign_id ? (await first<{ name: string }>(c.env.DB, "SELECT name FROM campaigns WHERE id = ? AND tenant_id = ?", post.campaign_id, T(c)))?.name ?? null : null;
     const [media, log] = await Promise.all([
-      all(c.env.DB, "SELECT id, position, role, mime, size, deleted_at FROM scheduled_media WHERE post_id = ? ORDER BY role DESC, position", post.id),
+      all(c.env.DB, "SELECT id, position, role, mime, size, width, height, deleted_at FROM scheduled_media WHERE post_id = ? ORDER BY role DESC, position", post.id),
       all(c.env.DB, "SELECT at, step, ok, detail FROM publish_log WHERE post_id = ? ORDER BY at, id LIMIT 200", post.id),
     ]);
     return c.json({ post, media, log });
@@ -1474,7 +1481,7 @@ export function createApp() {
     const mime = (c.req.header("Content-Type") ?? "").split(";")[0].trim().toLowerCase();
     const size = Number(c.req.header("Content-Length") ?? 0);
     if (!isImage(mime) && !isVideo(mime)) return apiError(c, 422, "type", "نوع ملف غير مدعوم: الصور JPEG والفيديو MP4");
-    if (!size || size > (isVideo(mime) ? LIMITS.videoBytes : LIMITS.imageBytes)) return apiError(c, 422, "size", isVideo(mime) ? "الفيديو أكبر من 95 ميجا" : "الصورة أكبر من 8 ميجا");
+    if (!size || size > (isVideo(mime) ? LIMITS.singleUploadBytes : LIMITS.imageBytes)) return apiError(c, 422, "size", isVideo(mime) ? "الفيديو كبير — يُرفع على أجزاء" : "الصورة أكبر من 8 ميجا");
     const role = c.req.query("role") === "cover" ? "cover" : "item";
     const count = (await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM scheduled_media WHERE post_id = ? AND deleted_at IS NULL", post.id))!.n;
     if (count >= LIMITS.carouselMax + 1) return apiError(c, 409, "too_many", "وصلت للحد الأعلى من الملفات");
@@ -1488,6 +1495,62 @@ export function createApp() {
       c.env.DB,
       "INSERT INTO scheduled_media (post_id, position, role, r2_key, mime, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
       post.id, Number.isFinite(pos) ? pos : count, role, key, mime, size, Number(c.req.query("w")) || null, Number(c.req.query("h")) || null, Date.now(),
+    );
+    await run(c.env.DB, "UPDATE scheduled_posts SET status = 'draft', updated_at = ? WHERE id = ? AND status != 'draft'", Date.now(), post.id);
+    return c.json({ id: r!.id });
+  });
+
+  // Large videos (over the 100 MB request limit) go up in parts: start → parts (≤ 95 MB each) → complete.
+  const partKeyOk = (c: C, postId: number, key: string) => new RegExp(`^t${T(c)}-p${postId}-[A-Za-z0-9_-]{8,40}\\.(mp4|mov)$`).test(key);
+  api.post("/schedule/:id/media/multipart", async (c) => {
+    const blocked = await planBlock(c, "scheduling");
+    if (blocked) return blocked;
+    if (!c.env.MEDIA) return apiError(c, 503, "no_storage", "مساحة حفظ الملفات غير مفعّلة على الخادم");
+    const post = await ownPost(c);
+    if (!post) return apiError(c, 404, "not_found", "المنشور غير موجود");
+    if (!POST_EDITABLE.includes(post.status)) return apiError(c, 409, "locked", "المنشور قيد النشر أو منشور — ما يتعدّل");
+    const p = await parseBody(c, z.object({ mime: z.enum(["video/mp4", "video/quicktime"]), size: z.number().int().positive() }));
+    if (!p.ok) return p.res;
+    const max = post.kind === "REELS" ? LIMITS.reelBytes : LIMITS.videoBytes;
+    if (p.data.size > max) return apiError(c, 422, "size", post.kind === "REELS" ? "فيديو الريل أكبر من 300 ميجا (حد Meta)" : "الفيديو أكبر من 100 ميجا (حد Meta)");
+    if (!(await rateLimit(c.env.DB, `upload:${T(c)}`, 120, 3_600_000))) return apiError(c, 429, "rate_limited", "رفعت ملفات كثيرة — جرّب بعد شوي");
+    const key = `t${T(c)}-p${post.id}-${randomToken(12)}.${p.data.mime === "video/quicktime" ? "mov" : "mp4"}`;
+    const up = await c.env.MEDIA.createMultipartUpload(key, { httpMetadata: { contentType: p.data.mime } });
+    return c.json({ key, upload_id: up.uploadId, part_bytes: LIMITS.partBytes });
+  });
+  api.put("/schedule/:id/media/multipart/part", async (c) => {
+    if (!c.env.MEDIA) return apiError(c, 503, "no_storage", "مساحة حفظ الملفات غير مفعّلة على الخادم");
+    const post = await ownPost(c);
+    const key = c.req.query("key") ?? "";
+    const n = Number(c.req.query("n"));
+    const size = Number(c.req.header("Content-Length") ?? 0);
+    if (!post || !partKeyOk(c, post.id, key) || !(n >= 1 && n <= 100)) return apiError(c, 404, "not_found", "الرفع غير موجود");
+    if (!size || size > LIMITS.singleUploadBytes || !c.req.raw.body) return apiError(c, 422, "size", "جزء غير صالح");
+    const part = await c.env.MEDIA.resumeMultipartUpload(key, c.req.query("upload_id") ?? "").uploadPart(n, c.req.raw.body);
+    return c.json({ n: part.partNumber, etag: part.etag });
+  });
+  api.post("/schedule/:id/media/multipart/complete", async (c) => {
+    if (!c.env.MEDIA) return apiError(c, 503, "no_storage", "مساحة حفظ الملفات غير مفعّلة على الخادم");
+    const post = await ownPost(c);
+    const p = await parseBody(c, z.object({
+      key: z.string().max(120), upload_id: z.string().min(1).max(2000), parts: z.array(z.object({ n: z.number().int().min(1).max(100), etag: z.string().min(1).max(200) })).min(1).max(100),
+      position: z.number().int().min(0).max(20).optional(), w: z.number().int().optional(), h: z.number().int().optional(),
+    }));
+    if (!p.ok) return p.res;
+    if (!post || !partKeyOk(c, post.id, p.data.key)) return apiError(c, 404, "not_found", "الرفع غير موجود");
+    if (!POST_EDITABLE.includes(post.status)) return apiError(c, 409, "locked", "المنشور قيد النشر أو منشور — ما يتعدّل");
+    const up = c.env.MEDIA.resumeMultipartUpload(p.data.key, p.data.upload_id);
+    const obj = await up.complete(p.data.parts.map((x) => ({ partNumber: x.n, etag: x.etag })));
+    const max = post.kind === "REELS" ? LIMITS.reelBytes : LIMITS.videoBytes;
+    if (obj.size > max) {
+      await c.env.MEDIA.delete(p.data.key);
+      return apiError(c, 422, "size", "الفيديو أكبر من حد Meta");
+    }
+    const count = (await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM scheduled_media WHERE post_id = ? AND deleted_at IS NULL", post.id))!.n;
+    const r = await first<{ id: number }>(
+      c.env.DB,
+      "INSERT INTO scheduled_media (post_id, position, role, r2_key, mime, size, width, height, created_at) VALUES (?, ?, 'item', ?, ?, ?, ?, ?, ?) RETURNING id",
+      post.id, p.data.position ?? count, p.data.key, obj.httpMetadata?.contentType ?? "video/mp4", obj.size, p.data.w ?? null, p.data.h ?? null, Date.now(),
     );
     await run(c.env.DB, "UPDATE scheduled_posts SET status = 'draft', updated_at = ? WHERE id = ? AND status != 'draft'", Date.now(), post.id);
     return c.json({ id: r!.id });

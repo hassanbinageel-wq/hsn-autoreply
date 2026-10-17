@@ -18,7 +18,7 @@ export interface EngineContext {
   notify?: (tenantId: number, kind: NotifyKind, text: string) => Promise<void>;
 }
 
-export type NotifyKind = "new_follower" | "delivery" | "reauth" | "failures" | "spike" | "usage" | "report" | "test" | "expiry";
+export type NotifyKind = "new_follower" | "delivery" | "reauth" | "failures" | "spike" | "usage" | "report" | "test" | "expiry" | "domain";
 
 export interface AccountRow {
   id: number;

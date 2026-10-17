@@ -59,3 +59,10 @@ npm run deploy
 1. `https://<worker>/healthz` يجب أن يعيد `{"ok":true}`.
 2. أكمل [META_SETUP.md](META_SETUP.md) ثم «الربط» في التطبيق.
 3. أنشئ حملة كمسودة، جرّبها في المحاكاة، ثم فعّلها.
+
+## أرقام الاستهلاك الدقيقة (اختياري) — CF_ANALYTICS_TOKEN
+صفحة «الاستهلاك» في لوحة الإدارة تعرض أرقام تقديرية. لأرقام دقيقة من Cloudflare نفسه (الطلبات، قراءات وكتابات قاعدة البيانات، R2):
+1. لوحة Cloudflare ← My Profile ← API Tokens ← Create Token ← Create Custom Token.
+2. الصلاحية الوحيدة: **Account ← Account Analytics ← Read**، والحساب: حسابك فقط. بدون أي صلاحية تعديل.
+3. انسخ التوكن وحطه في GitHub ← المستودع ← Settings ← Secrets and variables ← Actions ← New repository secret باسم `CF_ANALYTICS_TOKEN`.
+4. أي نشر بعدها ينقله للخادم تلقائيًا مع رقم الحساب. لا تلصقه في أي محادثة أو ملف.

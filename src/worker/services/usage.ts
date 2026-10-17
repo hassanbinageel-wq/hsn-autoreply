@@ -1,4 +1,5 @@
 import { first } from "../lib/db";
+import type { CfUsage } from "./cfusage";
 
 /** Cloudflare free plan daily limits (reset at 00:00 UTC). */
 export const FREE_LIMITS = { requests: 100_000, writes: 100_000 } as const;
@@ -65,6 +66,7 @@ export const FREE_STORAGE = {
   r2Bytes: 10 * 1024 ** 3, // R2: 10 GB-month free
   r2ClassA: 1_000_000, // uploads / writes per month
   r2ClassB: 10_000_000, // reads per month
+  d1RowsRead: 5_000_000, // per day
 } as const;
 
 export interface Meter {
@@ -84,7 +86,7 @@ export interface Meter {
  * every R2 file is uploaded and deleted by this system and recorded); request / write / R2-read figures are
  * estimates — the exact numbers are in the Cloudflare dashboard.
  */
-export async function platformUsage(db: D1Database, r2Enabled: boolean, now = Date.now()): Promise<{ meters: Meter[]; generated_at: number }> {
+export async function platformUsage(db: D1Database, r2Enabled: boolean, now = Date.now(), cf: CfUsage | null = null): Promise<{ meters: Meter[]; generated_at: number; exact: boolean; cf_errors: string[] }> {
   const daily = await estimateUsage(db, now);
   const size = (await db.prepare("SELECT 1").run()).meta.size_after ?? 0;
   const monthStart = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1);
@@ -96,17 +98,21 @@ export async function platformUsage(db: D1Database, r2Enabled: boolean, now = Da
   );
   const pct = (u: number, l: number) => Math.min(100, Math.round((u / l) * 1000) / 10);
   const m = (x: Omit<Meter, "pct">): Meter => ({ ...x, pct: pct(x.used, x.limit) });
+  const has = (v: number | undefined): v is number => typeof v === "number";
   const meters: Meter[] = [
-    m({ key: "requests", label: "طلبات الخادم اليوم", used: daily.requests.used, limit: daily.requests.limit, unit: "count", period: "day", estimate: true, note: "كل رسالة من Meta، وكل ضغطة رابط، وكل تشغيل للمهام. يتصفّر 03:00 بتوقيت السعودية." }),
-    m({ key: "writes", label: "عمليات الكتابة في قاعدة البيانات اليوم", used: daily.writes.used, limit: daily.writes.limit, unit: "count", period: "day", estimate: true, note: "غالبًا أول حد يوصل له النظام. يتصفّر 03:00 بتوقيت السعودية." }),
-    m({ key: "d1_size", label: "حجم قاعدة البيانات", used: size, limit: FREE_STORAGE.d1Bytes, unit: "bytes", period: "now", estimate: false, note: "الحد المجاني 500 ميجا لقاعدة البيانات. ينظف تلقائيًا حسب مدة الاحتفاظ في الإعدادات." }),
+    m({ key: "requests", label: "طلبات الخادم اليوم", used: has(cf?.requests_today) ? cf!.requests_today : daily.requests.used, limit: daily.requests.limit, unit: "count", period: "day", estimate: !has(cf?.requests_today), note: "كل رسالة من Meta، وكل ضغطة رابط، وكل فتح للتطبيق، وكل تشغيل للمهام. يتصفّر 03:00 بتوقيت السعودية." }),
+    m({ key: "writes", label: "عمليات الكتابة في قاعدة البيانات اليوم", used: has(cf?.d1_rows_written_today) ? cf!.d1_rows_written_today : daily.writes.used, limit: daily.writes.limit, unit: "count", period: "day", estimate: !has(cf?.d1_rows_written_today), note: "صفوف مكتوبة في قاعدة البيانات. يتصفّر 03:00 بتوقيت السعودية." }),
+    ...(has(cf?.d1_rows_read_today)
+      ? [m({ key: "reads", label: "قراءات قاعدة البيانات اليوم", used: cf!.d1_rows_read_today, limit: FREE_STORAGE.d1RowsRead, unit: "count", period: "day", estimate: false, note: "صفوف مقروءة (صفحات التحليلات والمهام الدورية تقرأ أكثر شي). الحد المجاني 5 ملايين يوميًا، ويتصفّر 03:00 بتوقيت السعودية." })]
+      : []),
+    m({ key: "d1_size", label: "حجم قاعدة البيانات", used: has(cf?.d1_size_bytes) ? cf!.d1_size_bytes : size, limit: FREE_STORAGE.d1Bytes, unit: "bytes", period: "now", estimate: false, note: "الحد المجاني 500 ميجا لقاعدة البيانات. ينظف تلقائيًا حسب مدة الاحتفاظ في الإعدادات." }),
   ];
   if (r2Enabled) {
     meters.push(
-      m({ key: "r2_size", label: "مساحة ملفات الجدولة (R2)", used: r2?.bytes ?? 0, limit: FREE_STORAGE.r2Bytes, unit: "bytes", period: "now", estimate: false, note: `${r2?.files ?? 0} ملف محفوظ الحين. الملفات تنحذف تلقائيًا بعد النشر.` }),
-      m({ key: "r2_a", label: "عمليات رفع الملفات هذا الشهر (R2)", used: r2?.uploads ?? 0, limit: FREE_STORAGE.r2ClassA, unit: "count", period: "month", estimate: false, note: "كل ملف يرفعه عميل للجدولة = عملية وحدة." }),
-      m({ key: "r2_b", label: "عمليات قراءة الملفات هذا الشهر (R2)", used: (r2?.uploads ?? 0) * 3, limit: FREE_STORAGE.r2ClassB, unit: "count", period: "month", estimate: true, note: "قراءة Meta للملف وقت النشر ومعاينات العميل (تقدير: 3 لكل ملف)." }),
+      m({ key: "r2_size", label: "مساحة ملفات الجدولة (R2)", used: has(cf?.r2_bytes) ? cf!.r2_bytes : r2?.bytes ?? 0, limit: FREE_STORAGE.r2Bytes, unit: "bytes", period: "now", estimate: false, note: `${r2?.files ?? 0} ملف محفوظ الحين. الملفات تنحذف تلقائيًا بعد النشر.` }),
+      m({ key: "r2_a", label: "عمليات رفع الملفات هذا الشهر (R2)", used: has(cf?.r2_class_a_month) ? cf!.r2_class_a_month : r2?.uploads ?? 0, limit: FREE_STORAGE.r2ClassA, unit: "count", period: "month", estimate: false, note: "كل ملف يرفعه عميل للجدولة = عملية وحدة." }),
+      m({ key: "r2_b", label: "عمليات قراءة الملفات هذا الشهر (R2)", used: has(cf?.r2_class_b_month) ? cf!.r2_class_b_month : (r2?.uploads ?? 0) * 3, limit: FREE_STORAGE.r2ClassB, unit: "count", period: "month", estimate: !has(cf?.r2_class_b_month), note: "قراءة Meta للملف وقت النشر ومعاينات العميل (تقدير: 3 لكل ملف)." }),
     );
   }
-  return { meters, generated_at: now };
+  return { meters, generated_at: now, exact: !!cf && cf.errors.length === 0, cf_errors: cf?.errors ?? [] };
 }

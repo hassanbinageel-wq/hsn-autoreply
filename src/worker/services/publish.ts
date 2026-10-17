@@ -64,7 +64,12 @@ const MAX_STEP_ERRORS = 4;
 export const PUBLISH_BUDGET = 16;
 export const LIMITS = {
   imageBytes: 8 * 1024 * 1024,
-  videoBytes: 95 * 1024 * 1024, // a Worker request body is capped at 100 MB on the Free plan
+  // Meta: reels up to 300 MB; story and carousel videos up to 100 MB.
+  videoBytes: 100 * 1024 * 1024,
+  reelBytes: 300 * 1024 * 1024,
+  // A Worker request body is capped at 100 MB on the Free plan: bigger files go up in parts (R2 multipart).
+  singleUploadBytes: 95 * 1024 * 1024,
+  partBytes: 50 * 1024 * 1024,
   captionChars: 2200,
   hashtags: 30,
   carouselMin: 2,
@@ -136,7 +141,7 @@ export function validatePost(p: { kind: PostKind; caption: string | null; publis
   for (const m of media) {
     if (!isImage(m.mime) && !isVideo(m.mime)) return "نوع ملف غير مدعوم (الصور JPEG والفيديو MP4)";
     if (isImage(m.mime) && m.size > LIMITS.imageBytes) return "الصورة أكبر من 8 ميجا";
-    if (isVideo(m.mime) && m.size > LIMITS.videoBytes) return "الفيديو أكبر من 95 ميجا";
+    if (isVideo(m.mime) && m.size > (p.kind === "REELS" ? LIMITS.reelBytes : LIMITS.videoBytes)) return p.kind === "REELS" ? "فيديو الريل أكبر من 300 ميجا" : "الفيديو أكبر من 100 ميجا";
   }
   if (covers.length > 1 || covers.some((c) => !isImage(c.mime))) return "الغلاف صورة JPEG وحدة فقط";
   if (covers.length && p.kind !== "REELS") return "الغلاف للريل فقط";

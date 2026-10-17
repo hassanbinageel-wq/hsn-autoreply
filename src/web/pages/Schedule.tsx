@@ -36,6 +36,8 @@ const fromLocal = (s: string, off: number) => Date.parse(`${s}:00Z`) - off * 60_
 /** Day index (days since epoch) of a time in the customer's zone. */
 const dayOf = (ms: number, off: number) => Math.floor((ms + off * 60_000) / DAY);
 
+const fmtSize = (b: number) => (b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} كيلو` : `${(b / 1024 / 1024).toFixed(1)} ميجا`);
+
 function StatusChip({ s }: { s: string }) {
   const x = STATUS[s] ?? STATUS.draft;
   return <span className={`chip ${x.cls}`}>{x.label}</span>;
@@ -73,7 +75,7 @@ function PublishSetup({ meta, onChanged }: { meta: any; onChanged: () => void })
         ) : null}
         <ul className="muted list-disc space-y-1 pr-5">
           <li>Meta تحدد عدد المنشورات عبر الواجهة خلال 24 ساعة لكل حساب، والنظام يتحقق من الحد قبل كل نشر.</li>
-          <li>الصور تتحول تلقائيًا لصيغة JPEG (الصيغة الوحيدة اللي تقبلها Meta). الفيديو MP4 أو MOV حتى 95 ميجا.</li>
+          <li>الصور تتحول تلقائيًا لصيغة JPEG (الصيغة الوحيدة اللي تقبلها Meta). الفيديو MP4 أو MOV: الريل حتى 300 ميجا، والستوري والمتعدد حتى 100 ميجا.</li>
           <li>الملفات تنحفظ بشكل خاص وتنحذف تلقائيًا بعد النشر.</li>
         </ul>
         {meta.scope_mode !== undefined && <ScopeControl mode={meta.scope_mode} onChanged={onChanged} />}
@@ -284,6 +286,21 @@ async function toJpeg(file: File): Promise<{ blob: Blob; w: number; h: number }>
   const blob = await new Promise<Blob>((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error("jpeg"))), "image/jpeg", 0.9));
   return { blob, w, h };
 }
+/** Videos above the 100 MB request limit go up in parts (each part one request). */
+async function uploadInParts(postId: number, f: LocalFile, position: number, onProgress: (p: number) => void) {
+  const blob = f.blob!;
+  const start = await api<{ key: string; upload_id: string; part_bytes: number }>(`/api/schedule/${postId}/media/multipart`, { body: { mime: f.mime, size: blob.size } });
+  const parts: Array<{ n: number; etag: string }> = [];
+  const total = Math.ceil(blob.size / start.part_bytes);
+  for (let i = 0; i < total; i++) {
+    const chunk = blob.slice(i * start.part_bytes, Math.min(blob.size, (i + 1) * start.part_bytes), f.mime);
+    const q = new URLSearchParams({ key: start.key, upload_id: start.upload_id, n: String(i + 1) });
+    const r = await uploadFile<{ n: number; etag: string }>(`/api/schedule/${postId}/media/multipart/part?${q}`, chunk, (p) => onProgress((i + p) / total));
+    parts.push(r);
+  }
+  await api(`/api/schedule/${postId}/media/multipart/complete`, { body: { key: start.key, upload_id: start.upload_id, parts, position, w: f.w || undefined, h: f.h || undefined } });
+}
+
 function videoInfo(url: string): Promise<{ w: number; h: number; duration: number }> {
   return new Promise((res) => {
     const v = document.createElement("video");
@@ -340,8 +357,9 @@ function PostEditor({ id, presetAt, off, limits, onClose, onSaved }: { id?: numb
           out.push({ key: crypto.randomUUID(), blob: j.blob, mime: "image/jpeg", url: URL.createObjectURL(j.blob), w: j.w, h: j.h });
         } else if (f.type === "video/mp4" || f.type === "video/quicktime") {
           if (kind === "IMAGE") continue;
-          if (f.size > limits.videoBytes) {
-            toast(`«${f.name}» أكبر من 95 ميجا`, "bad");
+          const max = kind === "REELS" ? limits.reelBytes : limits.videoBytes;
+          if (f.size > max) {
+            toast(`«${f.name}» أكبر من ${kind === "REELS" ? 300 : 100} ميجا (حد Meta)`, "bad");
             continue;
           }
           const url = URL.createObjectURL(f);
@@ -398,7 +416,9 @@ function PostEditor({ id, presetAt, off, limits, onClose, onSaved }: { id?: numb
       for (const [i, f] of files.entries()) {
         if (!f.blob) continue;
         const n = fresh.indexOf(f) + 1;
-        await uploadFile(`/api/schedule/${postId}/media?role=item&position=${i}&w=${f.w ?? ""}&h=${f.h ?? ""}`, f.blob, (p) => setBusy(`رفع ${n} من ${fresh.length}… ${Math.round(p * 100)}%`));
+        const progress = (p: number) => setBusy(`رفع ${n} من ${fresh.length}… ${Math.round(p * 100)}%`);
+        if (f.blob.size > limits.singleUploadBytes) await uploadInParts(postId!, f, i, progress);
+        else await uploadFile(`/api/schedule/${postId}/media?role=item&position=${i}&w=${f.w ?? ""}&h=${f.h ?? ""}`, f.blob, progress);
       }
       if (cover?.blob && kind === "REELS") await uploadFile(`/api/schedule/${postId}/media?role=cover`, cover.blob, (p) => setBusy(`رفع الغلاف… ${Math.round(p * 100)}%`));
       if (then) return then(postId!);
@@ -429,7 +449,7 @@ function PostEditor({ id, presetAt, off, limits, onClose, onSaved }: { id?: numb
               </div>
             </Field>
 
-            <Field label={kind === "CAROUSEL" ? `الملفات (${files.length} من ${limits.carouselMax})` : "الملف"} hint={kind === "REELS" ? "فيديو MP4/MOV حتى 95 ميجا، من 3 ثواني إلى 15 دقيقة." : kind === "STORY" ? "صورة أو فيديو (حتى 60 ثانية)." : kind === "CAROUSEL" ? "صور وفيديوهات، من 2 إلى 10، بالترتيب." : "الصورة تتحول تلقائيًا لـ JPEG."}>
+            <Field label={kind === "CAROUSEL" ? `الملفات (${files.length} من ${limits.carouselMax})` : "الملف"} hint={kind === "REELS" ? "فيديو MP4/MOV حتى 300 ميجا، من 3 ثواني إلى 15 دقيقة." : kind === "STORY" ? "صورة أو فيديو (حتى 60 ثانية و100 ميجا)." : kind === "CAROUSEL" ? "صور وفيديوهات (الفيديو حتى 100 ميجا)، من 2 إلى 10، بالترتيب." : "الصورة تتحول تلقائيًا لـ JPEG."}>
               <div className="flex flex-wrap gap-2">
                 {files.map((f, i) => (
                   <div key={f.key} className="relative">
@@ -552,6 +572,7 @@ function PostDetail({ id, off, onClose, onChanged, onEdit }: { id: number; off: 
     }
   };
   const items = (data?.media ?? []).filter((m: any) => m.role === "item");
+  const [view, setView] = useState<number | null>(null);
   return (
     <Modal open onClose={onClose} title="تفاصيل المنشور">
       {!p ? <Spinner /> : (
@@ -564,8 +585,19 @@ function PostDetail({ id, off, onClose, onChanged, onEdit }: { id: number; off: 
           {p.status === "failed" && p.last_error && <Alert tone="bad">{p.last_error}</Alert>}
           {p.status === "publishing" && p.last_error && <Alert tone="warn">{p.last_error}</Alert>}
           <div className="flex flex-wrap gap-2">
-            {items.map((m: any) => <Thumb key={m.id} mediaId={m.deleted_at ? null : m.id} mime={m.mime} className="size-16" />)}
+            {items.map((m: any, i: number) => (
+              <button key={m.id} type="button" className="relative rounded-lg ring-[var(--primary)] hover:ring-2" onClick={() => setView(i)} aria-label={`عرض الملف ${i + 1}`}>
+                <Thumb mediaId={m.deleted_at ? null : m.id} mime={m.mime} className="size-16" />
+                {m.mime.startsWith("video/") && <span className="absolute inset-0 grid place-items-center text-xl text-white drop-shadow">▶</span>}
+              </button>
+            ))}
           </div>
+          {items.length > 0 && <p className="muted text-xs">اضغط على الصورة أو الفيديو لعرضه بالحجم الكامل مع تفاصيل المنشور.</p>}
+          <dl className="surface-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-xl p-3 text-xs">
+            <dt className="muted">الحملة</dt><dd>{p.campaign_name ?? "بدون حملة"}</dd>
+            {p.kind === "REELS" && <><dt className="muted">شبكة الحساب</dt><dd>{p.share_to_feed ? "يظهر في الشبكة والريلز" : "تبويب الريلز فقط"}</dd></>}
+            <dt className="muted">الملفات</dt><dd>{items.length} · {fmtSize(items.reduce((a: number, m: any) => a + m.size, 0))}</dd>
+          </dl>
           {p.caption && <p className="surface-2 whitespace-pre-wrap rounded-xl p-3">{p.caption}</p>}
           {p.permalink && <a href={p.permalink} target="_blank" rel="noreferrer" className="font-semibold text-[var(--primary)]">فتح المنشور في إنستقرام ↗</a>}
           {data.log.length > 0 && (
@@ -587,8 +619,66 @@ function PostDetail({ id, off, onClose, onChanged, onEdit }: { id: number; off: 
             {["draft", "scheduled", "failed"].includes(p.status) && !p.publish_requested_at && <button className="btn btn-ghost" onClick={() => act("cancel")}>إلغاء الجدولة</button>}
             {!["publishing", "uncertain"].includes(p.status) && <button className="btn btn-danger" onClick={() => act("delete")}>حذف</button>}
           </div>
+          {view !== null && <MediaViewer items={items} start={view} post={p} onClose={() => setView(null)} />}
         </div>
       )}
+    </Modal>
+  );
+}
+
+/** Full-size image / playable video of a scheduled post, with its caption and file details. */
+function MediaViewer({ items, start, post, onClose }: { items: any[]; start: number; post: any; onClose: () => void }) {
+  const [i, setI] = useState(start);
+  const [src, setSrc] = useState<string | null>(null);
+  const [err, setErr] = useState(false);
+  const m = items[i];
+  useEffect(() => {
+    setSrc(null);
+    setErr(false);
+    if (!m || m.deleted_at) return;
+    let url: string | null = null;
+    authedObjectUrl(`/api/schedule/media/${m.id}`).then((u) => setSrc((url = u))).catch(() => setErr(true));
+    return () => void (url && URL.revokeObjectURL(url));
+  }, [m?.id]);
+  if (!m) return null;
+  const tall = post.kind === "REELS" || post.kind === "STORY";
+  return (
+    <Modal open onClose={onClose} title={`${KIND_LABEL[post.kind as Kind]}${items.length > 1 ? ` · ${i + 1} من ${items.length}` : ""}`} center>
+      <div className="space-y-3 text-sm">
+        <div className={`relative mx-auto grid w-full max-w-[22rem] place-items-center overflow-hidden rounded-2xl bg-black ${tall ? "aspect-[9/16]" : "aspect-[4/5]"}`}>
+          {m.deleted_at ? (
+            <span className="p-4 text-center text-xs text-white/70">الملف انحذف من التخزين بعد النشر{post.permalink ? " — شوفه في إنستقرام." : "."}</span>
+          ) : err ? (
+            <span className="text-xs text-white/70">تعذّر تحميل الملف</span>
+          ) : !src ? (
+            <Spinner />
+          ) : m.mime.startsWith("video/") ? (
+            <video src={src} className="size-full object-contain" controls autoPlay playsInline />
+          ) : (
+            <img src={src} alt="" className="size-full object-contain" />
+          )}
+          {items.length > 1 && (
+            <>
+              <button type="button" className="absolute right-2 top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white disabled:opacity-30" disabled={i === 0} onClick={() => setI(i - 1)} aria-label="السابق">›</button>
+              <button type="button" className="absolute left-2 top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white disabled:opacity-30" disabled={i === items.length - 1} onClick={() => setI(i + 1)} aria-label="التالي">‹</button>
+            </>
+          )}
+        </div>
+        <div className="muted text-center text-xs">
+          {m.mime.startsWith("video/") ? "فيديو" : "صورة JPEG"} · {fmtSize(m.size)}{m.width && m.height ? ` · ${m.width}×${m.height}` : ""}
+        </div>
+        <dl className="surface-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-xl p-3 text-xs">
+          <dt className="muted">وقت النشر</dt><dd>{fmtTime(post.publish_at)}</dd>
+          <dt className="muted">الحالة</dt><dd><StatusChip s={post.status} /></dd>
+          <dt className="muted">الحملة</dt><dd>{post.campaign_name ?? "بدون حملة"}</dd>
+        </dl>
+        {post.kind !== "STORY" && (
+          <div>
+            <div className="muted mb-1 text-xs font-semibold">الوصف</div>
+            <p className="surface-2 max-h-60 overflow-y-auto whitespace-pre-wrap rounded-xl p-3">{post.caption || <span className="muted">بدون وصف</span>}</p>
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }

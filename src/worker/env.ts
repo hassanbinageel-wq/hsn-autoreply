@@ -22,6 +22,9 @@ export interface Env {
   TOKEN_ENC_KEY: string; // base64, 32 bytes
   PASSWORD_PEPPER: string;
   SETUP_TOKEN?: string; // one-time initial admin setup; remove after use
+  /** Optional: read-only Cloudflare analytics token (Account Analytics: Read) for exact usage figures. */
+  CF_ANALYTICS_TOKEN?: string;
+  CF_ACCOUNT_ID?: string;
 }
 
 export const REQUIRED_SECRETS = [

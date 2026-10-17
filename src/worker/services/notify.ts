@@ -4,6 +4,8 @@ import { decryptSecret, encryptSecret } from "../lib/crypto";
 import { all, first, getSetting, OWNER_TENANT, setSetting, settingKey } from "../lib/db";
 import { sanitize } from "../meta/client";
 import { estimateUsage, platformUsage } from "./usage";
+import { cloudflareUsage } from "./cfusage";
+import { domainInfo } from "./domain";
 import { getEntitlement } from "./plans";
 
 /**
@@ -51,6 +53,7 @@ const THROTTLE_MS: Partial<Record<NotifyKind, number>> = {
   failures: 3 * 3_600_000,
   spike: 6 * 3_600_000,
   usage: 12 * 3_600_000,
+  domain: 24 * 3_600_000,
 };
 
 export function isTelegramToken(t: string): boolean {
@@ -133,6 +136,7 @@ export async function notify(env: Env, tenantId: number, kind: NotifyKind, text:
       report: s.daily_report,
       test: true,
       expiry: true,
+      domain: true,
     };
     if (!on[kind]) return;
     const throttle = THROTTLE_MS[kind];
@@ -264,9 +268,13 @@ async function runTenantNotifications(env: Env, tenantId: number, now: number): 
   if (s.alert_usage && tenantId === OWNER_TENANT) {
     // Storage (database, R2) once an hour: an early warning at 70%.
     if (Math.floor(now / 60_000) % 60 === 0) {
-      const p = await platformUsage(env.DB, !!env.MEDIA, now);
-      const full = p.meters.filter((x) => !["requests", "writes"].includes(x.key) && x.pct >= 70);
+      const p = await platformUsage(env.DB, !!env.MEDIA, now, await cloudflareUsage(env, now).catch(() => null));
+      const full = p.meters.filter((x) => x.pct >= (["requests", "writes", "reads"].includes(x.key) ? 80 : 70));
       if (full.length) await notify(env, tenantId, "usage", `⚠️ اقتربت من حد Cloudflare المجاني: ${full.map((x) => `${x.label} ${x.pct}%`).join("، ")}. التفاصيل في «الاستهلاك» بلوحة الإدارة.`);
+      // The service domain: warn from 30 days before it expires.
+      const d = await domainInfo(env, now).catch(() => null);
+      const left = d?.expires_at ? Math.floor((d.expires_at - now) / 86_400_000) : null;
+      if (left !== null && left <= 30) await notify(env, tenantId, "domain", `⏰ الدومين ${d!.name} ينتهي بعد ${left} يوم — جدّده${d!.registrar ? ` من ${d!.registrar}` : ""}، لأن انتهاءه يوقف الموقع والردود.`);
     }
     const u = await estimateUsage(env.DB, now);
     const worst = u.writes.pct >= u.requests.pct ? { name: "عمليات الكتابة في قاعدة البيانات", ...u.writes } : { name: "الطلبات", ...u.requests };

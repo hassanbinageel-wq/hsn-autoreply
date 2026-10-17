@@ -271,4 +271,33 @@ describe("scheduled publishing", () => {
     expect(u.body.meters.map((m: any) => m.key)).toEqual(expect.arrayContaining(["requests", "writes", "d1_size", "r2_size"]));
     expect((await call("/api/owner/usage", B)).status).toBe(403);
   });
+
+  it("uploads a large video in parts (multipart) and refuses parts for someone else's post", async () => {
+    const call = async (p: string, h: Record<string, string> = {}, method = "GET", body?: unknown) => {
+      const r = await SELF.fetch(new Request(BASE + p, { method, headers: { "Content-Type": "application/json", ...h }, body: body === undefined ? undefined : JSON.stringify(body) }));
+      return { status: r.status, body: (await r.json().catch(() => null)) as any };
+    };
+    await call("/api/auth/setup", {}, "POST", { setup_token: "test_setup_token_123456", username: "admin", password: "a-very-strong-password" });
+    const H = { Authorization: `Bearer ${(await call("/api/auth/login", {}, "POST", { username: "admin", password: "a-very-strong-password", client: "app" })).body.token}` };
+    const created = await call("/api/schedule", H, "POST", { kind: "REELS", caption: "ريل", publish_at: Date.now() + 3_600_000 });
+    expect(created.status).toBe(200);
+    const id = created.body.id;
+    // too big for Meta's reel limit
+    expect((await call(`/api/schedule/${id}/media/multipart`, H, "POST", { mime: "video/mp4", size: 301 * 1024 * 1024 })).status).toBe(422);
+    const start = await call(`/api/schedule/${id}/media/multipart`, H, "POST", { mime: "video/mp4", size: 1000 });
+    expect(start.status).toBe(200);
+    const q = new URLSearchParams({ key: start.body.key, upload_id: start.body.upload_id, n: "1" });
+    const part = await SELF.fetch(new Request(`${BASE}/api/schedule/${id}/media/multipart/part?${q}`, { method: "PUT", headers: { ...H, "Content-Type": "video/mp4", "Content-Length": "1000" }, body: "v".repeat(1000) }));
+    expect(part.status).toBe(200);
+    const etag = ((await part.json()) as any).etag;
+    // a key that is not this post's is refused
+    const bad = new URLSearchParams({ key: "t1-p999-aaaaaaaaaaaa.mp4", upload_id: start.body.upload_id, n: "1" });
+    expect((await SELF.fetch(new Request(`${BASE}/api/schedule/${id}/media/multipart/part?${bad}`, { method: "PUT", headers: { ...H, "Content-Type": "video/mp4", "Content-Length": "4" }, body: "vvvv" }))).status).toBe(404);
+    const done = await call(`/api/schedule/${id}/media/multipart/complete`, H, "POST", { key: start.body.key, upload_id: start.body.upload_id, parts: [{ n: 1, etag }] });
+    expect(done.status).toBe(200);
+    const row = await DB.prepare("SELECT mime, size, role FROM scheduled_media WHERE post_id = ?").bind(id).first<any>();
+    expect(row).toMatchObject({ mime: "video/mp4", size: 1000, role: "item" });
+    expect((await MEDIA.get(start.body.key))!.size).toBe(1000);
+    expect((await call(`/api/schedule/${id}/submit`, H, "POST", {})).status).toBe(200);
+  });
 });
