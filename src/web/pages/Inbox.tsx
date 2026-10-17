@@ -4,6 +4,19 @@ import { Alert, Badge, PageHeader, Spinner, fmtTime, toast } from "../components
 import { UserAvatar } from "../components/UserAvatar";
 import { Icon } from "../components/Icon";
 
+export const LABELS: Record<string, { text: string; cls: string; icon: string }> = {
+  inquiry: { text: "استفسار", icon: "❓", cls: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300" },
+  order: { text: "طلب", icon: "🛒", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" },
+  complaint: { text: "شكوى", icon: "⚠️", cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300" },
+  other: { text: "أخرى", icon: "💬", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
+};
+
+function LabelChip({ label, auto }: { label: string | null; auto?: boolean }) {
+  const l = label ? LABELS[label] : null;
+  if (!l) return null;
+  return <span className={`chip shrink-0 !py-0 text-[10.5px] ${l.cls}`} title={auto ? "تصنيف تلقائي من كلام الشخص — تقدر تغيّره" : undefined}>{l.icon} {l.text}{auto ? " ·تلقائي" : ""}</span>;
+}
+
 const SOURCE: Record<string, string> = { bot: "🤖 تلقائي", manual: "✍️ ردك من هنا", app: "📱 من تطبيق إنستقرام" };
 
 function left(ms: number): string {
@@ -87,6 +100,19 @@ function Thread({ id, onSent, onBack }: { id: number; onSent: () => void; onBack
           <span className="chip surface-2 muted shrink-0"><Icon name="clock" size={13} />انتهت مدة الرد</span>
         )}
         {p.last_follow_status && <span className="shrink-0"><Badge value={p.last_follow_status} /></span>}
+        <select
+          className="input !h-8 !min-h-0 !w-auto shrink-0 !py-0 text-xs"
+          aria-label="تصنيف المحادثة"
+          value={p.inbox_label ?? ""}
+          onChange={async (e) => {
+            await api(`/api/inbox/${id}/label`, { method: "PUT", body: { label: e.target.value || null } }).catch((err) => toast(err.message, "bad"));
+            await load();
+            onSent();
+          }}
+        >
+          <option value="">🏷️ بدون تصنيف</option>
+          {Object.entries(LABELS).map(([k, l]) => <option key={k} value={k}>{l.icon} {l.text}{p.inbox_label === k && p.inbox_label_source === "auto" ? " (تلقائي)" : ""}</option>)}
+        </select>
       </div>
       <div ref={boxRef} className="-mx-3 h-[calc(100dvh-23rem)] min-h-[220px] space-y-2 overflow-y-auto overscroll-contain bg-[var(--surface-2)] px-3 py-3 sm:-mx-4 sm:px-4 lg:h-[56vh] lg:min-h-[280px]">
         {data.messages.map((m: any) => (
@@ -101,6 +127,7 @@ function Thread({ id, onSent, onBack }: { id: number; onSent: () => void; onBack
       </div>
       {data.window_open ? (
         <div className="border-t border-[var(--border)] pt-2.5">
+          <SavedReplies onPick={(body) => { setText((t) => (t.trim() ? `${t.trim()}\n${body}` : body)); inputRef.current?.focus(); }} username={p.username} />
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
@@ -132,7 +159,12 @@ export function InboxPage() {
   const [list, setList] = useState<any[] | null>(null);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<number | null>(null);
-  const load = () => api<any[]>(`/api/inbox?q=${encodeURIComponent(q)}`).then(setList).catch((e) => toast(e.message, "bad"));
+  const [label, setLabel] = useState("");
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const load = () => {
+    api<Array<{ label: string | null; n: number }>>("/api/inbox-labels").then((r) => setCounts(Object.fromEntries(r.map((x) => [x.label ?? "none", x.n])))).catch(() => undefined);
+    return api<any[]>(`/api/inbox?q=${encodeURIComponent(q)}&label=${label}`).then(setList).catch((e) => toast(e.message, "bad"));
+  };
   // Fill missing / expired profile pictures once per visit (small batches, official User Profile API).
   useEffect(() => {
     let stop = false;
@@ -153,7 +185,7 @@ export function InboxPage() {
     const t = setInterval(load, 20_000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  }, [q, label]);
 
   return (
     <div className="space-y-4">
@@ -163,6 +195,13 @@ export function InboxPage() {
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
         <div className={`card min-w-0 p-2 sm:p-3 ${open !== null ? "hidden lg:block" : ""}`}>
           <input className="input mb-2" placeholder="بحث باسم الحساب…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]" role="group" aria-label="تصفية حسب التصنيف">
+            {[["", "الكل", ""], ...Object.entries(LABELS).map(([k, l]) => [k, l.text, l.icon]), ["none", "بدون تصنيف", "🏷️"]].map(([k, t, ic]) => (
+              <button key={k} type="button" aria-pressed={label === k} onClick={() => setLabel(k)} className={`chip shrink-0 ${label === k ? "grad text-white" : "surface-2"}`}>
+                {ic} {t}{k && counts[k] ? <span className="opacity-75"> {counts[k]}</span> : null}
+              </button>
+            ))}
+          </div>
           {!list ? (
             <Spinner />
           ) : !list.length ? (
@@ -182,7 +221,10 @@ export function InboxPage() {
                       {c.last_direction === "out" ? "↩ " : ""}
                       {c.last_text ?? ""}
                     </div>
-                    {c.window_open && <div className="text-[10px] text-emerald-600">● يمكن الرد</div>}
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <LabelChip label={c.inbox_label} auto={c.inbox_label_source === "auto"} />
+                      {c.window_open && <span className="text-[10px] text-emerald-600">● يمكن الرد</span>}
+                    </div>
                   </div>
                 </button>
               ))}
@@ -197,6 +239,67 @@ export function InboxPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Saved replies: tap to insert into the reply box; add, edit and delete in place. {{username}} is filled in. */
+function SavedReplies({ onPick, username }: { onPick: (body: string) => void; username: string | null }) {
+  const [items, setItems] = useState<any[] | null>(null);
+  const [edit, setEdit] = useState<any | null>(null);
+  const load = () => api<any[]>("/api/saved-replies").then(setItems).catch(() => setItems([]));
+  useEffect(() => {
+    load();
+  }, []);
+  const save = async () => {
+    try {
+      const body = { title: edit.title, body: edit.body };
+      if (edit.id) await api(`/api/saved-replies/${edit.id}`, { method: "PUT", body });
+      else await api("/api/saved-replies", { body });
+      setEdit(null);
+      load();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    }
+  };
+  if (!items) return null;
+  return (
+    <div className="mb-2">
+      <div className="flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]">
+        {items.map((r) => (
+          <span key={r.id} className="chip surface-2 shrink-0 !pe-1">
+            <button
+              type="button"
+              title={r.body}
+              onClick={() => {
+                onPick(r.body.replace(/\{\{\s*username\s*\}\}/g, username ? `@${username}` : ""));
+                api(`/api/saved-replies/${r.id}/use`, { body: {} }).catch(() => undefined);
+              }}
+            >
+              ⚡ {r.title}
+            </button>
+            <button type="button" className="muted ms-1 rounded px-1 hover:bg-[var(--surface)]" aria-label={`تعديل ${r.title}`} onClick={() => setEdit({ ...r })}>✎</button>
+          </span>
+        ))}
+        <button type="button" className="chip shrink-0 border border-dashed border-[var(--border)]" onClick={() => setEdit({ title: "", body: "" })}>+ رد محفوظ</button>
+      </div>
+      {edit && (
+        <div className="surface-2 mt-1 space-y-2 rounded-2xl p-3">
+          <input className="input" placeholder="اسم مختصر (مثل: السعر، الشحن، المقاسات)" maxLength={60} value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} />
+          <textarea className="input min-h-[5rem]" placeholder="نص الرد… تقدر تكتب {{username}} ويتعبّى باسم الشخص" maxLength={1000} value={edit.body} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn btn-primary min-h-9 text-sm" disabled={!edit.title.trim() || !edit.body.trim()} onClick={save}>حفظ</button>
+            <button type="button" className="btn btn-ghost min-h-9 text-sm" onClick={() => setEdit(null)}>إلغاء</button>
+            {edit.id && (
+              <button type="button" className="btn btn-danger min-h-9 text-sm" onClick={async () => {
+                await api(`/api/saved-replies/${edit.id}`, { method: "DELETE" }).catch((e) => toast(e.message, "bad"));
+                setEdit(null);
+                load();
+              }}>حذف</button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

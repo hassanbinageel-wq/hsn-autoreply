@@ -37,9 +37,33 @@ export async function recordMessage(db: D1Database, m: NewMessage): Promise<void
         .prepare("UPDATE participants SET last_message_at = MAX(COALESCE(last_message_at, 0), ?) WHERE id = ?")
         .bind(m.at, m.participantId),
     ]);
+    if (m.direction === "in" && !m.isDemo) await autoLabel(db, m.participantId, m.text);
   } catch (err) {
     console.error("inbox record failed", String((err as Error)?.message ?? err).slice(0, 200));
   }
+}
+
+export type InboxLabel = "inquiry" | "order" | "complaint" | "other";
+export const INBOX_LABELS: InboxLabel[] = ["inquiry", "order", "complaint", "other"];
+
+/**
+ * A suggested label from the person's own words (Arabic and English keywords). Complaints win over orders, orders
+ * over questions. Returns null when nothing matches; the merchant can always set the label by hand.
+ */
+export function suggestLabel(text: string | null | undefined): InboxLabel | null {
+  const t = (text ?? "").toLowerCase().replace(/[ًٌٍَُِّْـ]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه");
+  if (!t.trim()) return null;
+  if (/(مشكله|شكوي|اشتكي|تاخر|متاخر|ما وصل|ماوصل|لم يصل|خربان|تالف|مكسور|سيء|زفت|غلط|خطا|استرجاع|استرداد|ارجاع|ترجيع|رجعو|نصب|حرامي|refund|broken|complain|wrong)/.test(t)) return "complaint";
+  if (/(ابي اطلب|ابغي اطلب|ابغا اطلب|ودي اطلب|كيف اطلب|طلبت|طلبي|رقم الطلب|اطلب|احجز|حجز|الدفع|ادفع|تحويل|شحن|توصيل|يوصل|order|buy|ship|deliver)/.test(t)) return "order";
+  if (/[?؟]/.test(t) || /(^|\s)(كم|بكم|هل|وش|ايش|متي|وين|لون|price|how|size)(\s|$)/.test(t) || /(سعر|متوفر|موجود|مقاس|الوان|available)/.test(t)) return "inquiry";
+  return null;
+}
+
+/** Sets the suggested label of a conversation unless the merchant chose one. */
+export async function autoLabel(db: D1Database, participantId: number, text: string | null | undefined): Promise<void> {
+  const label = suggestLabel(text);
+  if (!label) return;
+  await run(db, "UPDATE participants SET inbox_label = ?, inbox_label_source = 'auto' WHERE id = ? AND COALESCE(inbox_label_source, '') != 'manual'", label, participantId).catch(() => undefined);
 }
 
 export async function markRead(db: D1Database, participantId: number, at: number): Promise<void> {

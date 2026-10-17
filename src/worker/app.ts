@@ -56,7 +56,7 @@ import {
 } from "../shared/schemas";
 import { claimsDelivery, claimsFollowRequired, publicReplyVariants } from "../shared/template";
 import { cacheMediaStmt } from "./services/media";
-import { markRead, recordMessage, refreshAvatars } from "./services/inbox";
+import { INBOX_LABELS, markRead, recordMessage, refreshAvatars, type InboxLabel } from "./services/inbox";
 import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
@@ -604,6 +604,7 @@ export function createApp() {
     draws: "SELECT 1 FROM draws WHERE id = ? AND tenant_id = ?",
     "card-designs": "SELECT 1 FROM card_designs WHERE id = ? AND tenant_id = ?",
     templates: "SELECT 1 FROM templates WHERE id = ? AND tenant_id = ?",
+    "saved-replies": "SELECT 1 FROM saved_replies WHERE id = ? AND tenant_id = ?",
     undo: "SELECT 1 FROM undo_ops WHERE id = ? AND tenant_id = ?",
     inbox: `SELECT 1 FROM participants WHERE id = ? AND account_id IN ${TENANT_ACCOUNTS}`,
     flows: `SELECT 1 FROM conversation_flows WHERE id = ? AND account_id IN ${TENANT_ACCOUNTS}`,
@@ -2618,15 +2619,20 @@ export function createApp() {
   // ---- Inbox: conversations started or answered by the automation, and manual replies (24h window only)
   api.get("/inbox", async (c) => {
     const q = (c.req.query("q") ?? "").trim().replace(/^@/, "").slice(0, 60);
+    const label = c.req.query("label") ?? "";
     const params: unknown[] = [T(c)];
     let where = `p.account_id IN ${TENANT_ACCOUNTS} AND p.is_demo = 0 AND p.last_message_at IS NOT NULL`;
     if (q) {
       where += " AND p.username LIKE ? ESCAPE '\\'";
       params.push(`%${q.replace(/[%_\\]/g, (m) => "\\" + m)}%`);
     }
+    if ((INBOX_LABELS as string[]).includes(label)) {
+      where += " AND p.inbox_label = ?";
+      params.push(label);
+    } else if (label === "none") where += " AND p.inbox_label IS NULL";
     const rows = await all<any>(
       c.env.DB,
-      `SELECT p.id, p.username, p.profile_pic_url, p.last_message_at, p.last_user_message_at, p.inbox_read_at, p.last_follow_status,
+      `SELECT p.id, p.username, p.profile_pic_url, p.last_message_at, p.last_user_message_at, p.inbox_read_at, p.last_follow_status, p.inbox_label, p.inbox_label_source,
               (SELECT m.text FROM messages m WHERE m.participant_id = p.id ORDER BY m.id DESC LIMIT 1) AS last_text,
               (SELECT m.direction FROM messages m WHERE m.participant_id = p.id ORDER BY m.id DESC LIMIT 1) AS last_direction,
               (SELECT COUNT(*) FROM messages m WHERE m.participant_id = p.id AND m.direction = 'in' AND m.created_at > COALESCE(p.inbox_read_at, 0)) AS unread
@@ -2643,7 +2649,7 @@ export function createApp() {
   });
   api.get("/inbox/:id", async (c) => {
     const id = idParam(c);
-    const p = id && (await first<any>(c.env.DB, "SELECT id, username, profile_pic_url, last_user_message_at, last_follow_status, is_demo FROM participants WHERE id = ? AND is_demo = 0", id));
+    const p = id && (await first<any>(c.env.DB, "SELECT id, username, profile_pic_url, last_user_message_at, last_follow_status, is_demo, inbox_label, inbox_label_source FROM participants WHERE id = ? AND is_demo = 0", id));
     if (!p) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
     const [messages, flows] = await Promise.all([
       all<any>(c.env.DB, "SELECT id, direction, source, kind, text, created_at FROM messages WHERE participant_id = ? ORDER BY id DESC LIMIT 200", id),
@@ -2658,6 +2664,50 @@ export function createApp() {
     await markRead(c.env.DB, id!, now);
     const expires = p.last_user_message_at ? p.last_user_message_at + MESSAGING_WINDOW_MS : null;
     return c.json({ participant: p, messages: messages.reverse(), flows, window_open: !!expires && expires > now, window_expires_at: expires });
+  });
+  // Label of a conversation, set by the merchant (kept over automatic suggestions); null clears it.
+  api.put("/inbox/:id/label", async (c) => {
+    const id = idParam(c);
+    const body = await parseBody(c, z.object({ label: z.enum(INBOX_LABELS as [InboxLabel, ...InboxLabel[]]).nullable() }));
+    if (!body.ok) return body.res;
+    await run(c.env.DB, "UPDATE participants SET inbox_label = ?, inbox_label_source = ? WHERE id = ?", body.data.label, body.data.label ? "manual" : null, id);
+    return c.json({ ok: true });
+  });
+  // Counts per label, for the inbox filter.
+  api.get("/inbox-labels", async (c) => {
+    const rows = await all<{ label: string | null; n: number }>(
+      c.env.DB,
+      `SELECT inbox_label AS label, COUNT(*) AS n FROM participants WHERE account_id IN ${TENANT_ACCOUNTS} AND is_demo = 0 AND last_message_at IS NOT NULL GROUP BY inbox_label`,
+      T(c),
+    );
+    return c.json(rows);
+  });
+
+  // ---- Saved replies (quick replies in the inbox)
+  const replySchema = z.object({ title: z.string().trim().min(1).max(60), body: z.string().trim().min(1).max(1000) });
+  api.get("/saved-replies", async (c) => c.json(await all(c.env.DB, "SELECT id, title, body, uses FROM saved_replies WHERE tenant_id = ? ORDER BY uses DESC, id DESC LIMIT 100", T(c))));
+  api.post("/saved-replies", async (c) => {
+    const p = await parseBody(c, replySchema);
+    if (!p.ok) return p.res;
+    const n = await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM saved_replies WHERE tenant_id = ?", T(c));
+    if ((n?.n ?? 0) >= 100) return apiError(c, 409, "limit", "الحد 100 رد محفوظ");
+    const now = Date.now();
+    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO saved_replies (tenant_id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING id", T(c), p.data.title, p.data.body, now, now);
+    return c.json({ ok: true, id: r?.id });
+  });
+  api.put("/saved-replies/:id", async (c) => {
+    const p = await parseBody(c, replySchema);
+    if (!p.ok) return p.res;
+    await run(c.env.DB, "UPDATE saved_replies SET title = ?, body = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", p.data.title, p.data.body, Date.now(), idParam(c), T(c));
+    return c.json({ ok: true });
+  });
+  api.post("/saved-replies/:id/use", async (c) => {
+    await run(c.env.DB, "UPDATE saved_replies SET uses = uses + 1 WHERE id = ? AND tenant_id = ?", idParam(c), T(c));
+    return c.json({ ok: true });
+  });
+  api.delete("/saved-replies/:id", async (c) => {
+    await run(c.env.DB, "DELETE FROM saved_replies WHERE id = ? AND tenant_id = ?", idParam(c), T(c));
+    return c.json({ ok: true });
   });
   api.post("/inbox/:id/send", async (c) => {
     const blocked = await planBlock(c, "inbox_manual");

@@ -41,6 +41,24 @@ beforeEach(async () => {
 });
 
 describe("customers (tenants) are isolated", () => {
+  it("saved replies and conversation labels stay with their customer", async () => {
+    const r = await call("/api/saved-replies", OWNER, "POST", { title: "السعر", body: "السعر 99 ريال يا {{username}}" });
+    expect(r.status).toBe(200);
+    expect((await call("/api/saved-replies", B)).body).toEqual([]);
+    expect((await call(`/api/saved-replies/${r.body.id}`, B, "PUT", { title: "x", body: "y" })).status).toBe(404);
+    expect((await call(`/api/saved-replies/${r.body.id}`, B, "DELETE")).status).toBe(404);
+    expect((await call("/api/saved-replies", OWNER)).body).toMatchObject([{ title: "السعر", body: "السعر 99 ريال يا {{username}}" }]);
+    // a conversation of the owner: B cannot label it
+    const acc = await DB.prepare("SELECT id FROM instagram_accounts WHERE ig_user_id = ?").bind(IG_ID).first<any>();
+    const now = Date.now();
+    const p = await DB.prepare("INSERT INTO participants (account_id, igsid, last_message_at, created_at, updated_at) VALUES (?, 'u1', ?, ?, ?) RETURNING id").bind(acc.id, now, now, now).first<any>();
+    expect((await call(`/api/inbox/${p.id}/label`, B, "PUT", { label: "order" })).status).toBe(404);
+    expect((await call(`/api/inbox/${p.id}/label`, OWNER, "PUT", { label: "complaint" })).status).toBe(200);
+    expect((await call("/api/inbox?label=complaint", OWNER)).body.map((x: any) => x.id)).toEqual([p.id]);
+    expect((await call("/api/inbox?label=complaint", B)).body).toEqual([]);
+    expect((await call("/api/inbox-labels", B)).body).toEqual([]);
+  });
+
   it("only the owner can manage customers; the second setup is refused", async () => {
     expect((await call("/api/owner/tenants", B)).status).toBe(403);
     expect((await call("/api/owner/tenants", OWNER)).body.map((t: any) => t.name)).toEqual(["المالك", "متجر ب"]);

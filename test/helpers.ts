@@ -148,6 +148,7 @@ const TABLES = [
   "store_orders",
   "store_products",
   "store_oauth_states",
+  "saved_replies",
   "stores",
   "publish_log",
   "scheduled_media",
