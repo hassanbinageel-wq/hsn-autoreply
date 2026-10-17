@@ -83,6 +83,13 @@ describe("instagram insights", () => {
     expect(sum.new_followers).toMatchObject({ value: 4 });
     expect(sum.demographics!.gender.items[0]).toEqual({ dim: "F", value: 60 });
     expect(sum.demographics!.country.items.map((x) => x.dim)).toEqual(["SA", "YE"]);
+    expect(sum.unread).toEqual({ queued: 0, too_old: 0 });
+    // a post not read yet (queued) and one older than 90 days (never read) are counted for the explanation
+    await DB.prepare("INSERT INTO media_cache (account_id, media_id, kind, posted_at, fetched_at) VALUES (?, 'p9', 'media', ?, ?), (?, 'old1', 'media', ?, ?)")
+      .bind(acc.id, NOW - 2 * DAY, NOW, acc.id, NOW - 120 * DAY, NOW).run();
+    const wide = await insightsSummary(DB, 1, { ...F, from: NOW - 200 * DAY });
+    expect(wide.unread).toEqual({ queued: 1, too_old: 1 });
+    expect((await insightsSummary(DB, 999, { ...F, from: NOW - 200 * DAY })).unread).toBeNull();
   });
 
   it("isolates customers: another tenant sees nothing", async () => {

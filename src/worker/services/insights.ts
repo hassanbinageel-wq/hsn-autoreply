@@ -337,7 +337,7 @@ export async function insightsSummary(db: D1Database, t: number, f: AnalyticsFil
   const status = await getSetting<{ at: number; ok: boolean; reason: string | null; message: string | null } | null>(db, t, "insights_status", null);
   const granted = !!acc && hasInsightsScope(acc.scopes);
   const base = { granted, connected: !!acc && acc.status === "active", status, requested: await wantsInsightsScope(db, t) };
-  if (!granted) return { ...base, posts: [], totals: null, follow_reach: null, new_followers: null, demographics: null };
+  if (!granted) return { ...base, posts: [], totals: null, unread: null, follow_reach: null, new_followers: null, demographics: null };
 
   const args: unknown[] = [t, f.from, f.to];
   let extra = "";
@@ -360,6 +360,16 @@ export async function insightsSummary(db: D1Database, t: number, f: AnalyticsFil
       WHERE m.account_id IN ${ACC} AND m.posted_at >= ? AND m.posted_at < ?${extra}
       ORDER BY m.posted_at DESC LIMIT 200`,
     t,
+    ...args,
+  );
+  // Posts of the period that have no reading yet: newer than 90 days are queued (5 per hour), older are not read.
+  const unread = await first<{ queued: number; old: number }>(
+    db,
+    `SELECT COALESCE(SUM(m.posted_at > ?), 0) AS queued, COALESCE(SUM(m.posted_at <= ?), 0) AS old FROM media_cache m
+      WHERE m.account_id IN ${ACC} AND m.kind = 'media' AND m.posted_at >= ? AND m.posted_at < ?${extra}
+        AND NOT EXISTS (SELECT 1 FROM media_insights i WHERE i.account_id = m.account_id AND i.media_id = m.media_id)`,
+    Date.now() - 90 * DAY,
+    Date.now() - 90 * DAY,
     ...args,
   );
   const additive = ["views", "likes", "comments", "shares", "saved"] as const;
@@ -413,6 +423,7 @@ export async function insightsSummary(db: D1Database, t: number, f: AnalyticsFil
       ...Object.fromEntries(COLUMNS.map((k) => [k, p[k]])),
     })),
     totals: { ...totals, posts: posts.length },
+    unread: { queued: unread?.queued ?? 0, too_old: unread?.old ?? 0 },
     follow_reach: followers || non ? { follower: followers?.value ?? 0, non_follower: non?.value ?? 0, days: Math.max(followers?.days ?? 0, non?.days ?? 0) } : null,
     new_followers: nf?.days ? { value: nf.value ?? 0, days: nf.days } : null,
     demographics: Object.keys(demographics).length ? demographics : null,
