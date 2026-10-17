@@ -25,6 +25,8 @@ export interface Env {
   /** Optional: read-only Cloudflare analytics token (Account Analytics: Read) for exact usage figures. */
   CF_ANALYTICS_TOKEN?: string;
   CF_ACCOUNT_ID?: string;
+  /** The service's own domain (e.g. hsnreply.online), for its expiry date. */
+  SERVICE_DOMAIN?: string;
 }
 
 export const REQUIRED_SECRETS = [

@@ -15,6 +15,7 @@ export interface DomainInfo {
 }
 
 export function serviceDomain(env: Env): string | null {
+  if (env.SERVICE_DOMAIN && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(env.SERVICE_DOMAIN)) return env.SERVICE_DOMAIN.toLowerCase();
   try {
     const host = new URL(env.PUBLIC_BASE_URL).hostname.replace(/^www\./, "");
     return host.endsWith(".workers.dev") ? null : host;
