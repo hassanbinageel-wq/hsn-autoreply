@@ -67,7 +67,7 @@ describe("Salla store connection", () => {
     // the authorize link asks Salla for a refresh token and returns to our callback
     const u = new URL(sallaAuthorizeUrl(TEST_ENV, "st"));
     expect(u.origin + u.pathname).toBe("https://accounts.salla.sa/oauth2/auth");
-    expect(u.searchParams.get("scope")).toBe("offline_access");
+    expect(u.searchParams.get("scope")).toBe("offline_access products.read orders.read");
     expect(u.searchParams.get("redirect_uri")).toContain("/oauth/salla/callback");
   });
 

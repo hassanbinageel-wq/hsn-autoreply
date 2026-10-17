@@ -33,10 +33,13 @@ export function sallaAuthorizeUrl(env: Env, state: string): string {
   u.searchParams.set("client_id", env.SALLA_CLIENT_ID ?? "");
   u.searchParams.set("response_type", "code");
   u.searchParams.set("redirect_uri", sallaRedirectUri(env));
-  u.searchParams.set("scope", "offline_access");
+  // The read-only scopes the app is configured with in the Partner Portal, plus offline_access for a refresh token.
+  u.searchParams.set("scope", SALLA_SCOPES.join(" "));
   u.searchParams.set("state", state);
   return u.toString();
 }
+
+export const SALLA_SCOPES = ["offline_access", "products.read", "orders.read"] as const;
 
 const aad = (merchantId: string) => `salla-token:${merchantId}`;
 const aadRefresh = (merchantId: string) => `salla-refresh:${merchantId}`;
