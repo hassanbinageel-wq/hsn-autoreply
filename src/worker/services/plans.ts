@@ -43,6 +43,7 @@ const NONE: PlanLimits = {
   simulator: false,
   campaign_stats: false,
   undo: false,
+  scheduling: false,
 };
 
 export function parseLimits(raw: string): PlanLimits {

@@ -1,6 +1,7 @@
 import { createApp } from "./app";
 import { runFollowRecheck } from "./services/retention";
 import { runInsights } from "./services/insights";
+import { cleanupScheduledFiles, runPublisher } from "./services/publish";
 import type { Env } from "./env";
 import { all, getSetting, OWNER_TENANT, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
@@ -90,6 +91,7 @@ export default {
           await refreshExpiringTokens(env).catch((e) => console.error("token refresh", sanitize(String(e))));
           await refreshAccountProfiles(env).catch((e) => console.error("profile refresh", sanitize(String(e))));
           await cleanup(env.DB).catch((e) => console.error("cleanup", sanitize(String(e))));
+          await cleanupScheduledFiles(env).catch((e) => console.error("schedule files", sanitize(String(e))));
           await remindExpiringSubscriptions(env).catch((e) => console.error("expiry reminders", sanitize(String(e))));
         })(),
       );
@@ -104,6 +106,8 @@ export default {
     await autoRecover(env, ectx, new Date(controller.scheduledTime).getUTCMinutes()).catch((e) => console.error("recover", sanitize(String(e))));
     // Optional follow re-check for retention analytics (off unless the customer enables it; few people per hour).
     await runFollowRecheck(env, ectx, new Date(controller.scheduledTime).getUTCMinutes()).catch((e) => console.error("follow recheck", sanitize(String(e))));
+    // Scheduled publishing: one step per due post (containers, status checks, publish).
+    await runPublisher(env, () => used++).catch((e) => console.error("publisher", sanitize(String(e))));
     // Instagram insights snapshots, hourly per customer (only accounts that granted the insights permission).
     await runInsights(env, new Date(controller.scheduledTime).getUTCMinutes(), () => used++).catch((e) => console.error("insights", sanitize(String(e))));
     await runQueue(ectx, {

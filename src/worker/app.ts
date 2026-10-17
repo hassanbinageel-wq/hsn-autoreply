@@ -62,6 +62,7 @@ import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage } from "./services/usage";
 import { recoverMissedComments } from "./services/recover";
 import { auditCampaignComments } from "./services/audit";
+import { LIMITS, hasPublishScope, isImage, isVideo, optionalScopes, publishScopeMode, removeFiles, validatePost, verifyMediaUrl, wantsPublishScope, type PostKind } from "./services/publish";
 import { captureInsights, insightsAccount, insightsScopeMode, insightsSummary, mediaInsightsSeries, wantsInsightsScope } from "./services/insights";
 import { analyticsByCampaign, analyticsByPost, analyticsDevices, analyticsFollow, analyticsHeatmap, analyticsOverview, analyticsRetention, osFamily, tzOffsetMinutes, type AnalyticsFilter, type EventType, type HeatKind } from "./services/analytics";
 import { deleteDraws, DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
@@ -252,6 +253,17 @@ export function createApp() {
 
   // Tracked content link: counts the tap, then redirects to the campaign's real link.
   // Link-preview crawlers (Instagram/Meta fetch the URL to render a card) are redirected but not counted.
+  // Scheduled-publishing files, fetched by Meta through signed links that expire (the bucket itself is private).
+  app.on(["GET", "HEAD"], "/m/:key", async (c) => {
+    const key = c.req.param("key");
+    if (!c.env.MEDIA || !/^[A-Za-z0-9._-]{8,120}$/.test(key) || !(await verifyMediaUrl(c.env, key, c.req.query("e"), c.req.query("s")))) return c.text("not found", 404);
+    const obj = await c.env.MEDIA.get(key);
+    if (!obj) return c.text("not found", 404);
+    return new Response(c.req.method === "HEAD" ? null : obj.body, {
+      headers: { "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream", "Content-Length": String(obj.size), "Cache-Control": "private, max-age=3600" },
+    });
+  });
+
   app.on(["GET", "HEAD"], "/l/:token", async (c) => {
     const token = c.req.param("token");
     const notFound = () => c.html('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body style="font-family:system-ui;text-align:center;padding:3rem">الرابط غير صالح أو منتهي.</body>', 404);
@@ -1004,7 +1016,7 @@ export function createApp() {
       now,
       now + 10 * 60_000,
     );
-    const extra = (await wantsInsightsScope(c.env.DB, T(c))) ? [INSIGHTS_SCOPE] : [];
+    const extra = await optionalScopes(c.env.DB, T(c));
     return c.json({ url: metaClient(c.env).authorizeUrl(redirectUri(c.env), state, extra) });
   });
 
@@ -1326,6 +1338,206 @@ export function createApp() {
     await setSetting(c.env.DB, T(c), "follow_recheck_enabled", p.data.enabled);
     await setSetting(c.env.DB, T(c), "follow_recheck_days", p.data.days);
     await audit(c.env.DB, T(c), c.get("session").username, "follow_recheck.updated", undefined, p.data);
+    return c.json({ ok: true });
+  });
+
+
+  // ---- Scheduled publishing (official Content Publishing API; files in the private R2 bucket until published)
+  const POST_EDITABLE = ["draft", "scheduled", "failed", "cancelled"];
+  const schedAccount = async (c: C) =>
+    first<{ id: number; scopes: string | null; status: string }>(c.env.DB, "SELECT id, scopes, status FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 ORDER BY (status = 'active') DESC, id LIMIT 1", T(c));
+  const ownPost = async (c: C) => {
+    const id = idParam(c);
+    return id ? first<any>(c.env.DB, "SELECT * FROM scheduled_posts WHERE id = ? AND tenant_id = ?", id, T(c)) : null;
+  };
+  const postBody = z.object({
+    kind: z.enum(["IMAGE", "CAROUSEL", "REELS", "STORY"]),
+    caption: z.string().max(LIMITS.captionChars).optional().nullable(),
+    publish_at: z.number().int().positive(),
+    share_to_feed: z.boolean().optional(),
+    campaign_id: z.number().int().positive().optional().nullable(),
+  });
+  const checkCampaign = async (c: C, id: number | null | undefined) =>
+    !id || !!(await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c)));
+
+  api.get("/schedule/meta", async (c) => {
+    const a = await schedAccount(c);
+    const e = await ENT(c);
+    return c.json({
+      plan: !!e.active && !!e.limits.scheduling,
+      connected: !!a && a.status === "active",
+      granted: !!a && hasPublishScope(a.scopes),
+      requested: await wantsPublishScope(c.env.DB, T(c)),
+      storage: !!c.env.MEDIA,
+      limits: LIMITS,
+      tz_offset_min: tzOffsetMinutes((await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Aden")) || "Asia/Aden"),
+      scope_mode: c.get("session").is_owner ? await publishScopeMode(c.env.DB) : undefined,
+    });
+  });
+  api.put("/schedule/scope", async (c) => {
+    if (!c.get("session").is_owner) return apiError(c, 403, "owner_only", "هذا الإعداد متاح لإدارة الخدمة فقط");
+    const p = await parseBody(c, z.object({ mode: z.enum(["off", "owner", "all"]) }));
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "publish_scope", p.data.mode);
+    await audit(c.env.DB, T(c), c.get("session").username, "publish_scope.updated", undefined, p.data);
+    return c.json({ ok: true });
+  });
+  api.get("/schedule", async (c) => {
+    const blocked = await planBlock(c, "scheduling");
+    if (blocked) return blocked;
+    const from = Number(c.req.query("from")) || Date.now() - 31 * 86_400_000;
+    const to = Number(c.req.query("to")) || Date.now() + 62 * 86_400_000;
+    const items = await all<any>(
+      c.env.DB,
+      `SELECT p.id, p.kind, p.caption, p.publish_at, p.status, p.campaign_id, p.media_id, p.permalink, p.last_error, p.published_at, p.share_to_feed,
+              (SELECT c2.name FROM campaigns c2 WHERE c2.id = p.campaign_id) AS campaign_name,
+              (SELECT m.id FROM scheduled_media m WHERE m.post_id = p.id AND m.role = 'item' AND m.deleted_at IS NULL ORDER BY m.position LIMIT 1) AS thumb_id,
+              (SELECT m.mime FROM scheduled_media m WHERE m.post_id = p.id AND m.role = 'item' ORDER BY m.position LIMIT 1) AS thumb_mime,
+              (SELECT COUNT(*) FROM scheduled_media m WHERE m.post_id = p.id AND m.role = 'item') AS files,
+              (SELECT mc.thumbnail_url FROM media_cache mc WHERE mc.media_id = p.media_id AND mc.account_id = p.account_id) AS published_thumb
+         FROM scheduled_posts p WHERE p.tenant_id = ? AND p.publish_at >= ? AND p.publish_at < ? ORDER BY p.publish_at LIMIT 500`,
+      T(c),
+      from,
+      to,
+    );
+    return c.json({ items });
+  });
+  api.get("/schedule/:id", async (c) => {
+    const blocked = await planBlock(c, "scheduling");
+    if (blocked) return blocked;
+    const post = await ownPost(c);
+    if (!post) return apiError(c, 404, "not_found", "المنشور غير موجود");
+    const [media, log] = await Promise.all([
+      all(c.env.DB, "SELECT id, position, role, mime, size, deleted_at FROM scheduled_media WHERE post_id = ? ORDER BY role DESC, position", post.id),
+      all(c.env.DB, "SELECT at, step, ok, detail FROM publish_log WHERE post_id = ? ORDER BY at, id LIMIT 200", post.id),
+    ]);
+    return c.json({ post, media, log });
+  });
+  api.post("/schedule", async (c) => {
+    const blocked = await planBlock(c, "scheduling");
+    if (blocked) return blocked;
+    const p = await parseBody(c, postBody);
+    if (!p.ok) return p.res;
+    const a = await schedAccount(c);
+    if (!a || a.status !== "active") return apiError(c, 409, "no_account", "اربط حساب إنستقرام أولًا");
+    if (!hasPublishScope(a.scopes)) return apiError(c, 409, "no_permission", "صلاحية النشر غير مفعّلة على الحساب — أعد الربط ووافق عليها");
+    if (!c.env.MEDIA) return apiError(c, 503, "no_storage", "مساحة حفظ الملفات غير مفعّلة على الخادم");
+    if (!(await checkCampaign(c, p.data.campaign_id))) return apiError(c, 404, "campaign", "الحملة غير موجودة");
+    if ((await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM scheduled_posts WHERE tenant_id = ? AND status IN ('draft','scheduled','publishing','uncertain')", T(c)))!.n >= 100)
+      return apiError(c, 409, "too_many", "عندك 100 منشور مجدول أو مسودة — احذف بعضها أولًا");
+    const now = Date.now();
+    const r = await first<{ id: number }>(
+      c.env.DB,
+      `INSERT INTO scheduled_posts (tenant_id, account_id, kind, caption, publish_at, status, share_to_feed, campaign_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?) RETURNING id`,
+      T(c), a.id, p.data.kind, p.data.caption?.trim() || null, p.data.publish_at, p.data.share_to_feed === false ? 0 : 1, p.data.campaign_id ?? null, now, now,
+    );
+    return c.json({ id: r!.id });
+  });
+  api.patch("/schedule/:id", async (c) => {
+    const blocked = await planBlock(c, "scheduling");
+    if (blocked) return blocked;
+    const post = await ownPost(c);
+    if (!post) return apiError(c, 404, "not_found", "المنشور غير موجود");
+    if (!POST_EDITABLE.includes(post.status)) return apiError(c, 409, "locked", "المنشور قيد النشر أو منشور — ما يتعدّل");
+    const p = await parseBody(c, postBody.partial());
+    if (!p.ok) return p.res;
+    if (!(await checkCampaign(c, p.data.campaign_id))) return apiError(c, 404, "campaign", "الحملة غير موجودة");
+    const d = p.data;
+    await run(
+      c.env.DB,
+      `UPDATE scheduled_posts SET kind = COALESCE(?, kind), caption = CASE WHEN ? THEN ? ELSE caption END, publish_at = COALESCE(?, publish_at),
+         share_to_feed = COALESCE(?, share_to_feed), campaign_id = CASE WHEN ? THEN ? ELSE campaign_id END,
+         status = 'draft', updated_at = ? WHERE id = ?`,
+      d.kind ?? null, d.caption !== undefined ? 1 : 0, d.caption?.trim() || null, d.publish_at ?? null,
+      d.share_to_feed === undefined ? null : d.share_to_feed ? 1 : 0, d.campaign_id !== undefined ? 1 : 0, d.campaign_id ?? null, Date.now(), post.id,
+    );
+    return c.json({ ok: true });
+  });
+  // Raw file upload (body = the file). Images must already be JPEG (the app converts them before uploading).
+  api.put("/schedule/:id/media", async (c) => {
+    const blocked = await planBlock(c, "scheduling");
+    if (blocked) return blocked;
+    if (!c.env.MEDIA) return apiError(c, 503, "no_storage", "مساحة حفظ الملفات غير مفعّلة على الخادم");
+    const post = await ownPost(c);
+    if (!post) return apiError(c, 404, "not_found", "المنشور غير موجود");
+    if (!POST_EDITABLE.includes(post.status)) return apiError(c, 409, "locked", "المنشور قيد النشر أو منشور — ما يتعدّل");
+    const mime = (c.req.header("Content-Type") ?? "").split(";")[0].trim().toLowerCase();
+    const size = Number(c.req.header("Content-Length") ?? 0);
+    if (!isImage(mime) && !isVideo(mime)) return apiError(c, 422, "type", "نوع ملف غير مدعوم: الصور JPEG والفيديو MP4");
+    if (!size || size > (isVideo(mime) ? LIMITS.videoBytes : LIMITS.imageBytes)) return apiError(c, 422, "size", isVideo(mime) ? "الفيديو أكبر من 95 ميجا" : "الصورة أكبر من 8 ميجا");
+    const role = c.req.query("role") === "cover" ? "cover" : "item";
+    const count = (await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM scheduled_media WHERE post_id = ? AND deleted_at IS NULL", post.id))!.n;
+    if (count >= LIMITS.carouselMax + 1) return apiError(c, 409, "too_many", "وصلت للحد الأعلى من الملفات");
+    if (!(await rateLimit(c.env.DB, `upload:${T(c)}`, 120, 3_600_000))) return apiError(c, 429, "rate_limited", "رفعت ملفات كثيرة — جرّب بعد شوي");
+    const key = `t${T(c)}-p${post.id}-${randomToken(12)}.${isVideo(mime) ? (mime === "video/quicktime" ? "mov" : "mp4") : "jpg"}`;
+    const body = c.req.raw.body;
+    if (!body) return apiError(c, 400, "empty", "الملف فاضي");
+    await c.env.MEDIA.put(key, body, { httpMetadata: { contentType: mime } });
+    const pos = Number(c.req.query("position"));
+    const r = await first<{ id: number }>(
+      c.env.DB,
+      "INSERT INTO scheduled_media (post_id, position, role, r2_key, mime, size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+      post.id, Number.isFinite(pos) ? pos : count, role, key, mime, size, Number(c.req.query("w")) || null, Number(c.req.query("h")) || null, Date.now(),
+    );
+    await run(c.env.DB, "UPDATE scheduled_posts SET status = 'draft', updated_at = ? WHERE id = ? AND status != 'draft'", Date.now(), post.id);
+    return c.json({ id: r!.id });
+  });
+  // Preview of an uploaded file for its owner (the bucket is private).
+  api.get("/schedule/media/:mid", async (c) => {
+    const mid = Number(c.req.param("mid"));
+    const m = mid ? await first<{ r2_key: string }>(c.env.DB, "SELECT m.r2_key FROM scheduled_media m JOIN scheduled_posts p ON p.id = m.post_id WHERE m.id = ? AND p.tenant_id = ? AND m.deleted_at IS NULL", mid, T(c)) : null;
+    const obj = m && c.env.MEDIA ? await c.env.MEDIA.get(m.r2_key) : null;
+    if (!obj) return c.text("not found", 404);
+    return new Response(obj.body, { headers: { "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream", "Cache-Control": "private, max-age=600" } });
+  });
+  api.delete("/schedule/:id/media/:mid", async (c) => {
+    const post = await ownPost(c);
+    if (!post) return apiError(c, 404, "not_found", "المنشور غير موجود");
+    if (!POST_EDITABLE.includes(post.status)) return apiError(c, 409, "locked", "المنشور قيد النشر أو منشور — ما يتعدّل");
+    const m = await first<{ id: number; r2_key: string }>(c.env.DB, "SELECT id, r2_key FROM scheduled_media WHERE id = ? AND post_id = ?", Number(c.req.param("mid")), post.id);
+    if (!m) return apiError(c, 404, "not_found", "الملف غير موجود");
+    await c.env.MEDIA?.delete(m.r2_key).catch(() => undefined);
+    await run(c.env.DB, "DELETE FROM scheduled_media WHERE id = ?", m.id);
+    await run(c.env.DB, "UPDATE scheduled_posts SET status = 'draft', updated_at = ? WHERE id = ?", Date.now(), post.id);
+    return c.json({ ok: true });
+  });
+  // Draft → scheduled, after the same checks Meta applies (type, count, JPEG, sizes, caption).
+  api.post("/schedule/:id/submit", async (c) => {
+    const blocked = await planBlock(c, "scheduling");
+    if (blocked) return blocked;
+    const post = await ownPost(c);
+    if (!post) return apiError(c, 404, "not_found", "المنشور غير موجود");
+    if (!POST_EDITABLE.includes(post.status)) return apiError(c, 409, "locked", "المنشور قيد النشر أو منشور");
+    const a = await schedAccount(c);
+    if (!a || a.status !== "active" || !hasPublishScope(a.scopes)) return apiError(c, 409, "no_permission", "صلاحية النشر غير مفعّلة على الحساب — أعد الربط ووافق عليها");
+    const media = await all<any>(c.env.DB, "SELECT role, mime, size FROM scheduled_media WHERE post_id = ? AND deleted_at IS NULL", post.id);
+    const err = validatePost({ kind: post.kind as PostKind, caption: post.caption, publish_at: post.publish_at }, media);
+    if (err) return apiError(c, 422, "validation", err);
+    await run(
+      c.env.DB,
+      `UPDATE scheduled_posts SET status = 'scheduled', account_id = ?, container_id = NULL, children = NULL, publish_requested_at = NULL, attempts = 0,
+         next_attempt_at = NULL, last_error = NULL, updated_at = ? WHERE id = ?`,
+      a.id, Date.now(), post.id,
+    );
+    await audit(c.env.DB, T(c), c.get("session").username, "schedule.scheduled", String(post.id), { kind: post.kind, publish_at: post.publish_at });
+    return c.json({ ok: true });
+  });
+  api.post("/schedule/:id/cancel", async (c) => {
+    const post = await ownPost(c);
+    if (!post) return apiError(c, 404, "not_found", "المنشور غير موجود");
+    if (post.publish_requested_at || ["published", "uncertain"].includes(post.status)) return apiError(c, 409, "locked", "طلب النشر انرسل لـ Meta — ما نقدر نلغيه");
+    await run(c.env.DB, "UPDATE scheduled_posts SET status = 'cancelled', next_attempt_at = NULL, updated_at = ? WHERE id = ?", Date.now(), post.id);
+    await audit(c.env.DB, T(c), c.get("session").username, "schedule.cancelled", String(post.id));
+    return c.json({ ok: true });
+  });
+  api.delete("/schedule/:id", async (c) => {
+    const post = await ownPost(c);
+    if (!post) return apiError(c, 404, "not_found", "المنشور غير موجود");
+    if (["publishing", "uncertain"].includes(post.status)) return apiError(c, 409, "locked", "المنشور قيد النشر — انتظر لين يخلص");
+    await removeFiles({ db: c.env.DB, now: () => Date.now(), deleteObject: c.env.MEDIA ? (k) => c.env.MEDIA!.delete(k) : undefined }, post.id);
+    await run(c.env.DB, "DELETE FROM scheduled_posts WHERE id = ?", post.id);
+    await audit(c.env.DB, T(c), c.get("session").username, "schedule.deleted", String(post.id));
     return c.json({ ok: true });
   });
 

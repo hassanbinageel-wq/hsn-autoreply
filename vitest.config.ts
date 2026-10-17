@@ -11,6 +11,7 @@ export default defineConfig(async () => {
           compatibilityDate: "2026-08-20",
           compatibilityFlags: ["nodejs_compat"],
           d1Databases: ["DB"],
+          r2Buckets: ["MEDIA"],
           bindings: {
             TEST_MIGRATIONS: migrations,
             INSTAGRAM_APP_ID: "1234567890",

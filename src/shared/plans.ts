@@ -16,6 +16,8 @@ export interface PlanLimits {
   simulator: boolean;
   campaign_stats: boolean;
   undo: boolean;
+  /** Scheduled publishing of posts / reels / stories (needs the content-publishing permission). */
+  scheduling?: boolean;
 }
 
 /** The owner's own workspace: everything, no expiry. */
@@ -35,6 +37,7 @@ export const OWNER_LIMITS: PlanLimits = {
   simulator: true,
   campaign_stats: true,
   undo: true,
+  scheduling: true,
 };
 
 export const FEATURE_LABELS: Record<string, string> = {
@@ -49,6 +52,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   simulator: "المحاكاة (تجربة الحملة قبل التفعيل)",
   campaign_stats: "إحصائيات مفصلة لكل حملة",
   undo: "التراجع عن آخر العمليات",
+  scheduling: "جدولة نشر المنشورات والريلز والستوري",
 };
 
 /** The four limit rows shown before the on/off features, by key. */
@@ -84,6 +88,7 @@ export const FEATURE_HINTS: Record<string, string> = {
   simulator: "تجرّب الحملة كأنك متابع يعلّق ويرد، وتشوف الرسائل بالضبط قبل ما تفعّلها — بدون إرسال أي شي حقيقي.",
   campaign_stats: "لكل حملة: عدد التعليقات والأشخاص، من استلم الرسالة، من ضغط الرابط، من تابع، وأداء كل منشور.",
   undo: "رجوع عن آخر 10 عمليات (حذف حملة، تعديل، إيقاف...) من صفحة السجل.",
+  scheduling: "ترفع الصورة أو الفيديو وتحدد الوقت، والنظام ينشره على حسابك تلقائيًا عبر واجهة Meta الرسمية، ويقدر يشغّل حملة على المنشور أول ما يُنشر.",
 };
 
 export const LIMIT_HINTS: Record<string, string> = {

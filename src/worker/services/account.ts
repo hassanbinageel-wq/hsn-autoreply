@@ -2,8 +2,8 @@ import type { Env } from "../env";
 import { audit, first, run } from "../lib/db";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
 import { notify } from "./notify";
-import { HttpMetaClient, INSIGHTS_SCOPE, INSTAGRAM_SCOPES, WEBHOOK_FIELDS } from "../meta/client";
-import { wantsInsightsScope } from "./insights";
+import { HttpMetaClient, INSTAGRAM_SCOPES, WEBHOOK_FIELDS } from "../meta/client";
+import { optionalScopes } from "./publish";
 import { DemoMetaClient } from "../meta/demo";
 import type { AccountRow, EngineContext } from "../engine/context";
 import { cancelJobsWhere } from "../engine/jobs";
@@ -108,7 +108,7 @@ export async function completeOAuth(env: Env, code: string, tenantId: number): P
   // Meta normally returns the granted permissions; without them, assume what was requested.
   const scopes = short.data.permissions?.length
     ? short.data.permissions
-    : [...INSTAGRAM_SCOPES, ...((await wantsInsightsScope(env.DB, tenantId)) ? [INSIGHTS_SCOPE] : [])];
+    : [...INSTAGRAM_SCOPES, ...(await optionalScopes(env.DB, tenantId))];
   const expiresAt = long.data.expires_in ? now + long.data.expires_in * 1000 : null;
 
   // One account per customer: a newly connected account replaces the customer's previous (non-demo) one.

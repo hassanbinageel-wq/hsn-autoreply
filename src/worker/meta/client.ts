@@ -33,6 +33,9 @@ export const INSTAGRAM_SCOPES = [
   "instagram_business_manage_comments",
 ] as const;
 
+/** Optional: scheduled publishing of posts / reels / stories. Requested only where the owner enabled it. */
+export const PUBLISH_SCOPE = "instagram_business_content_publish";
+
 /** Optional: Instagram's own metrics (views, reach, saves, audience). Requested only where the owner enabled it. */
 export const INSIGHTS_SCOPE = "instagram_business_manage_insights";
 
@@ -286,6 +289,31 @@ export class HttpMetaClient implements MetaClient {
   async accountInsights(token: string, query: Record<string, string>): Promise<MetaResult<InsightsResponse>> {
     const u = new URL(`${this.graphBase}/me/insights`);
     for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
+    return this.request(u.toString(), this.authGet(token), false);
+  }
+
+  // ---------- Content publishing (instagram_business_content_publish) ----------
+  /** Creates a media container (Meta fetches the file from the given public URL). */
+  async createContainer(token: string, igUserId: string, params: Record<string, string | boolean>): Promise<MetaResult<{ id?: string }>> {
+    return this.request(`${this.graphBase}/${encodeURIComponent(igUserId)}/media`, this.authJson(token, params), false);
+  }
+
+  /** status_code: IN_PROGRESS | FINISHED | PUBLISHED | ERROR | EXPIRED. */
+  async containerStatus(token: string, containerId: string): Promise<MetaResult<{ status_code?: string; status?: string; id?: string }>> {
+    const u = new URL(`${this.graphBase}/${encodeURIComponent(containerId)}`);
+    u.searchParams.set("fields", "status_code,status");
+    return this.request(u.toString(), this.authGet(token), false);
+  }
+
+  /** Publishes a FINISHED container. A lost connection is "uncertain": check the container before trying again. */
+  async publishContainer(token: string, igUserId: string, containerId: string): Promise<MetaResult<{ id?: string }>> {
+    return this.request(`${this.graphBase}/${encodeURIComponent(igUserId)}/media_publish`, this.authJson(token, { creation_id: containerId }), true);
+  }
+
+  /** API publishing quota in the moving 24h window. */
+  async publishingLimit(token: string, igUserId: string): Promise<MetaResult<{ data?: Array<{ quota_usage?: number; config?: { quota_total?: number; quota_duration?: number } }> }>> {
+    const u = new URL(`${this.graphBase}/${encodeURIComponent(igUserId)}/content_publishing_limit`);
+    u.searchParams.set("fields", "quota_usage,config");
     return this.request(u.toString(), this.authGet(token), false);
   }
 

@@ -75,3 +75,39 @@ export async function download(path: string, filename: string) {
   const { saveFile } = await import("./lib/save");
   await saveFile(await res.blob(), filename);
 }
+
+/** Uploads a file as the raw request body (PUT), with progress (0..1). Same auth rules as `api`. */
+export async function uploadFile<T = any>(path: string, file: Blob, onProgress?: (p: number) => void): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": file.type };
+  if (isNative) {
+    const t = await deviceToken.get();
+    if (t) headers["Authorization"] = `Bearer ${t}`;
+  } else if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  return new Promise<T>((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("PUT", API_BASE + path);
+    x.withCredentials = !isNative;
+    for (const [k, v] of Object.entries(headers)) x.setRequestHeader(k, v);
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    x.onerror = () => reject(new ApiError(0, "network", "انقطع الاتصال أثناء الرفع. حاول مرة ثانية."));
+    x.onload = () => {
+      let data: any = null;
+      try {
+        data = JSON.parse(x.responseText);
+      } catch {
+        /* empty */
+      }
+      if (x.status >= 200 && x.status < 300) return resolve(data as T);
+      const e = data?.error ?? {};
+      if (x.status === 401) onUnauthorized?.();
+      reject(new ApiError(x.status, e.code ?? "http", e.message ?? (x.status === 413 ? "الملف كبير جدًا" : `HTTP ${x.status}`)));
+    };
+    x.send(file);
+  });
+}
+
+/** An object URL for a private file served by the API (works in the app too, where <img> cannot send the token). */
+export async function authedObjectUrl(path: string): Promise<string> {
+  const res = await api<Response>(path, { raw: true });
+  return URL.createObjectURL(await res.blob());
+}
