@@ -49,10 +49,11 @@ export function StoreConnect() {
             <span className={`chip ${salla.status === "active" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"}`}>{salla.status === "active" ? "متصل" : "يحتاج إعادة ربط"}</span>
           </div>
           {salla.status === "active" && salla.last_error && <Alert tone="warn">{salla.last_error}</Alert>}
+          <p className="muted text-xs">المنتجات والطلبات تتحدث تلقائيًا لحظة تغيّرها في متجرك، ومعها مراجعة يومية للمنتجات — زر التحديث احتياطي فقط.</p>
           {salla.status !== "active" && <Alert tone="warn">انتهى تفويض المتجر{salla.last_error ? ` (${salla.last_error})` : ""} — اضغط «إعادة الربط».</Alert>}
           <div className="flex flex-wrap gap-2">
             <button className="btn btn-ghost" disabled={!!busy} onClick={connect}>إعادة الربط</button>
-            {salla.status === "active" && <button className="btn btn-ghost" disabled={!!busy} onClick={() => run("sync", async () => { const r = await api<any>(`/api/stores/${salla.id}/sync`, { body: {} }); toast(`تم جلب ${r.products} منتج`); reload(); })}>{busy === "sync" ? "…" : "تحديث المنتجات"}</button>}
+            {salla.status === "active" && <button className="btn btn-ghost" disabled={!!busy} onClick={() => run("sync", async () => { const r = await api<any>(`/api/stores/${salla.id}/sync`, { body: {} }); toast(`تم جلب ${r.products} منتج`); reload(); })}>{busy === "sync" ? "…" : "تحديث المنتجات الآن"}</button>}
             <button className="btn btn-danger" disabled={!!busy} onClick={() => run("del", async () => {
               if (!(await askConfirm({ title: "فصل المتجر؟", message: "يتوقف استقبال الطلبات الجديدة. الطلبات المحفوظة تبقى في التحليل. لإزالة التطبيق نهائيًا احذفه أيضًا من لوحة تحكم سلة › التطبيقات.", confirmLabel: "فصل", danger: true }))) return;
               await api(`/api/stores/${salla.id}`, { method: "DELETE" });

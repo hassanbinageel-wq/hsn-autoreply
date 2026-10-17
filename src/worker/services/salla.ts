@@ -360,3 +360,16 @@ export async function claimStore(env: Env, storeId: number, tenantId: number, no
   await audit(env.DB, tenantId, "admin", "store.connected", s.merchant_id, { platform: "salla", via: "salla_install" });
   return true;
 }
+
+/** Hourly, one minute per store: a full product re-read once a day, to catch any webhook Salla could not deliver. */
+export async function dailyProductResync(env: Env, minute: number, now = Date.now()): Promise<number> {
+  const due = await all<{ id: number }>(
+    env.DB,
+    "SELECT id FROM stores WHERE platform = 'salla' AND status = 'active' AND (id + 13) % 60 = ? AND COALESCE(products_synced_at, 0) < ? LIMIT 2",
+    minute,
+    now - 23 * 3_600_000,
+  );
+  let n = 0;
+  for (const s of due) n += await syncProducts(env, s.id, defaultFetch, now, 3);
+  return n;
+}

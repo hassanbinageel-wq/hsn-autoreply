@@ -2,7 +2,7 @@ import { createApp } from "./app";
 import { runFollowRecheck } from "./services/retention";
 import { runInsights } from "./services/insights";
 import { cleanupScheduledFiles, runPublisher } from "./services/publish";
-import { refreshStoreTokens } from "./services/salla";
+import { dailyProductResync, refreshStoreTokens } from "./services/salla";
 import type { Env } from "./env";
 import { all, getSetting, OWNER_TENANT, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
@@ -110,6 +110,8 @@ export default {
     await runFollowRecheck(env, ectx, new Date(controller.scheduledTime).getUTCMinutes()).catch((e) => console.error("follow recheck", sanitize(String(e))));
     // Scheduled publishing: one step per due post (containers, status checks, publish).
     await runPublisher(env, () => used++).catch((e) => console.error("publisher", sanitize(String(e))));
+    // Store products: a daily safety re-read per store (webhooks keep them current in between).
+    await dailyProductResync(env, new Date(controller.scheduledTime).getUTCMinutes()).catch((e) => console.error("store resync", sanitize(String(e))));
     // Instagram insights snapshots, hourly per customer (only accounts that granted the insights permission).
     await runInsights(env, new Date(controller.scheduledTime).getUTCMinutes(), () => used++).catch((e) => console.error("insights", sanitize(String(e))));
     await runQueue(ectx, {
