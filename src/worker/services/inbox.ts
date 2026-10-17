@@ -1,5 +1,6 @@
 import type { AccountRow, EngineContext } from "../engine/context";
 import { all, first, run } from "../lib/db";
+import { joinWaitlist } from "./restock";
 
 export type MessageSource = "user" | "bot" | "manual" | "app";
 
@@ -37,7 +38,10 @@ export async function recordMessage(db: D1Database, m: NewMessage): Promise<void
         .prepare("UPDATE participants SET last_message_at = MAX(COALESCE(last_message_at, 0), ?) WHERE id = ?")
         .bind(m.at, m.participantId),
     ]);
-    if (m.direction === "in" && !m.isDemo) await autoLabel(db, m.participantId, m.text);
+    if (m.direction === "in" && !m.isDemo) {
+      await autoLabel(db, m.participantId, m.text);
+      await joinWaitlist(db, m.participantId, m.text, m.at);
+    }
   } catch (err) {
     console.error("inbox record failed", String((err as Error)?.message ?? err).slice(0, 200));
   }

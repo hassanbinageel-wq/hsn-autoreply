@@ -98,6 +98,8 @@ function stripContent(text: string, url: string | null): string {
 
 export { contentLinkButton, LINK_BUTTON_TITLE } from "../../shared/template";
 
+export const OUT_OF_STOCK_TEXT = "هلا {{username|يا غالي}} 🌸 للأسف المنتج خلص حاليًا من المخزون.\nتبغى نبلغك أول ما يرجع؟ رد بكلمة: بلغني";
+
 export function buildMessage(
   purpose: string,
   l: Loaded,
@@ -120,6 +122,10 @@ export function buildMessage(
 
   switch (purpose) {
     case "content": {
+      // The linked product is out of stock and the merchant chose the waitlist: no link, an invitation to ask instead.
+      if (c.stock_out_at && c.stock_action === "waitlist") {
+        return { text: stripContent(renderTemplate(c.out_of_stock_text?.trim() || OUT_OF_STOCK_TEXT, vars), c.final_url) };
+      }
       const body = c.final_text?.trim() ? c.final_text : "تفضل 🎁 {{content_url}}";
       text = renderTemplate(body, { ...vars, content_url: c.final_url ?? "" });
       if (c.final_url && !text.includes(c.final_url)) text = `${text}\n${c.final_url}`.trim();

@@ -67,6 +67,8 @@ export const campaignInputSchema = z
     /** A campaign made for a scheduled post: it gets the post's id once the post is published. */
     for_scheduled_post: z.number().int().positive().optional(),
     /** Discount code in the customer's store: orders using it count for this campaign. */
+    stock_action: z.enum(["notify", "pause", "waitlist"]).optional(),
+    out_of_stock_text: z.string().trim().max(1000).nullable().optional(),
     store_coupon: z.string().trim().max(60).regex(/^[A-Za-z0-9_-]*$/, "كود الخصم: حروف إنجليزية وأرقام فقط").nullable().optional(),
   })
   .superRefine((c, ctx) => {

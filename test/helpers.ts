@@ -142,6 +142,7 @@ const TABLES = [
   "participants",
   "webhook_events",
   "campaign_keywords",
+  "restock_waitlist",
   "campaign_media",
   "campaigns",
   "media_cache",

@@ -113,6 +113,7 @@ export function StorePage() {
                       <Mini label="ربح" value={c.profit === null ? "—" : money(c.profit, cur)} tone={c.profit !== null ? (c.profit < 0 ? "bad" : "good") : undefined} />
                     </div>
                     <div className="muted mt-2 text-[11px]">{fmt(c.delivered)} استلموا · {fmt(c.clickers)} ضغطوا{c.orders !== null ? ` · تحويل ${pct(c.orders, c.clickers)}` : ""}</div>
+                    {c.stock && <div className="mt-1.5 text-[11px] font-semibold text-rose-600">📦 المنتج نفد من المخزون · {c.stock.paused ? "الحملة موقوفة لين يرجع" : c.stock.action === "waitlist" ? "ترد بقائمة الانتظار" : "الحملة مستمرة"}</div>}
                     {c.shared_coupon && <div className="mt-1 text-[11px] text-amber-600">⚠️ نفس الكود مستخدم في حملة ثانية — الأرقام مشتركة بينهم</div>}
                   </button>
                 ))}
@@ -176,7 +177,7 @@ export function StorePage() {
                   <div key={p.id} className="flex items-center gap-3 py-2.5">
                     {p.image_url ? <img src={p.image_url} alt="" className="size-11 shrink-0 rounded-lg object-cover" loading="lazy" /> : <span className="surface-2 grid size-11 shrink-0 place-items-center rounded-lg">🛍️</span>}
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-semibold">{p.name ?? `منتج ${p.id}`}</div>
+                      <div className="truncate text-sm font-semibold">{p.name ?? `منتج ${p.id}`}{p.out_of_stock && <span className="chip mr-1.5 bg-rose-100 !py-0 text-[10.5px] text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">نفد</span>}</div>
                       <div className="muted text-xs">{p.campaigns.length ? `حملات: ${p.campaigns.map((c: any) => c.name).join("، ")} · ${fmt(p.clicks)} ضغطة` : "ما فيه حملة تروّج له"}</div>
                     </div>
                     <div className="text-left text-sm">
@@ -346,6 +347,21 @@ function CampaignStore({ id, range, onClose }: { id: number; range: { from: numb
             <Link to={`/campaigns/${id}/stats`} className="btn btn-ghost min-h-9 text-xs" onClick={onClose}>إحصائيات الحملة الكاملة</Link>
           </div>
           {!data.campaign.coupon && <Alert tone="warn">الحملة ما لها كود خصم، فنعرض المسار لين «ضغطوا الرابط» بس. أضف كود من محرر الحملة عشان تنحسب الطلبات.</Alert>}
+          {data.campaign.stock_out_at && (
+            <Alert tone="warn">
+              📦 المنتج نفد من المخزون من {fmtDate(data.campaign.stock_out_at)} — {data.campaign.stock_paused ? "الحملة موقوفة مؤقتًا وترجع تشتغل لحالها لما يتوفر." : data.campaign.stock_action === "waitlist" ? "الحملة ترد إن المنتج خلص وتسجّل من يكتب «بلغني»." : "الحملة مستمرة ترسل الرابط (غيّر الخيار من محرر الحملة)."}
+            </Alert>
+          )}
+          {(data.waitlist.waiting + data.waitlist.sent + data.waitlist.window_closed + data.waitlist.failed > 0) && (
+            <section aria-label="قائمة الانتظار">
+              <h3 className="mb-2 flex items-center gap-1.5 text-sm font-bold">🔔 طلبوا التنبيه لما يرجع <InfoDot text="أشخاص كتبوا «بلغني» بعد ما وصلهم إن المنتج خلص. لما يرجع نرسل لهم رسالة واحدة — بس للي كتب لنا خلال آخر 24 ساعة (قاعدة إنستقرام). الباقين ما نقدر نراسلهم، بس تقدر تنشر ستوري إن المنتج رجع." /></h3>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <Mini label="بالانتظار" value={fmt(data.waitlist.waiting)} />
+                <Mini label="وصلهم التنبيه" value={fmt(data.waitlist.sent)} tone="good" />
+                <Mini label="فاتت الـ24 ساعة" value={fmt(data.waitlist.window_closed + data.waitlist.failed)} />
+              </div>
+            </section>
+          )}
           {data.campaign.shared_coupon && <Alert tone="warn">نفس الكود مستخدم في حملة ثانية — الطلبات تنحسب للحملتين ولا نقدر نفرّقها. الأفضل كود خاص لكل حملة.</Alert>}
 
           <section aria-label="مسار البيع">

@@ -43,6 +43,8 @@ type Form = {
   process_old_events: boolean;
   track_clicks: boolean;
   store_coupon: string;
+  stock_action: "notify" | "pause" | "waitlist";
+  out_of_stock_text: string;
   follow_reminder_minutes: number;
   auto_new_media: boolean;
   auto_new_reels_only: boolean;
@@ -69,6 +71,8 @@ const EMPTY: Form = {
   final_text: "تفضل 🎁 {{content_url}}",
   final_url: "",
   store_coupon: "",
+  stock_action: "notify",
+  out_of_stock_text: "",
   public_reply_enabled: false,
   public_reply_text: SAFE_PUBLIC_REPLIES.join("\n"),
   public_reply_on_dm_fail: "none",
@@ -304,6 +308,8 @@ export function CampaignWizard({ id }: { id: number | null }) {
     name: form.name.trim() || autoName,
     final_url: form.final_url.trim() || null,
     store_coupon: form.store_coupon.trim() || null,
+    stock_action: form.stock_action,
+    out_of_stock_text: form.out_of_stock_text.trim() || null,
     opening_text: form.opening_text || null,
     public_reply_fallback_text: form.public_reply_fallback_text || null,
     media_ids: form.scope === "selected" ? form.media_ids : [],
@@ -613,6 +619,24 @@ export function CampaignWizard({ id }: { id: number | null }) {
                 hint="مثال: REEL18 — حروف إنجليزية وأرقام."
               >
                 <input className="input" dir="ltr" value={form.store_coupon} onChange={(e) => set("store_coupon", e.target.value.replace(/[^A-Za-z0-9_-]/g, "").toUpperCase())} placeholder="REEL18" maxLength={60} />
+              </Field>
+            )}
+            {storeItems.some((p) => p.url && p.url === form.final_url) && (
+              <Field
+                label={<span className="inline-flex items-center gap-1">لو خلص المنتج من المخزون <InfoDot text="النظام يعرف من متجرك لما ينفد المنتج أو يرجع، ويبلغك على تيليجرام. «قائمة انتظار»: بدل الرابط ترد الحملة إن المنتج خلص وتطلب منه يكتب «بلغني» — ولما يرجع نرسل له رسالة واحدة، بشرط إنه كتب لنا خلال آخر 24 ساعة (قاعدة إنستقرام: ما نقدر نراسل أحد بعد 24 ساعة من آخر رسالة منه)." /></span>}
+              >
+                <div className="seg grid w-full grid-cols-3 !overflow-visible" role="group" aria-label="لو خلص المنتج">
+                  {([["notify", "أبلغني بس"], ["pause", "أوقف الحملة"], ["waitlist", "قائمة انتظار"]] as const).map(([k, l]) => (
+                    <button key={k} type="button" aria-pressed={form.stock_action === k} className={`text-center ${form.stock_action === k ? "on" : ""}`} onClick={() => set("stock_action", k)}>{l}</button>
+                  ))}
+                </div>
+                <p className="muted mt-1.5 text-xs">
+                  {form.stock_action === "notify" ? "الحملة تكمل ترسل الرابط عادي، ويوصلك تنبيه." : form.stock_action === "pause" ? "الحملة تتوقف مؤقتًا لما ينفد، وترجع تشتغل لحالها لما يتوفر." : "الحملة ترد إن المنتج خلص وتعرض التنبيه، ولما يرجع نرسل لمن كتب «بلغني» (خلال 24 ساعة من رسالته)."}
+                </p>
+                {form.stock_action === "waitlist" && (
+                  <textarea className="input mt-2" value={form.out_of_stock_text} onChange={(e) => set("out_of_stock_text", e.target.value)} maxLength={1000}
+                    placeholder={"هلا {{username|يا غالي}} 🌸 للأسف المنتج خلص حاليًا من المخزون.\nتبغى نبلغك أول ما يرجع؟ رد بكلمة: بلغني"} />
+                )}
               </Field>
             )}
             <Toggle

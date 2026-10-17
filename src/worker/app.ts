@@ -1898,6 +1898,8 @@ export function createApp() {
       track_clicks: d.track_clicks ? 1 : 0, follow_reminder_minutes: d.follow_reminder_minutes,
       auto_new_media: d.auto_new_media && d.type === "comment" ? 1 : 0, auto_new_reels_only: d.auto_new_reels_only ? 1 : 0,
       store_coupon: d.store_coupon ? d.store_coupon.toUpperCase() : null,
+      stock_action: d.stock_action ?? "notify",
+      out_of_stock_text: d.out_of_stock_text || null,
       // "New posts from now on": the starting point is kept once set (or taken from the request), else it is now.
       auto_new_since: d.auto_new_media && d.type === "comment"
         ? d.auto_new_since ?? (id !== null ? (await first<{ v: number | null }>(c.env.DB, "SELECT auto_new_since AS v FROM campaigns WHERE id = ? AND tenant_id = ?", id, T(c)))?.v : null) ?? now
@@ -1927,9 +1929,12 @@ export function createApp() {
       );
       campaignId = r!.id;
     } else {
-      const exists = await first(c.env.DB, "SELECT id FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c));
+      const exists = await first<{ id: number; final_url: string | null }>(c.env.DB, "SELECT id, final_url FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL", id, T(c));
       if (!exists) return apiError(c, 404, "not_found", "الحملة غير موجودة");
+      const prevUrl = exists.final_url;
       await run(c.env.DB, `UPDATE campaigns SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ? AND tenant_id = ?`, ...Object.values(cols), now, id, T(c));
+      // Another product (or none): the old product's stock state no longer applies.
+      await run(c.env.DB, "UPDATE campaigns SET stock_out_at = NULL, stock_paused = 0 WHERE id = ? AND tenant_id = ? AND stock_out_at IS NOT NULL AND COALESCE(final_url, '') != ?", id, T(c), prevUrl ?? "");
       campaignId = id;
     }
     await c.env.DB.batch([
@@ -2571,6 +2576,7 @@ export function createApp() {
         alert_failures: z.boolean().optional(),
         alert_spike: z.boolean().optional(),
         alert_usage: z.boolean().optional(),
+        alert_stock: z.boolean().optional(),
         spike_per_hour: z.number().int().min(5).max(10_000).optional(),
         notify_new_follower: z.boolean().optional(),
         notify_delivery: z.boolean().optional(),

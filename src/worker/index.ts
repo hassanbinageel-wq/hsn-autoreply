@@ -10,6 +10,7 @@ import { engineContext, refreshAccountProfiles, refreshExpiringTokens } from "./
 import { sanitize } from "./meta/client";
 import { remindExpiringSubscriptions, runNotifications } from "./services/notify";
 import { autoRecover } from "./services/recover";
+import { runRestock } from "./services/restock";
 
 const app = createApp();
 
@@ -120,6 +121,8 @@ export default {
       deadlineMs: 25_000,
       budget: { used: () => used, limit: 44 }, // Workers Free: 50 external subrequests per invocation (shared with recovery/alerts)
     }).catch((e) => console.error("queue", sanitize(String(e))));
+    // "Back in stock" messages to people who asked (within Instagram's 24-hour window), with what the queue left.
+    used += await runRestock(env, 44 - used).catch((e) => (console.error("restock", sanitize(String(e))), 0));
     await runNotifications(env).catch((e) => console.error("notifications", sanitize(String(e))));
     await run(env.DB, "DELETE FROM rate_limits WHERE window_start < ?", Date.now() - 86_400_000).catch(() => undefined);
   },

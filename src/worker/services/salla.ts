@@ -2,6 +2,8 @@ import type { Env } from "../env";
 import { all, audit, first, run } from "../lib/db";
 import { decryptSecret, encryptSecret, hex, timingSafeEqual } from "../lib/crypto";
 import { serviceDomain } from "./domain";
+import { notify } from "./notify";
+import { normalizeUrl } from "./store";
 
 /**
  * Salla store connection through Salla's official OAuth 2.0 ("Custom mode": the merchant approves on Salla and
@@ -213,19 +215,31 @@ function productRow(p: any) {
     status: p?.status ?? null,
     // The merchant's cost price, when set in Salla (read defensively; the cost entered in HSN wins).
     cost: money(p?.cost_price),
+    ...stockOf(p),
   };
+}
+
+/** Availability as Salla may send it (status "out", is_available false, or a zero quantity without "unlimited"). */
+export function stockOf(p: any): { stock: "in" | "out" | null; quantity: number | null } {
+  const quantity = typeof p?.quantity === "number" ? p.quantity : p?.quantity != null && p.quantity !== "" && Number.isFinite(Number(p.quantity)) ? Number(p.quantity) : null;
+  const known = p?.status != null || p?.is_available != null || quantity !== null;
+  if (!known) return { stock: null, quantity: null };
+  const out = p?.status === "out" || p?.is_available === false || (p?.unlimited_quantity !== true && quantity !== null && quantity <= 0);
+  return { stock: out ? "out" : "in", quantity };
 }
 
 export function upsertProductStmt(db: D1Database, storeId: number, p: any, now: number) {
   const r = productRow(p);
   return db
     .prepare(
-      `INSERT INTO store_products (store_id, product_id, name, url, image_url, price, currency, status, cost, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO store_products (store_id, product_id, name, url, image_url, price, currency, status, cost, stock_status, quantity, stock_changed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(store_id, product_id) DO UPDATE SET name = COALESCE(excluded.name, name), url = COALESCE(excluded.url, url),
          image_url = COALESCE(excluded.image_url, image_url), price = COALESCE(excluded.price, price), currency = COALESCE(excluded.currency, currency),
-         status = COALESCE(excluded.status, status), cost = COALESCE(excluded.cost, cost), updated_at = excluded.updated_at`,
+         status = COALESCE(excluded.status, status), cost = COALESCE(excluded.cost, cost),
+         stock_changed_at = CASE WHEN excluded.stock_status IS NOT NULL AND excluded.stock_status IS NOT stock_status THEN excluded.stock_changed_at ELSE stock_changed_at END,
+         stock_status = COALESCE(excluded.stock_status, stock_status), quantity = COALESCE(excluded.quantity, quantity), updated_at = excluded.updated_at`,
     )
-    .bind(storeId, r.id, r.name, r.url, r.image, r.price, r.currency, r.status, r.cost, now);
+    .bind(storeId, r.id, r.name, r.url, r.image, r.price, r.currency, r.status, r.cost, r.stock, r.quantity, now, now);
 }
 
 /** Reads the store's products (a few pages per run; Salla's Admin API is paginated). */
@@ -246,7 +260,9 @@ export async function syncProducts(env: Env, storeId: number, f: Fetch = default
     }
     const j = (await r.json().catch(() => ({}))) as { data?: any[]; pagination?: { currentPage?: number; totalPages?: number } };
     const items = (j.data ?? []).filter((p) => p?.id);
+    const before = await stockBefore(env.DB, storeId, items.map((p) => String(p.id)));
     if (items.length) await env.DB.batch(items.map((p) => upsertProductStmt(env.DB, storeId, p, now)));
+    for (const p of items) await applyStockChange(env, store, String(p.id), before.get(String(p.id)) ?? null, stockOf(p).stock, now);
     n += items.length;
     if (!j.pagination?.totalPages || page >= j.pagination.totalPages) break;
   }
@@ -389,7 +405,9 @@ export async function handleSallaWebhook(env: Env, body: any, now = Date.now()):
       await run(env.DB, "UPDATE store_products SET status = 'deleted', updated_at = ? WHERE store_id = ? AND product_id = ?", now, store.id, String(d.id));
       return "product_deleted";
     }
+    const before = await stockBefore(env.DB, store.id, [String(d.id)]);
     await env.DB.batch([upsertProductStmt(env.DB, store.id, d, now)]);
+    await applyStockChange(env, store, String(d.id), before.get(String(d.id)) ?? null, stockOf(d).stock, now);
     return "product";
   }
   return "ignored";
@@ -419,4 +437,67 @@ export async function dailyProductResync(env: Env, minute: number, now = Date.no
   let n = 0;
   for (const s of due) n += await syncProducts(env, s.id, defaultFetch, now, 3);
   return n;
+}
+
+// ---- stock ------------------------------------------------------------------------------------------------------
+
+async function stockBefore(db: D1Database, storeId: number, ids: string[]): Promise<Map<string, string | null>> {
+  if (!ids.length) return new Map();
+  const rows = await all<{ product_id: string; stock_status: string | null }>(
+    db,
+    `SELECT product_id, stock_status FROM store_products WHERE store_id = ? AND product_id IN (${ids.map(() => "?").join(",")})`,
+    storeId,
+    ...ids,
+  );
+  return new Map(rows.map((r) => [r.product_id, r.stock_status]));
+}
+
+/**
+ * A product ran out or came back: the customer's campaigns that link to it react by their stock_action, and the
+ * merchant is told. Back in stock: auto-paused campaigns resume and waiting requests become ready to send.
+ */
+export async function applyStockChange(env: Env, store: { id: number; tenant_id: number }, productId: string, prev: string | null, next: "in" | "out" | null, now = Date.now()): Promise<void> {
+  if (!next || prev === next || (prev === null && next === "in")) return;
+  const product = await first<{ name: string | null; url: string | null }>(env.DB, "SELECT name, url FROM store_products WHERE store_id = ? AND product_id = ?", store.id, productId);
+  const key = normalizeUrl(product?.url);
+  if (!key) return;
+  const camps = (
+    await all<{ id: number; name: string; status: string; stock_action: string; stock_paused: number; final_url: string | null }>(
+      env.DB,
+      "SELECT id, name, status, stock_action, stock_paused, final_url FROM campaigns WHERE tenant_id = ? AND deleted_at IS NULL AND final_url IS NOT NULL",
+      store.tenant_id,
+    )
+  ).filter((c) => normalizeUrl(c.final_url) === key && (c.status === "active" || c.stock_paused));
+  if (!camps.length) return;
+  const name = product?.name ?? "منتج";
+  if (next === "out") {
+    const lines: string[] = [];
+    for (const c of camps) {
+      if (c.stock_action === "pause" && c.status === "active") {
+        await run(env.DB, "UPDATE campaigns SET stock_out_at = ?, status = 'paused', stock_paused = 1, updated_at = ? WHERE id = ?", now, now, c.id);
+        lines.push(`⏸️ ${c.name}: أوقفناها مؤقتًا`);
+      } else {
+        await run(env.DB, "UPDATE campaigns SET stock_out_at = COALESCE(stock_out_at, ?) WHERE id = ?", now, c.id);
+        lines.push(c.stock_action === "waitlist" ? `📝 ${c.name}: ترد «خلص المخزون» وتسجّل من يطلب التنبيه` : `▶️ ${c.name}: مستمرة (ترسل الرابط)`);
+      }
+    }
+    await audit(env.DB, store.tenant_id, "system", "store.out_of_stock", productId, { campaigns: camps.map((c) => c.id) });
+    await notify(env, store.tenant_id, "stock", `📦 نفد من المخزون: ${name}\nحملات تروّج له:\n${lines.join("\n")}`);
+    return;
+  }
+  // Back in stock.
+  let waiting = 0;
+  for (const c of camps) {
+    await run(env.DB, `UPDATE campaigns SET stock_out_at = NULL${c.stock_paused ? ", status = 'active', stock_paused = 0" : ""}, updated_at = ? WHERE id = ?`, now, c.id);
+    const r = await run(env.DB, "UPDATE restock_waitlist SET ready_at = ? WHERE campaign_id = ? AND status = 'waiting' AND ready_at IS NULL", now, c.id);
+    waiting += r.meta.changes ?? 0;
+  }
+  await audit(env.DB, store.tenant_id, "system", "store.back_in_stock", productId, { campaigns: camps.map((c) => c.id), waiting });
+  const resumed = camps.filter((c) => c.stock_paused).map((c) => c.name);
+  await notify(
+    env,
+    store.tenant_id,
+    "stock",
+    `✅ رجع للمخزون: ${name}${resumed.length ? `\n▶️ رجّعنا تشغيل: ${resumed.join("، ")}` : ""}${waiting ? `\n🔔 ${waiting} طلبوا التنبيه — نرسل لمن نافذة الـ24 ساعة عنده مفتوحة` : ""}`,
+  );
 }

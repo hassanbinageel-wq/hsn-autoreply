@@ -1,4 +1,5 @@
 import { all, first } from "../lib/db";
+import { waitlistStats } from "./restock";
 
 /**
  * Store analytics: orders and revenue from the connected store, joined to the customer's campaigns.
@@ -38,7 +39,7 @@ export type OrderRow = {
   city: string | null;
 };
 type Item = { product_id: string; name: string | null; qty: number; amount: number };
-export type Product = { product_id: string; name: string | null; url: string | null; image_url: string | null; price: number | null; status: string | null; cost: number | null; cost_manual: number | null };
+export type Product = { product_id: string; name: string | null; url: string | null; image_url: string | null; price: number | null; status: string | null; cost: number | null; cost_manual: number | null; stock_status?: string | null };
 
 const parseItems = (raw: string): Item[] => {
   try {
@@ -143,7 +144,7 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
 
   const products = await all<Product>(
     db,
-    "SELECT product_id, name, url, image_url, price, status, cost, cost_manual FROM store_products WHERE store_id = ?",
+    "SELECT product_id, name, url, image_url, price, status, cost, cost_manual, stock_status FROM store_products WHERE store_id = ?",
     store.id,
   );
   const productById = new Map(products.map((p) => [p.product_id, p]));
@@ -152,9 +153,9 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
   const prev = summarize(prevCounted, productById, store.default_cost_pct);
 
   // Campaigns: coupon + link, with their clicks / deliveries in the period.
-  const campaigns = await all<{ id: number; name: string; status: string; store_coupon: string | null; final_url: string | null }>(
+  const campaigns = await all<{ id: number; name: string; status: string; store_coupon: string | null; final_url: string | null; stock_out_at: number | null; stock_action: string; stock_paused: number }>(
     db,
-    "SELECT id, name, status, store_coupon, final_url FROM campaigns WHERE tenant_id = ? AND deleted_at IS NULL",
+    "SELECT id, name, status, store_coupon, final_url, stock_out_at, stock_action, stock_paused FROM campaigns WHERE tenant_id = ? AND deleted_at IS NULL",
     t,
   );
   const clicks = await all<{ campaign_id: number; clicks: number; people: number }>(
@@ -193,6 +194,7 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
         coupon: code,
         product: product ? { id: product.product_id, name: product.name, image_url: product.image_url } : null,
         profit: money?.profit ?? null,
+        stock: c.stock_out_at ? { out_since: c.stock_out_at, action: c.stock_action, paused: !!c.stock_paused } : null,
         shared_coupon: code ? campaigns.filter((x) => x.id !== c.id && x.store_coupon?.trim().toUpperCase() === code).length > 0 : false,
         delivered: delivered.find((x) => x.campaign_id === c.id)?.people ?? 0,
         clicks: cl?.clicks ?? 0,
@@ -235,6 +237,7 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
         name: p?.name ?? x.name,
         url: p?.url ?? null,
         image_url: p?.image_url ?? null,
+        out_of_stock: p?.stock_status === "out",
         units: x.units,
         orders: x.orders,
         revenue: x.revenue || null,
@@ -329,9 +332,9 @@ async function campaignFunnel(db: D1Database, ids: number[], from: number, to: n
  * daily orders and its orders (no shopper data), compared with the averages of the customer's other coded campaigns.
  */
 export async function storeCampaignDetail(db: D1Database, t: number, campaignId: number, f: { from: number; to: number; tzOffsetMin: number }) {
-  const c = await first<{ id: number; name: string; status: string; type: string; store_coupon: string | null; final_url: string | null }>(
+  const c = await first<{ id: number; name: string; status: string; type: string; store_coupon: string | null; final_url: string | null; stock_out_at: number | null; stock_action: string; stock_paused: number }>(
     db,
-    "SELECT id, name, status, type, store_coupon, final_url FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL",
+    "SELECT id, name, status, type, store_coupon, final_url, stock_out_at, stock_action, stock_paused FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL",
     campaignId,
     t,
   );
@@ -386,6 +389,7 @@ export async function storeCampaignDetail(db: D1Database, t: number, campaignId:
   const others = code ? coded.filter((x) => x.id !== c.id && x.store_coupon.trim().toUpperCase() === code).length : 0;
   return {
     campaign: { ...c, coupon: code, shared_coupon: others > 0 },
+    waitlist: await waitlistStats(db, t, c.id),
     store: { id: store.id },
     product: product ? { id: product.product_id, name: product.name, image_url: product.image_url, url: product.url, price: product.price } : null,
     funnel: { ...fn, orders: code ? counted.length : null },

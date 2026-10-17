@@ -18,7 +18,7 @@ export interface EngineContext {
   notify?: (tenantId: number, kind: NotifyKind, text: string) => Promise<void>;
 }
 
-export type NotifyKind = "new_follower" | "delivery" | "reauth" | "failures" | "spike" | "usage" | "report" | "test" | "expiry" | "domain";
+export type NotifyKind = "new_follower" | "delivery" | "reauth" | "failures" | "spike" | "usage" | "report" | "test" | "expiry" | "domain" | "stock";
 
 export interface AccountRow {
   id: number;
@@ -63,6 +63,9 @@ export interface CampaignRow {
   verify_error_text: string | null;
   final_text: string;
   final_url: string | null;
+  stock_action?: string | null;
+  out_of_stock_text?: string | null;
+  stock_out_at?: number | null;
   public_reply_enabled: number;
   public_reply_text: string | null;
   public_reply_on_dm_fail: "none" | "fallback";

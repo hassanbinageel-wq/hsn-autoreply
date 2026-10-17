@@ -27,6 +27,7 @@ export interface NotifySettings {
   alert_spike: boolean;
   spike_per_hour: number;
   alert_usage: boolean;
+  alert_stock: boolean;
   notify_new_follower: boolean;
   notify_delivery: boolean;
 }
@@ -43,6 +44,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   alert_spike: true,
   spike_per_hour: 50,
   alert_usage: true,
+  alert_stock: true,
   notify_new_follower: false,
   notify_delivery: false,
 };
@@ -142,6 +144,7 @@ export async function notify(env: Env, tenantId: number, kind: NotifyKind, text:
       test: true,
       expiry: true,
       domain: true,
+      stock: s.alert_stock !== false,
     };
     if (!on[kind]) return;
     const throttle = THROTTLE_MS[kind];
