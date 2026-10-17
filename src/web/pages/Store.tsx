@@ -21,7 +21,7 @@ const delta = (now: number | null | undefined, before: number | null | undefined
 };
 const PAY_AR: Record<string, string> = {
   bank: "تحويل بنكي", cod: "الدفع عند الاستلام", credit_card: "بطاقة ائتمانية", mada: "مدى", apple_pay: "Apple Pay", stc_pay: "STC Pay",
-  tabby: "تابي", tamara: "تمارا", paypal: "PayPal", wallet: "المحفظة", free: "مجاني",
+  tabby: "تابي", tamara: "تمارا", paypal: "PayPal", wallet: "المحفظة", free: "مجاني", waiting: "لم يُحدَّد بعد (بانتظار الدفع)",
 };
 const STATUS_AR: Record<string, string> = {
   payment_pending: "بانتظار الدفع", under_review: "بانتظار المراجعة", in_progress: "قيد التنفيذ", completed: "تم التنفيذ", delivering: "جاري التوصيل",
