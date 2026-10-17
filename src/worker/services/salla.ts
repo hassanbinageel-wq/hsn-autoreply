@@ -193,6 +193,14 @@ export async function refreshStoreTokens(env: Env, f: Fetch = defaultFetch, now 
 
 // ---- products ----------------------------------------------------------------------------------------------------
 
+/** A money value as Salla may send it: a number, a numeric string or { amount }. */
+export function money(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") return Number.isFinite(Number(v)) ? Number(v) : null;
+  if (v && typeof v === "object" && "amount" in (v as any)) return money((v as any).amount);
+  return null;
+}
+
 function productRow(p: any) {
   const price = p?.price?.amount ?? p?.sale_price?.amount ?? (typeof p?.price === "number" ? p.price : null);
   return {
@@ -203,6 +211,8 @@ function productRow(p: any) {
     price: typeof price === "number" ? price : price ? Number(price) || null : null,
     currency: p?.price?.currency ?? p?.currency ?? null,
     status: p?.status ?? null,
+    // The merchant's cost price, when set in Salla (read defensively; the cost entered in HSN wins).
+    cost: money(p?.cost_price),
   };
 }
 
@@ -210,12 +220,12 @@ export function upsertProductStmt(db: D1Database, storeId: number, p: any, now: 
   const r = productRow(p);
   return db
     .prepare(
-      `INSERT INTO store_products (store_id, product_id, name, url, image_url, price, currency, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO store_products (store_id, product_id, name, url, image_url, price, currency, status, cost, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(store_id, product_id) DO UPDATE SET name = COALESCE(excluded.name, name), url = COALESCE(excluded.url, url),
          image_url = COALESCE(excluded.image_url, image_url), price = COALESCE(excluded.price, price), currency = COALESCE(excluded.currency, currency),
-         status = COALESCE(excluded.status, status), updated_at = excluded.updated_at`,
+         status = COALESCE(excluded.status, status), cost = COALESCE(excluded.cost, cost), updated_at = excluded.updated_at`,
     )
-    .bind(storeId, r.id, r.name, r.url, r.image, r.price, r.currency, r.status, now);
+    .bind(storeId, r.id, r.name, r.url, r.image, r.price, r.currency, r.status, r.cost, now);
 }
 
 /** Reads the store's products (a few pages per run; Salla's Admin API is paginated). */
@@ -268,26 +278,52 @@ const ms = (v: unknown): number | null => {
   return null;
 };
 
-/** Only what the analytics need from an order — no shopper name, phone, email or address. */
+/**
+ * Only what the analytics need from an order: money lines, payment method, city and the customer id (hashed before
+ * it is stored) — no shopper name, phone, email or street address.
+ */
 export function parseOrder(d: any) {
-  const amount = d?.amounts?.total?.amount ?? d?.total?.amount ?? (typeof d?.total === "number" ? d.total : null);
-  const coupon = d?.coupon?.code ?? d?.coupon_code ?? (Array.isArray(d?.amounts?.discounts) ? d.amounts.discounts.find((x: any) => x?.code)?.code : null) ?? null;
+  const a = d?.amounts ?? {};
+  const amount = money(a?.total) ?? money(d?.total);
+  const discounts = Array.isArray(a?.discounts) ? a.discounts : [];
+  const coupon = d?.coupon?.code ?? d?.coupon_code ?? discounts.find((x: any) => x?.code)?.code ?? null;
+  const discountSum = discounts.reduce((t: number | null, x: any) => {
+    const v = money(x?.discount) ?? money(x?.amount);
+    return v === null ? t : (t ?? 0) + Math.abs(v);
+  }, null as number | null);
   const items = (Array.isArray(d?.items) ? d.items : []).map((i: any) => ({
     product_id: String(i?.product?.id ?? i?.product_id ?? i?.id ?? ""),
     name: typeof i?.name === "string" ? i.name.slice(0, 200) : null,
     qty: Number(i?.quantity ?? 1) || 1,
-    amount: Number(i?.amounts?.total?.amount ?? i?.amounts?.price_without_tax?.amount ?? i?.price?.amount ?? 0) || 0,
+    amount: money(i?.amounts?.total) ?? money(i?.amounts?.price_without_tax) ?? money(i?.price) ?? 0,
   }));
+  const customerId = d?.customer?.id ?? d?.customer_id ?? null;
+  const city = d?.customer?.city ?? d?.shipping?.address?.city ?? d?.ship_to?.city ?? null;
+  const method = d?.payment_method ?? d?.payment?.method ?? null;
   return {
     id: String(d?.id ?? ""),
     reference: d?.reference_id != null ? String(d.reference_id) : null,
     status: String(d?.status?.slug ?? d?.status?.customized?.slug ?? d?.status?.name ?? d?.status ?? "").slice(0, 60) || null,
-    total: typeof amount === "number" ? amount : amount ? Number(amount) || null : null,
-    currency: d?.amounts?.total?.currency ?? d?.currency ?? null,
+    total: amount,
+    currency: a?.total?.currency ?? d?.currency ?? null,
     coupon: coupon ? String(coupon).trim().toUpperCase().slice(0, 60) : null,
+    subtotal: money(a?.sub_total),
+    discount: discountSum ?? money(a?.discount) ?? money(a?.total_discount),
+    shipping: money(a?.shipping_cost),
+    tax: money(a?.tax?.amount) ?? money(a?.tax),
+    payment_method: typeof method === "string" && method ? method.slice(0, 40) : null,
+    customer_id: customerId != null && customerId !== "" ? String(customerId) : null,
+    city: typeof city === "string" && city.trim() ? city.trim().slice(0, 60) : null,
     items,
     ordered_at: ms(d?.date) ?? ms(d?.created_at) ?? null,
   };
+}
+
+/** A keyed one-way hash of the platform's customer id: tells returning buyers apart without keeping the id. */
+async function customerHash(env: Env, merchantId: string, customerId: string | null): Promise<string | null> {
+  if (!customerId) return null;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.TOKEN_ENC_KEY), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`salla-customer:${merchantId}:${customerId}`))).slice(0, 24);
 }
 
 /** Applies one verified webhook. Unknown merchants and events are ignored. */
@@ -318,11 +354,15 @@ export async function handleSallaWebhook(env: Env, body: any, now = Date.now()):
     // Partial events (status / coupon / total updates) keep what they do not carry.
     await run(
       env.DB,
-      `INSERT INTO store_orders (store_id, order_id, reference, status, total, currency, coupon, items, ordered_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO store_orders (store_id, order_id, reference, status, total, currency, coupon, items, ordered_at, updated_at,
+         subtotal, discount, shipping, tax, payment_method, customer_hash, city)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(store_id, order_id) DO UPDATE SET reference = COALESCE(excluded.reference, reference), status = COALESCE(excluded.status, status),
          total = COALESCE(excluded.total, total), currency = COALESCE(excluded.currency, currency), coupon = COALESCE(excluded.coupon, coupon),
-         items = CASE WHEN excluded.items != '[]' THEN excluded.items ELSE items END, updated_at = excluded.updated_at`,
+         items = CASE WHEN excluded.items != '[]' THEN excluded.items ELSE items END, updated_at = excluded.updated_at,
+         subtotal = COALESCE(excluded.subtotal, subtotal), discount = COALESCE(excluded.discount, discount), shipping = COALESCE(excluded.shipping, shipping),
+         tax = COALESCE(excluded.tax, tax), payment_method = COALESCE(excluded.payment_method, payment_method),
+         customer_hash = COALESCE(excluded.customer_hash, customer_hash), city = COALESCE(excluded.city, city)`,
       store.id,
       o.id,
       o.reference,
@@ -333,6 +373,13 @@ export async function handleSallaWebhook(env: Env, body: any, now = Date.now()):
       JSON.stringify(o.items.filter((i: any) => i.product_id)),
       o.ordered_at ?? now,
       now,
+      o.subtotal,
+      o.discount,
+      o.shipping,
+      o.tax,
+      o.payment_method,
+      await customerHash(env, merchantId, o.customer_id),
+      o.city,
     );
     return "order";
   }

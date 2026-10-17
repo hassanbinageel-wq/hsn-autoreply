@@ -62,7 +62,7 @@ import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
 import { claimStore, completeSallaOAuth, handleSallaWebhook, sallaAuthorizeUrl, sallaConfigured, syncProducts, verifySallaWebhook } from "./services/salla";
-import { storeAnalytics, storeProducts } from "./services/store";
+import { storeAnalytics, storeProductCosts, storeProducts } from "./services/store";
 import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
 import { auditCampaignComments } from "./services/audit";
@@ -1736,6 +1736,32 @@ export function createApp() {
     return c.json({ ok: true });
   });
   api.get("/store/products", async (c) => c.json({ items: await storeProducts(c.env.DB, T(c)) }));
+  // Product costs for profit: per product (entered here wins over Salla's cost price) and a default % of the price.
+  api.get("/store/costs", async (c) => {
+    const s = await first<{ default_cost_pct: number | null }>(c.env.DB, "SELECT default_cost_pct FROM stores WHERE tenant_id = ? AND status != 'disconnected' ORDER BY id DESC LIMIT 1", T(c));
+    return c.json({ default_pct: s?.default_cost_pct ?? null, items: await storeProductCosts(c.env.DB, T(c)) });
+  });
+  api.put("/store/costs", async (c) => {
+    const blocked = await planBlock(c, "store");
+    if (blocked) return blocked;
+    const p = await parseBody(
+      c,
+      z.object({
+        default_pct: z.number().min(0).max(100).nullable().optional(),
+        items: z.array(z.object({ product_id: z.string().min(1).max(64), cost: z.number().min(0).max(10_000_000).nullable() })).max(1000).optional(),
+      }),
+    );
+    if (!p.ok) return p.res;
+    const s = await first<{ id: number }>(c.env.DB, "SELECT id FROM stores WHERE tenant_id = ? AND status != 'disconnected' ORDER BY id DESC LIMIT 1", T(c));
+    if (!s) return apiError(c, 404, "not_found", "ما فيه متجر مربوط");
+    const now = Date.now();
+    const stmts: D1PreparedStatement[] = [];
+    if (p.data.default_pct !== undefined) stmts.push(c.env.DB.prepare("UPDATE stores SET default_cost_pct = ?, updated_at = ? WHERE id = ?").bind(p.data.default_pct, now, s.id));
+    for (const i of p.data.items ?? []) stmts.push(c.env.DB.prepare("UPDATE store_products SET cost_manual = ? WHERE store_id = ? AND product_id = ?").bind(i.cost, s.id, i.product_id));
+    if (stmts.length) await c.env.DB.batch(stmts);
+    await audit(c.env.DB, T(c), c.get("session").username, "store.costs", String(s.id), { items: p.data.items?.length ?? 0, default_pct: p.data.default_pct });
+    return c.json({ ok: true });
+  });
   api.get("/store/analytics", async (c) => {
     const blocked = await planBlock(c, "store");
     if (blocked) return blocked;

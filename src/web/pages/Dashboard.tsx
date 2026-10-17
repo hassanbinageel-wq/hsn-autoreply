@@ -265,20 +265,25 @@ function MiniStat({ label, value, tone, hint }: { label: string; value: number |
 
 /** First steps for a new account; disappears once the account is connected and a campaign is running. */
 function GettingStarted({ connected, total, active }: { connected: boolean; total: number; active: number }) {
+  const { data: stores } = useAsync(() => api<any>("/api/stores").catch(() => null), []);
   if (connected && active > 0) return null;
+  const storeConnected = !!stores?.stores?.some((s: any) => s.status === "active");
   const steps: Array<{ done: boolean; title: string; text: string; to: string; cta: string }> = [
     { done: connected, title: "اربط حساب إنستقرام حقك", text: "دقيقة وحدة عبر Meta الرسمي، بدون كلمة مرور إنستقرام.", to: "/connection", cta: "اربط حسابي" },
     { done: total > 0, title: "أنشئ أول حملة", text: "اختر المنشور، والكلمة اللي يكتبها المتابع، والرسالة اللي توصله.", to: "/campaigns/new", cta: "حملة جديدة" },
     { done: active > 0, title: "جرّبها ثم فعّلها", text: "المحاكاة تبيّن لك وش يصير بالضبط، بدون إرسال أي رسالة حقيقية.", to: total > 0 ? "/campaigns" : "/simulator", cta: total > 0 ? "الحملات" : "المحاكاة" },
   ];
+  // Optional: the store, for orders and profit per campaign (only when the plan includes it).
+  if (stores?.plan) steps.push({ done: storeConnected, title: "اربط متجرك (اختياري)", text: "سلة: تعرف كم طلب وربح جابت كل حملة، بصلاحيات قراءة فقط.", to: "/connection", cta: "اربط المتجر" });
   const next = steps.findIndex((s) => !s.done);
   return (
     <section className="card border-violet-500/30 p-4 sm:p-5" aria-labelledby="start-title">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="start-title" className="font-display text-lg font-extrabold">ابدأ هنا</h2>
         <span className="muted text-xs">{steps.filter((s) => s.done).length} من {steps.length} خطوات</span>
+        <p className="muted w-full text-xs">ابدأ بربط إنستقرام (أساسي)، بعدها أنشئ حملتك، وإذا عندك متجر اربطه عشان تشوف المبيعات والربح.</p>
       </div>
-      <ol className="mt-3 grid gap-2 md:grid-cols-3">
+      <ol className={`mt-3 grid gap-2 ${steps.length > 3 ? "md:grid-cols-2 xl:grid-cols-4" : "md:grid-cols-3"}`}>
         {steps.map((s, i) => (
           <li key={s.title} className={`flex gap-3 rounded-2xl border p-3 ${i === next ? "border-violet-500/50 bg-violet-500/5" : "border-[var(--border)]"}`}>
             <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-extrabold ${s.done ? "bg-emerald-500/15 text-emerald-600" : i === next ? "grad text-white" : "surface-2 muted"}`} aria-hidden>

@@ -2,7 +2,7 @@ import { exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DB, resetDb, seedAccount, TEST_ENV } from "./helpers";
 import { claimStore, completeSallaOAuth, handleSallaWebhook, parseOrder, sallaAuthorizeUrl, verifySallaWebhook } from "../src/worker/services/salla";
-import { normalizeUrl, storeAnalytics } from "../src/worker/services/store";
+import { normalizeUrl, storeAnalytics, storeProductCosts } from "../src/worker/services/store";
 
 const BASE = "https://hsn.example.workers.dev";
 const SELF = (exports as any).default as { fetch: (r: Request) => Promise<Response> };
@@ -126,6 +126,47 @@ describe("Salla store connection", () => {
     expect(normalizeUrl("https://www.demo.salla.sa/p555/abaya/?x=1")).toBe(normalizeUrl("https://demo.salla.sa/p555/abaya"));
     // another customer sees nothing
     expect((await storeAnalytics(DB, 999, { from: now - 7 * DAY, to: now, tzOffsetMin: 180 })).store).toBeNull();
+  });
+
+  it("reads money lines, payment method and city, hashes the customer, and computes profit from product costs", async () => {
+    await completeSallaOAuth(TEST_ENV, "c", 1, fakeSalla().f);
+    // Salla's cost price is read with the product; the cost entered in HSN wins over it.
+    await handleSallaWebhook(TEST_ENV, { event: "product.created", merchant: 9001, data: { id: 555, name: "عباية", price: { amount: 100 }, cost_price: 40 } });
+    await handleSallaWebhook(TEST_ENV, { event: "product.created", merchant: 9001, data: { id: 777, name: "شنطة", price: { amount: 50 } } });
+    const order = (id: string, customer: number, product = 555, total = 230) => {
+      const p = orderPayload(id, { total, product: String(product) }) as any;
+      p.data.amounts = { sub_total: { amount: 200 }, shipping_cost: { amount: 25 }, tax: { percent: "15", amount: { amount: 30 } }, discounts: [{ code: "X", discount: "25.00" }], total: { amount: total, currency: "SAR" } };
+      p.data.payment_method = "mada";
+      p.data.customer = { id: customer, first_name: "سارة", city: "الرياض", mobile: "+966500000000" };
+      p.data.items[0].amounts.total.amount = 200;
+      return p;
+    };
+    await handleSallaWebhook(TEST_ENV, order("o1", 11));
+    await handleSallaWebhook(TEST_ENV, order("o2", 11));
+    await handleSallaWebhook(TEST_ENV, order("o3", 22, 777));
+    const row = await DB.prepare("SELECT * FROM store_orders WHERE order_id = 'o1'").first<any>();
+    expect(row).toMatchObject({ subtotal: 200, shipping: 25, tax: 30, discount: 25, payment_method: "mada", city: "الرياض" });
+    expect(row.customer_hash).toMatch(/^[0-9a-f]{24}$/);
+    expect(JSON.stringify(row)).not.toContain('"11"');
+    const now = Date.now();
+    const range = { from: now - 7 * DAY, to: now + 60_000, tzOffsetMin: 180 };
+    let a: any = await storeAnalytics(DB, 1, range);
+    // net = 230 − 30 − 25 = 175 per order; profit only over orders whose items all have a cost (o1, o2: 2 × 40 each)
+    expect(a.totals).toMatchObject({ orders: 3, revenue: 690, net: 525, shipping: 75, tax: 90, discount: 75, profit_orders: 2 });
+    expect(a.totals.profit).toBe(2 * (175 - 80));
+    expect(a.customers).toMatchObject({ known: 2, new: 2, returning: 0, repeat_in_period: 1 });
+    expect(a.payment_methods[0]).toMatchObject({ key: "mada", orders: 3 });
+    expect(a.cities[0]).toMatchObject({ key: "الرياض", orders: 3 });
+    expect(a.previous).toMatchObject({ orders: 0, revenue: 0 });
+    // a default cost % covers the product without a cost; a manual cost overrides Salla's
+    await DB.prepare("UPDATE stores SET default_cost_pct = 50").run();
+    await DB.prepare("UPDATE store_products SET cost_manual = 60 WHERE product_id = '555'").run();
+    a = await storeAnalytics(DB, 1, range);
+    expect(a.totals.profit_orders).toBe(3);
+    expect(a.totals.profit).toBe(2 * (175 - 120) + (175 - 100));
+    // costs are per customer
+    expect((await storeProductCosts(DB, 1)).length).toBe(2);
+    expect(await storeProductCosts(DB, 999)).toEqual([]);
   });
 
   it("refuses a callback without a valid state", async () => {

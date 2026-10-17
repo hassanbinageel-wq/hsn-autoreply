@@ -46,12 +46,12 @@ export function ConnectionPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="ربط حساب إنستقرام" subtitle={`Instagram API with Instagram Login · الإصدار ${data.api_version} (تحقق: ${data.api_version_verified_at ?? "—"})`} />
+      <PageHeader title="الربط" subtitle={`١) حساب إنستقرام — أساسي لتشغيل الحملات · ٢) متجرك في سلة — اختياري لتحليل المبيعات والربح · Instagram API ${data.api_version}`} />
       {status === "ok" && <Alert tone="good">عاد المتصفح من Meta. الحالة أدناه مقروءة من الخادم مباشرة.</Alert>}
       {status === "error" && <Alert tone="bad">لم يكتمل الربط. أعد المحاولة أو راجع دليل إعداد Meta.</Alert>}
       {!data.configured && <Alert tone="warn">لم تُضبط بيانات تطبيق Meta على الخادم (INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET).</Alert>}
 
-      <Card title="الحساب المتصل">
+      <Card title={<span className="flex items-center gap-2"><StepNo n={1} />حساب إنستقرام</span>}>
         {connected ? (
           <div className="space-y-3">
             <div className="flex items-center gap-3">
@@ -172,4 +172,8 @@ export function ConnectionPage() {
       </Card>
     </div>
   );
+}
+
+function StepNo({ n }: { n: number }) {
+  return <span className="grad grid size-6 shrink-0 place-items-center rounded-full text-xs font-extrabold text-white" aria-hidden>{n}</span>;
 }

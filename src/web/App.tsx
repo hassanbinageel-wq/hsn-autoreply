@@ -124,7 +124,7 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ to: string; label: strin
 /** Customers only: their subscription page. */
 const SUBSCRIPTION_ITEM = { to: "/subscription", label: "اشتراكي", icon: "zap" };
 /** Owner-only section (customers management). */
-const OWNER_GROUP = { title: "الإدارة", items: [{ to: "/owner", label: "العملاء", icon: "users" }, { to: "/usage", label: "الاستهلاك", icon: "chart" }] };
+const OWNER_GROUP = { title: "الإدارة", items: [{ to: "/owner", label: "العملاء", icon: "users" }, { to: "/usage", label: "الاستهلاك", icon: "gauge" }] };
 const NAV = [...NAV_GROUPS, OWNER_GROUP].flatMap((g) => g.items).concat(SUBSCRIPTION_ITEM);
 const MOBILE_TABS = ["/", "/campaigns", "/inbox"];
 

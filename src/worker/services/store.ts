@@ -22,25 +22,134 @@ export function normalizeUrl(u: string | null | undefined): string | null {
   }
 }
 
+type OrderRow = {
+  order_id: string;
+  status: string | null;
+  total: number | null;
+  currency: string | null;
+  coupon: string | null;
+  items: string;
+  ordered_at: number;
+  discount: number | null;
+  shipping: number | null;
+  tax: number | null;
+  payment_method: string | null;
+  customer_hash: string | null;
+  city: string | null;
+};
+type Item = { product_id: string; name: string | null; qty: number; amount: number };
+type Product = { product_id: string; name: string | null; url: string | null; image_url: string | null; price: number | null; status: string | null; cost: number | null; cost_manual: number | null };
+
+const parseItems = (raw: string): Item[] => {
+  try {
+    const v = JSON.parse(raw || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+};
+
+/** Unit cost for a product: the cost entered in HSN, else the platform's cost price, else a % of the selling price. */
+function unitCost(p: Product | undefined, unitPrice: number, defaultPct: number | null): { cost: number; source: "manual" | "store" | "pct" } | null {
+  if (p?.cost_manual != null) return { cost: p.cost_manual, source: "manual" };
+  if (p?.cost != null) return { cost: p.cost, source: "store" };
+  if (defaultPct != null && unitPrice > 0) return { cost: (unitPrice * defaultPct) / 100, source: "pct" };
+  return null;
+}
+
+/**
+ * Money for a set of counted orders. Net sales = order total − tax − shipping (shipping passes to the carrier, tax to
+ * the state). Profit = net sales − product cost, only over orders whose every item has a known cost.
+ */
+function summarize(orders: OrderRow[], productById: Map<string, Product>, defaultPct: number | null) {
+  let revenue = 0, net = 0, discount = 0, shipping = 0, tax = 0, units = 0;
+  let costed = 0, costedNet = 0, cogs = 0;
+  for (const o of orders) {
+    const total = o.total ?? 0;
+    const n = total - (o.tax ?? 0) - (o.shipping ?? 0);
+    revenue += total;
+    net += n;
+    discount += o.discount ?? 0;
+    shipping += o.shipping ?? 0;
+    tax += o.tax ?? 0;
+    const items = parseItems(o.items);
+    let orderCost = 0;
+    let known = items.length > 0;
+    for (const i of items) {
+      const qty = i.qty || 1;
+      units += qty;
+      const c = unitCost(productById.get(i.product_id), (i.amount || 0) / qty, defaultPct);
+      if (c) orderCost += c.cost * qty;
+      else known = false;
+    }
+    if (known) {
+      costed++;
+      costedNet += n;
+      cogs += orderCost;
+    }
+  }
+  const profit = costed ? costedNet - cogs : null;
+  return {
+    orders: orders.length,
+    revenue,
+    net,
+    aov: orders.length ? revenue / orders.length : 0,
+    discount,
+    shipping,
+    tax,
+    units,
+    profit,
+    margin: profit !== null && costedNet > 0 ? profit / costedNet : null,
+    profit_orders: costed,
+  };
+}
+
+const countBy = <T,>(rows: T[], key: (r: T) => string | null, value: (r: T) => number = () => 0) => {
+  const m = new Map<string, { key: string; orders: number; revenue: number }>();
+  for (const r of rows) {
+    const k = key(r);
+    if (!k) continue;
+    const x = m.get(k) ?? { key: k, orders: 0, revenue: 0 };
+    x.orders++;
+    x.revenue += value(r);
+    m.set(k, x);
+  }
+  return [...m.values()].sort((a, b) => b.orders - a.orders || b.revenue - a.revenue);
+};
+
 export async function storeAnalytics(db: D1Database, t: number, f: { from: number; to: number; tzOffsetMin: number }) {
-  const store = await first<{ id: number; name: string | null; domain: string | null; status: string; products_synced_at: number | null; connected_at: number }>(
+  const store = await first<{ id: number; name: string | null; domain: string | null; status: string; products_synced_at: number | null; connected_at: number; default_cost_pct: number | null }>(
     db,
-    "SELECT id, name, domain, status, products_synced_at, connected_at FROM stores WHERE tenant_id = ? AND platform = 'salla' AND status != 'disconnected' ORDER BY id DESC LIMIT 1",
+    "SELECT id, name, domain, status, products_synced_at, connected_at, default_cost_pct FROM stores WHERE tenant_id = ? AND platform = 'salla' AND status != 'disconnected' ORDER BY id DESC LIMIT 1",
     t,
   );
   if (!store) return { store: null };
-  const notIn = NOT_COUNTED.map(() => "?").join(",");
-  const orders = await all<{ order_id: string; status: string | null; total: number | null; currency: string | null; coupon: string | null; items: string; ordered_at: number }>(
+  // The period plus the same length before it, for the comparison.
+  const span = Math.max(DAY, f.to - f.from);
+  const prevFrom = f.from - span;
+  const all_ = await all<OrderRow>(
     db,
-    `SELECT order_id, status, total, currency, coupon, items, ordered_at FROM store_orders
-      WHERE store_id = ? AND deleted = 0 AND ordered_at >= ? AND ordered_at < ? ORDER BY ordered_at LIMIT 20000`,
+    `SELECT order_id, status, total, currency, coupon, items, ordered_at, discount, shipping, tax, payment_method, customer_hash, city FROM store_orders
+      WHERE store_id = ? AND deleted = 0 AND ordered_at >= ? AND ordered_at < ? ORDER BY ordered_at LIMIT 40000`,
     store.id,
-    f.from,
+    prevFrom,
     f.to,
   );
-  const counted = orders.filter((o) => !NOT_COUNTED.includes((o.status ?? "").toLowerCase()));
-  const revenue = counted.reduce((a, o) => a + (o.total ?? 0), 0);
+  const isCounted = (o: OrderRow) => !NOT_COUNTED.includes((o.status ?? "").toLowerCase());
+  const orders = all_.filter((o) => o.ordered_at >= f.from);
+  const counted = orders.filter(isCounted);
+  const prevCounted = all_.filter((o) => o.ordered_at < f.from && isCounted(o));
   const currency = counted.find((o) => o.currency)?.currency ?? "SAR";
+
+  const products = await all<Product>(
+    db,
+    "SELECT product_id, name, url, image_url, price, status, cost, cost_manual FROM store_products WHERE store_id = ?",
+    store.id,
+  );
+  const productById = new Map(products.map((p) => [p.product_id, p]));
+  const productByUrl = new Map(products.map((p) => [normalizeUrl(p.url), p]).filter(([k]) => k) as Array<[string, Product]>);
+  const now = summarize(counted, productById, store.default_cost_pct);
+  const prev = summarize(prevCounted, productById, store.default_cost_pct);
 
   // Campaigns: coupon + link, with their clicks / deliveries in the period.
   const campaigns = await all<{ id: number; name: string; status: string; store_coupon: string | null; final_url: string | null }>(
@@ -65,21 +174,9 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
     f.from,
     f.to,
   );
-  const products = await all<{ product_id: string; name: string | null; url: string | null; image_url: string | null; price: number | null; status: string | null }>(
-    db,
-    "SELECT product_id, name, url, image_url, price, status FROM store_products WHERE store_id = ?",
-    store.id,
-  );
-  const productByUrl = new Map(products.map((p) => [normalizeUrl(p.url), p]).filter(([k]) => k) as Array<[string, (typeof products)[number]]>);
 
-  const byCoupon = new Map<string, { orders: number; revenue: number }>();
-  for (const o of counted) {
-    if (!o.coupon) continue;
-    const x = byCoupon.get(o.coupon) ?? { orders: 0, revenue: 0 };
-    x.orders++;
-    x.revenue += o.total ?? 0;
-    byCoupon.set(o.coupon, x);
-  }
+  const coupons = countBy(counted, (o) => o.coupon, (o) => o.total ?? 0);
+  const byCoupon = new Map(coupons.map((c) => [c.key, c]));
   const campaignRows = campaigns
     .map((c) => {
       const code = c.store_coupon?.trim().toUpperCase() || null;
@@ -102,21 +199,20 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
     .filter((c) => c.coupon || c.product || c.clicks > 0);
   const attributedCodes = new Set(campaignRows.map((c) => c.coupon).filter(Boolean));
   const attributed = counted.filter((o) => o.coupon && attributedCodes.has(o.coupon));
+  const campaignByCode = new Map(campaignRows.filter((c) => c.coupon).map((c) => [c.coupon!, { id: c.id, name: c.name }]));
 
-  // Products: units / orders / revenue from order items, plus the campaigns that link to each product.
-  const perProduct = new Map<string, { units: number; orders: number; revenue: number; name: string | null }>();
+  // Products: units / orders / revenue / profit from order items, plus the campaigns that link to each product.
+  const perProduct = new Map<string, { units: number; orders: number; revenue: number; cost: number; costKnown: boolean; name: string | null }>();
   for (const o of counted) {
-    let items: Array<{ product_id: string; name: string | null; qty: number; amount: number }> = [];
-    try {
-      items = JSON.parse(o.items || "[]");
-    } catch {
-      /* ignore */
-    }
     const seen = new Set<string>();
-    for (const i of items) {
-      const x = perProduct.get(i.product_id) ?? { units: 0, orders: 0, revenue: 0, name: i.name };
-      x.units += i.qty || 1;
+    for (const i of parseItems(o.items)) {
+      const qty = i.qty || 1;
+      const x = perProduct.get(i.product_id) ?? { units: 0, orders: 0, revenue: 0, cost: 0, costKnown: true, name: i.name };
+      x.units += qty;
       x.revenue += i.amount || 0;
+      const c = unitCost(productById.get(i.product_id), (i.amount || 0) / qty, store.default_cost_pct);
+      if (c) x.cost += c.cost * qty;
+      else x.costKnown = false;
       if (!seen.has(i.product_id)) x.orders++;
       seen.add(i.product_id);
       perProduct.set(i.product_id, x);
@@ -124,7 +220,7 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
   }
   const productRows = [...perProduct.entries()]
     .map(([id, x]) => {
-      const p = products.find((pp) => pp.product_id === id);
+      const p = productById.get(id);
       const linked = campaignRows.filter((c) => c.product?.id === id);
       return {
         id,
@@ -134,12 +230,30 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
         units: x.units,
         orders: x.orders,
         revenue: x.revenue || null,
+        profit: x.costKnown && x.revenue ? x.revenue - x.cost : null,
         campaigns: linked.map((c) => ({ id: c.id, name: c.name })),
         clicks: linked.reduce((a, c) => a + c.clicks, 0),
       };
     })
     .sort((a, b) => b.orders - a.orders)
     .slice(0, 100);
+
+  // Customers: new = their first order (since the store was connected) falls in the period.
+  const hashes = [...new Set(counted.map((o) => o.customer_hash).filter(Boolean))] as string[];
+  let newCustomers = 0;
+  if (hashes.length) {
+    const firsts = await all<{ customer_hash: string; first_at: number }>(
+      db,
+      `SELECT customer_hash, MIN(ordered_at) AS first_at FROM store_orders WHERE store_id = ? AND deleted = 0 AND customer_hash IS NOT NULL
+        AND COALESCE(status, '') NOT IN (${NOT_COUNTED.map(() => "?").join(",")}) GROUP BY customer_hash`,
+      store.id,
+      ...NOT_COUNTED,
+    );
+    const set = new Set(hashes);
+    newCustomers = firsts.filter((r) => set.has(r.customer_hash) && r.first_at >= f.from).length;
+  }
+  const ordersPerCustomer = new Map<string, number>();
+  for (const o of counted) if (o.customer_hash) ordersPerCustomer.set(o.customer_hash, (ordersPerCustomer.get(o.customer_hash) ?? 0) + 1);
 
   const series = new Map<number, { orders: number; revenue: number }>();
   for (const o of counted) {
@@ -151,21 +265,47 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
   }
   const firstDay = Math.floor((f.from + f.tzOffsetMin * 60_000) / DAY);
   const lastDay = Math.floor((f.to - 1 + f.tzOffsetMin * 60_000) / DAY);
+  const costs = {
+    default_pct: store.default_cost_pct,
+    products: products.filter((p) => (p.status ?? "") !== "deleted").length,
+    with_cost: products.filter((p) => (p.status ?? "") !== "deleted" && (p.cost_manual != null || p.cost != null)).length,
+  };
+  const { default_cost_pct: _d, ...storeInfo } = store;
   return {
-    store: { ...store, products: products.length },
+    store: { ...storeInfo, products: products.length },
     totals: {
-      orders: counted.length,
-      revenue,
-      aov: counted.length ? revenue / counted.length : 0,
+      ...now,
       currency,
       excluded: orders.length - counted.length,
       attributed_orders: attributed.length,
       attributed_revenue: attributed.reduce((a, o) => a + (o.total ?? 0), 0),
     },
+    previous: { orders: prev.orders, revenue: prev.revenue, aov: prev.aov, profit: prev.profit, net: prev.net },
+    customers: {
+      known: hashes.length,
+      new: newCustomers,
+      returning: hashes.length - newCustomers,
+      repeat_in_period: [...ordersPerCustomer.values()].filter((n) => n > 1).length,
+    },
+    costs,
+    payment_methods: countBy(counted, (o) => o.payment_method, (o) => o.total ?? 0).slice(0, 8),
+    cities: countBy(counted, (o) => o.city, (o) => o.total ?? 0).slice(0, 8),
+    statuses: countBy(orders, (o) => (o.status ?? "").toLowerCase() || null).slice(0, 10),
+    coupons: coupons.slice(0, 15).map((c) => ({ code: c.key, orders: c.orders, revenue: c.revenue, campaign: campaignByCode.get(c.key) ?? null })),
     campaigns: campaignRows.sort((a, b) => (b.orders ?? -1) - (a.orders ?? -1) || b.clicks - a.clicks),
     products: productRows,
     series: Array.from({ length: Math.max(0, Math.min(400, lastDay - firstDay + 1)) }, (_, i) => ({ day: firstDay + i, ...(series.get(firstDay + i) ?? { orders: 0, revenue: 0 }) })),
   };
+}
+
+/** Products with their unit cost, for the cost editor. */
+export async function storeProductCosts(db: D1Database, t: number) {
+  return all(
+    db,
+    `SELECT p.product_id, p.name, p.image_url, p.price, p.cost, p.cost_manual FROM store_products p JOIN stores s ON s.id = p.store_id
+      WHERE s.tenant_id = ? AND s.status != 'disconnected' AND COALESCE(p.status, '') != 'deleted' ORDER BY p.name LIMIT 1000`,
+    t,
+  );
 }
 
 /** The customer's store products, for linking a campaign to a product. */
