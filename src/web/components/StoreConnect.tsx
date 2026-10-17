@@ -4,12 +4,21 @@ import { Alert, Card, fmtTime, toast, useAsync } from "./ui";
 import { Icon } from "./Icon";
 import { Link } from "../App";
 import { isNative, openOAuth } from "../platform";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /** Connect the customer's online store (Salla now, Zid later) through the platform's official approval page. */
 export function StoreConnect() {
   const { data, reload } = useAsync(() => api<any>("/api/stores"), []);
   const [busy, setBusy] = useState<string | null>(null);
+  // Coming back from an install started on Salla's side: claim the store for this account.
+  useEffect(() => {
+    const claim = new URLSearchParams(location.hash.split("?")[1] ?? "").get("claim");
+    if (!claim) return;
+    history.replaceState(null, "", "#/connection");
+    api("/api/stores/claim", { body: { token: claim } })
+      .then(() => { toast("تم ربط متجر سلة بحسابك ✅"); reload(); })
+      .catch((e) => toast(e.message, "bad"));
+  }, []);
   if (!data) return null;
   const salla = data.stores.find((s: any) => s.platform === "salla");
   const run = async (k: string, fn: () => Promise<void>) => {

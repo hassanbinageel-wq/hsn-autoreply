@@ -1,7 +1,7 @@
 import { exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DB, resetDb, seedAccount, TEST_ENV } from "./helpers";
-import { completeSallaOAuth, handleSallaWebhook, parseOrder, sallaAuthorizeUrl, verifySallaWebhook } from "../src/worker/services/salla";
+import { claimStore, completeSallaOAuth, handleSallaWebhook, parseOrder, sallaAuthorizeUrl, verifySallaWebhook } from "../src/worker/services/salla";
 import { normalizeUrl, storeAnalytics } from "../src/worker/services/store";
 
 const BASE = "https://hsn.example.workers.dev";
@@ -129,8 +129,24 @@ describe("Salla store connection", () => {
   });
 
   it("refuses a callback without a valid state", async () => {
-    const r = await SELF.fetch(new Request(`${BASE}/oauth/salla/callback?code=x&state=forged`));
-    expect(r.status).toBe(400);
+    // no code at all → refused; a code without our state is exchanged with Salla (here: no network → fails), never linked to anyone
+    expect((await SELF.fetch(new Request(`${BASE}/oauth/salla/callback?state=forged`))).status).toBe(400);
+    const r = await SELF.fetch(new Request(`${BASE}/oauth/salla/callback?code=x&state=forged`), { redirect: "manual" } as any);
+    expect(r.status).not.toBe(200);
     expect(await DB.prepare("SELECT COUNT(*) AS n FROM stores").first<any>()).toMatchObject({ n: 0 });
+  });
+
+  it("a store installed from Salla's side waits unclaimed, then belongs to the customer who claims it — only once", async () => {
+    const r = await completeSallaOAuth(TEST_ENV, "c", 0, fakeSalla(7777).f);
+    expect(r).toMatchObject({ ok: true, tenantId: 0 });
+    expect((await storeAnalytics(DB, 1, { from: 0, to: Date.now(), tzOffsetMin: 180 })).store).toBeNull();
+    expect(await claimStore(TEST_ENV, r.storeId!, 1)).toBe(true);
+    expect(await claimStore(TEST_ENV, r.storeId!, 2)).toBe(false);
+    expect((await DB.prepare("SELECT tenant_id FROM stores WHERE id = ?").bind(r.storeId).first<any>()).tenant_id).toBe(1);
+    // a later install from Salla only refreshes the tokens of the owned store
+    const again = await completeSallaOAuth(TEST_ENV, "c2", 0, fakeSalla(7777).f);
+    expect(again.tenantId).toBe(1);
+    // and another customer still cannot take it
+    expect((await completeSallaOAuth(TEST_ENV, "c3", 2, fakeSalla(7777).f)).ok).toBe(false);
   });
 });

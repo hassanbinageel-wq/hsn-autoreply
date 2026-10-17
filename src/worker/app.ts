@@ -61,7 +61,7 @@ import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegra
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
-import { completeSallaOAuth, handleSallaWebhook, sallaAuthorizeUrl, sallaConfigured, syncProducts, verifySallaWebhook } from "./services/salla";
+import { claimStore, completeSallaOAuth, handleSallaWebhook, sallaAuthorizeUrl, sallaConfigured, syncProducts, verifySallaWebhook } from "./services/salla";
 import { storeAnalytics, storeProducts } from "./services/store";
 import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
@@ -326,7 +326,25 @@ export function createApp() {
           now,
         )
       : null;
-    if (!st) return c.html(oauthResultPage(false, "رابط ربط المتجر غير صالح أو منتهي. ابدأ الربط من صفحة الربط في التطبيق (الربط من متجر تطبيقات سلة مباشرة يحتاج تبدأه من حسابك في HSN).", "web", c.env.APP_DEEP_LINK), 400);
+    if (!st) {
+      // Installed from Salla's side (app store / partner portal): connect the store, then let the signed-in customer
+      // claim it with a one-time token (the session cookie is SameSite=Strict, so it is not sent on this redirect).
+      if (!code || c.req.query("error")) return c.html(oauthResultPage(false, "رابط ربط المتجر غير صالح أو منتهي. ابدأ الربط من صفحة الربط في HSN.", "web", c.env.APP_DEEP_LINK), 400);
+      const r = await completeSallaOAuth(c.env, code, 0);
+      if (!r.ok) return c.html(oauthResultPage(false, `تعذر ربط متجر سلة: ${sanitize(r.error ?? "")}`, "web", c.env.APP_DEEP_LINK), 502);
+      c.executionCtx.waitUntil(syncProducts(c.env, r.storeId!).catch(() => undefined));
+      if (r.tenantId) return c.html(oauthResultPage(true, `تم تحديث ربط متجر «${r.name ?? "سلة"}».`, "web", c.env.APP_DEEP_LINK));
+      const claim = randomToken(24);
+      await run(
+        c.env.DB,
+        "INSERT INTO store_oauth_states (state_hash, tenant_id, user_id, platform, client, created_at, expires_at) VALUES (?, 0, ?, 'salla_claim', 'web', ?, ?)",
+        await sha256Hex(claim),
+        r.storeId,
+        now,
+        now + 30 * 60_000,
+      );
+      return c.redirect(`/#/connection?claim=${claim}`, 302);
+    }
     if (c.req.query("error") || !code) return c.html(oauthResultPage(false, "تم إلغاء ربط المتجر أو رفض الصلاحيات.", st.client, c.env.APP_DEEP_LINK), 400);
     const r = await completeSallaOAuth(c.env, code, st.tenant_id);
     if (!r.ok) {
@@ -1684,6 +1702,23 @@ export function createApp() {
       now + 15 * 60_000,
     );
     return c.json({ url: sallaAuthorizeUrl(c.env, state) });
+  });
+  // Finish a store installed from Salla's side: the one-time token from the callback ties it to this customer.
+  api.post("/stores/claim", async (c) => {
+    const blocked = await planBlock(c, "store");
+    if (blocked) return blocked;
+    const p = await parseBody(c, z.object({ token: z.string().min(16).max(80) }));
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    const st = await first<{ user_id: number }>(
+      c.env.DB,
+      "UPDATE store_oauth_states SET used_at = ? WHERE state_hash = ? AND platform = 'salla_claim' AND used_at IS NULL AND expires_at > ? RETURNING user_id",
+      now,
+      await sha256Hex(p.data.token),
+      now,
+    );
+    if (!st || !(await claimStore(c.env, st.user_id, T(c), now))) return apiError(c, 404, "not_found", "رابط إكمال الربط غير صالح أو منتهي — ابدأ الربط من جديد");
+    return c.json({ ok: true });
   });
   api.post("/stores/:id/sync", async (c) => {
     const id = idParam(c);

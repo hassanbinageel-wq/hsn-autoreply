@@ -86,6 +86,8 @@ export interface ConnectStoreResult {
   error?: string;
   storeId?: number;
   name?: string;
+  /** The customer the store belongs to (0 = installed from Salla, waiting to be claimed). */
+  tenantId?: number;
 }
 
 /** Code → tokens → merchant info → store row for this customer (a Salla store belongs to one customer only). */
@@ -102,17 +104,25 @@ export async function completeSallaOAuth(env: Env, code: string, tenantId: numbe
   if (!info.ok || !m?.id) return { ok: false, error: `user_info: HTTP ${info.status}` };
   const merchantId = String(m.id);
   const owner = await first<{ id: number; tenant_id: number }>(env.DB, "SELECT id, tenant_id FROM stores WHERE platform = 'salla' AND merchant_id = ?", merchantId);
-  if (owner && owner.tenant_id !== tenantId) {
+  // An install from Salla's side (tenantId 0) for a store someone already owns only refreshes its tokens.
+  if (tenantId === 0 && owner && owner.tenant_id !== 0) {
+    await run(env.DB, "UPDATE stores SET status = 'active', updated_at = ? WHERE id = ?", now, owner.id);
+    await saveTokens(env, owner.id, merchantId, t, now);
+    return { ok: true, storeId: owner.id, name: m.name, tenantId: owner.tenant_id };
+  }
+  // tenant 0 = installed from Salla but not claimed by an HSN customer yet (see claimStore).
+  if (owner && owner.tenant_id !== tenantId && owner.tenant_id !== 0) {
     await audit(env.DB, tenantId, "system", "store.connect_refused", merchantId, { reason: "owned_by_other_tenant" });
     return { ok: false, error: "هذا المتجر مربوط بعميل آخر في الخدمة — تواصل مع الإدارة" };
   }
   // One Salla store per customer: a newly connected store replaces the previous one.
-  await run(env.DB, "UPDATE stores SET status = 'disconnected', token_ciphertext = NULL, token_iv = NULL, refresh_ciphertext = NULL, refresh_iv = NULL, updated_at = ? WHERE tenant_id = ? AND platform = 'salla' AND merchant_id != ?", now, tenantId, merchantId);
+  if (tenantId !== 0) await run(env.DB, "UPDATE stores SET status = 'disconnected', token_ciphertext = NULL, token_iv = NULL, refresh_ciphertext = NULL, refresh_iv = NULL, updated_at = ? WHERE tenant_id = ? AND platform = 'salla' AND merchant_id != ?", now, tenantId, merchantId);
   const row = await first<{ id: number }>(
     env.DB,
     `INSERT INTO stores (tenant_id, platform, merchant_id, name, domain, avatar_url, status, connected_at, created_at, updated_at)
      VALUES (?, 'salla', ?, ?, ?, ?, 'active', ?, ?, ?)
      ON CONFLICT(platform, merchant_id) DO UPDATE SET name = excluded.name, domain = excluded.domain, avatar_url = excluded.avatar_url,
+       tenant_id = CASE WHEN stores.tenant_id = 0 THEN excluded.tenant_id ELSE stores.tenant_id END,
        status = 'active', connected_at = excluded.connected_at, updated_at = excluded.updated_at
      RETURNING id`,
     tenantId,
@@ -125,8 +135,9 @@ export async function completeSallaOAuth(env: Env, code: string, tenantId: numbe
     now,
   );
   await saveTokens(env, row!.id, merchantId, t, now);
-  await audit(env.DB, tenantId, "admin", "store.connected", merchantId, { platform: "salla", name: m.name });
-  return { ok: true, storeId: row!.id, name: m.name };
+  const linked = await first<{ tenant_id: number }>(env.DB, "SELECT tenant_id FROM stores WHERE id = ?", row!.id);
+  if (tenantId !== 0) await audit(env.DB, tenantId, "admin", "store.connected", merchantId, { platform: "salla", name: m.name });
+  return { ok: true, storeId: row!.id, name: m.name, tenantId: linked?.tenant_id ?? tenantId };
 }
 
 interface StoreRow {
@@ -330,4 +341,17 @@ export async function handleSallaWebhook(env: Env, body: any, now = Date.now()):
     return "product";
   }
   return "ignored";
+}
+
+/**
+ * Claims a store installed from Salla's side (no HSN state in the callback) for the signed-in customer, with the
+ * one-time claim token shown on the callback page. A store that already belongs to someone cannot be claimed.
+ */
+export async function claimStore(env: Env, storeId: number, tenantId: number, now = Date.now()): Promise<boolean> {
+  const s = await first<{ id: number; merchant_id: string }>(env.DB, "SELECT id, merchant_id FROM stores WHERE id = ? AND tenant_id = 0", storeId);
+  if (!s) return false;
+  await run(env.DB, "UPDATE stores SET status = 'disconnected', token_ciphertext = NULL, token_iv = NULL, refresh_ciphertext = NULL, refresh_iv = NULL, updated_at = ? WHERE tenant_id = ? AND platform = 'salla'", now, tenantId);
+  await run(env.DB, "UPDATE stores SET tenant_id = ?, updated_at = ? WHERE id = ? AND tenant_id = 0", tenantId, now, storeId);
+  await audit(env.DB, tenantId, "admin", "store.connected", s.merchant_id, { platform: "salla", via: "salla_install" });
+  return true;
 }
