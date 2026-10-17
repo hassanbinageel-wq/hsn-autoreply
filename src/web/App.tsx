@@ -42,6 +42,8 @@ const OwnerPage = lazyPage(() => import("./pages/Owner"), "OwnerPage");
 const SubscriptionPage = lazyPage(() => import("./pages/Subscription"), "SubscriptionPage");
 const SettingsPage = lazyPage(() => import("./pages/Settings"), "SettingsPage");
 const DownloadPage = lazyPage(() => import("./pages/Download"), "DownloadPage");
+const AnalyticsPage = lazyPage(() => import("./pages/Analytics"), "AnalyticsPage");
+const SchedulePage = lazyPage(() => import("./pages/Schedule"), "SchedulePage");
 
 // ---------------- tiny hash router ----------------
 export function useRoute(): string {
@@ -99,6 +101,8 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ to: string; label: strin
   { title: "عام", items: [
     { to: "/", label: "الرئيسية", icon: "home" },
     { to: "/campaigns", label: "الحملات", icon: "target" },
+    { to: "/schedule", label: "الجدولة", icon: "calendar" },
+    { to: "/analytics", label: "التحليلات", icon: "chart" },
     { to: "/inbox", label: "الرسائل", icon: "inbox" },
     { to: "/draws", label: "السحوبات", icon: "gift" },
   ] },
@@ -266,6 +270,8 @@ export function App() {
       case "/download": page = <DownloadPage />; break;
       case "/owner": page = isOwner ? <OwnerPage /> : <DashboardPage />; break;
       case "/subscription": page = <SubscriptionPage />; break;
+      case "/analytics": page = <AnalyticsPage />; break;
+      case "/schedule": page = <SchedulePage />; break;
       default:
         page = (
           <div className="card mx-auto mt-6 max-w-md p-8 text-center">
@@ -291,6 +297,7 @@ export function App() {
     if (isOwner || !limits) return null;
     if (to === "/draws" && limits.draws_per_month === 0) return "السحوبات";
     if (to === "/simulator" && !limits.simulator) return FEATURE_LABELS.simulator;
+    if (to === "/analytics" && !limits.campaign_stats) return "التحليلات";
     return null;
   };
   const NavLink = ({ to, className, children }: { to: string; className?: string; children: ReactNode }) => {

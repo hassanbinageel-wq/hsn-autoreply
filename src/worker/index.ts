@@ -1,4 +1,5 @@
 import { createApp } from "./app";
+import { runFollowRecheck } from "./services/retention";
 import type { Env } from "./env";
 import { all, getSetting, OWNER_TENANT, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
@@ -98,6 +99,8 @@ export default {
     // Once an hour: pick up comments whose webhook never arrived (quota reached, outage, Meta stopped retrying).
     // Each customer has its own minute in the hour (the owner keeps minute 7).
     await autoRecover(env, ectx, new Date(controller.scheduledTime).getUTCMinutes()).catch((e) => console.error("recover", sanitize(String(e))));
+    // Optional follow re-check for retention analytics (off unless the customer enables it; few people per hour).
+    await runFollowRecheck(env, ectx, new Date(controller.scheduledTime).getUTCMinutes()).catch((e) => console.error("follow recheck", sanitize(String(e))));
     await runQueue(ectx, {
       maxJobs: 25,
       includeDemo: false,

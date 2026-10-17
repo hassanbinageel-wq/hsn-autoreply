@@ -62,6 +62,7 @@ import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage } from "./services/usage";
 import { recoverMissedComments } from "./services/recover";
 import { auditCampaignComments } from "./services/audit";
+import { analyticsByCampaign, analyticsByPost, analyticsDevices, analyticsFollow, analyticsHeatmap, analyticsOverview, analyticsRetention, osFamily, tzOffsetMinutes, type AnalyticsFilter, type EventType, type HeatKind } from "./services/analytics";
 import { deleteDraws, DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
 import { instagramShortcode } from "../shared/draw";
 import { cardDesignInputSchema } from "../shared/card";
@@ -254,19 +255,18 @@ export function createApp() {
     const token = c.req.param("token");
     const notFound = () => c.html('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body style="font-family:system-ui;text-align:center;padding:3rem">الرابط غير صالح أو منتهي.</body>', 404);
     if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return notFound();
-    const row = await first<{ id: number; link_url: string | null }>(c.env.DB, "SELECT id, link_url FROM conversation_flows WHERE link_token = ?", token);
+    const row = await first<{ id: number; link_url: string | null; account_id: number }>(c.env.DB, "SELECT id, link_url, account_id FROM conversation_flows WHERE link_token = ?", token);
     if (!row?.link_url || !/^https?:\/\//i.test(row.link_url)) return notFound();
     const ua = c.req.header("User-Agent") ?? "";
     const isBot = !ua || /facebookexternalhit|facebot|meta-external|bot\b|bot\/|crawler|spider|preview|slurp|whatsapp|telegram|curl|wget|python-requests|headless/i.test(ua);
     if (c.req.method === "GET" && !isBot) {
       const now = Date.now();
-      await run(
-        c.env.DB,
-        "UPDATE conversation_flows SET link_clicks = link_clicks + 1, link_first_click_at = COALESCE(link_first_click_at, ?), link_last_click_at = ? WHERE id = ?",
-        now,
-        now,
-        row.id,
-      );
+      await c.env.DB.batch([
+        c.env.DB
+          .prepare("UPDATE conversation_flows SET link_clicks = link_clicks + 1, link_first_click_at = COALESCE(link_first_click_at, ?), link_last_click_at = ? WHERE id = ?")
+          .bind(now, now, row.id),
+        c.env.DB.prepare("INSERT INTO link_clicks (flow_id, account_id, clicked_at, os) VALUES (?, ?, ?, ?)").bind(row.id, row.account_id, now, osFamily(ua)),
+      ]);
     }
     return new Response(null, {
       status: 302,
@@ -1239,6 +1239,63 @@ export function createApp() {
       );
     }
     return c.json(r);
+  });
+
+  // ---- Analytics (from what the system recorded; Instagram's own metrics need the insights permission)
+  const analyticsFilter = async (c: C): Promise<AnalyticsFilter | null> => {
+    const now = Date.now();
+    const from = Number(c.req.query("from"));
+    const to = Number(c.req.query("to"));
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= from || to - from > 400 * 86_400_000) return null;
+    const type = c.req.query("type");
+    const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Aden");
+    return {
+      from,
+      to: Math.min(to, now + 60_000),
+      campaignId: Number(c.req.query("campaign_id")) || undefined,
+      mediaId: (c.req.query("media_id") || "").slice(0, 64) || undefined,
+      type: type === "comment" || type === "story_reply" || type === "story_mention" ? (type as EventType) : undefined,
+      tzOffsetMin: tzOffsetMinutes(tz || "Asia/Aden"),
+    };
+  };
+  api.get("/analytics", async (c) => {
+    const blocked = await planBlock(c, "campaign_stats");
+    if (blocked) return blocked;
+    const f = await analyticsFilter(c);
+    if (!f) return apiError(c, 422, "validation", "فترة غير صحيحة");
+    const heat = (["comments", "messages", "clicks"] as const).includes(c.req.query("heat") as HeatKind) ? (c.req.query("heat") as HeatKind) : "comments";
+    const db = c.env.DB;
+    const [overview, campaigns, posts, heatmap, devices, follow, retention, recheck_enabled, recheck_days] = await Promise.all([
+      analyticsOverview(db, T(c), f),
+      analyticsByCampaign(db, T(c), f),
+      analyticsByPost(db, T(c), f),
+      analyticsHeatmap(db, T(c), f, heat),
+      analyticsDevices(db, T(c), f),
+      analyticsFollow(db, T(c), f),
+      analyticsRetention(db, T(c), f),
+      getSetting(db, T(c), "follow_recheck_enabled", false),
+      getSetting(db, T(c), "follow_recheck_days", 7),
+    ]);
+    return c.json({
+      generated_at: Date.now(),
+      filter: { from: f.from, to: f.to, campaign_id: f.campaignId ?? null, media_id: f.mediaId ?? null, type: f.type ?? null, tz_offset_min: f.tzOffsetMin },
+      overview,
+      campaigns,
+      posts,
+      heatmap,
+      devices,
+      follow,
+      retention,
+      recheck: { enabled: !!recheck_enabled, days: Number(recheck_days) || 7 },
+    });
+  });
+  api.put("/analytics/recheck", async (c) => {
+    const p = await parseBody(c, z.object({ enabled: z.boolean(), days: z.number().int().min(1).max(90) }));
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, T(c), "follow_recheck_enabled", p.data.enabled);
+    await setSetting(c.env.DB, T(c), "follow_recheck_days", p.data.days);
+    await audit(c.env.DB, T(c), c.get("session").username, "follow_recheck.updated", undefined, p.data);
+    return c.json({ ok: true });
   });
 
   api.get("/campaigns/:id/people", async (c) => {
