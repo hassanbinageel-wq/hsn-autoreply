@@ -224,18 +224,20 @@ export async function syncProducts(env: Env, storeId: number, f: Fetch = default
   let n = 0;
   for (let page = 1; page <= maxPages; page++) {
     const r = await f(`${API}/products?page=${page}&per_page=60`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-    if (r.status === 401) {
-      await run(env.DB, "UPDATE stores SET status = 'needs_reauth', last_error = 'unauthorized', updated_at = ? WHERE id = ?", now, storeId);
-      break;
+    if (!r.ok) {
+      // Keep Salla's own message to see why (scope, store state, token). Orders keep arriving by webhook meanwhile,
+      // so a failed product read alone does not mark the store as needing re-authorization.
+      const body = (await r.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 220);
+      await run(env.DB, "UPDATE stores SET last_error = ?, updated_at = ? WHERE id = ?", `قراءة المنتجات: HTTP ${r.status} ${body}`.slice(0, 300), now, storeId);
+      return n;
     }
-    if (!r.ok) break;
     const j = (await r.json().catch(() => ({}))) as { data?: any[]; pagination?: { currentPage?: number; totalPages?: number } };
     const items = (j.data ?? []).filter((p) => p?.id);
     if (items.length) await env.DB.batch(items.map((p) => upsertProductStmt(env.DB, storeId, p, now)));
     n += items.length;
     if (!j.pagination?.totalPages || page >= j.pagination.totalPages) break;
   }
-  await run(env.DB, "UPDATE stores SET products_synced_at = ? WHERE id = ?", now, storeId);
+  await run(env.DB, "UPDATE stores SET products_synced_at = ?, last_error = NULL WHERE id = ?", now, storeId);
   return n;
 }
 

@@ -40,7 +40,7 @@ export function StoreConnect() {
       ) : salla ? (
         <div className="space-y-3">
           <div className="surface-2 flex flex-wrap items-center gap-3 rounded-2xl p-3">
-            {salla.avatar_url ? <img src={salla.avatar_url} alt="" className="size-11 rounded-xl object-cover" /> : <span className="grid size-11 place-items-center rounded-xl bg-emerald-500/15 text-lg">🛍️</span>}
+            {salla.avatar_url ? <img src={salla.avatar_url} alt="" className="size-11 rounded-xl object-cover" onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} /> : <span className="grid size-11 place-items-center rounded-xl bg-emerald-500/15 text-lg">🛍️</span>}
             <div className="min-w-0 flex-1">
               <div className="font-semibold">{salla.name ?? "متجر سلة"} <span className="muted text-xs">· سلة</span></div>
               <div className="muted text-xs" dir="ltr" style={{ textAlign: "right" }}>{salla.domain ?? ""}</div>
@@ -48,6 +48,7 @@ export function StoreConnect() {
             </div>
             <span className={`chip ${salla.status === "active" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"}`}>{salla.status === "active" ? "متصل" : "يحتاج إعادة ربط"}</span>
           </div>
+          {salla.status === "active" && salla.last_error && <Alert tone="warn">{salla.last_error}</Alert>}
           {salla.status !== "active" && <Alert tone="warn">انتهى تفويض المتجر{salla.last_error ? ` (${salla.last_error})` : ""} — اضغط «إعادة الربط».</Alert>}
           <div className="flex flex-wrap gap-2">
             <button className="btn btn-ghost" disabled={!!busy} onClick={connect}>إعادة الربط</button>
