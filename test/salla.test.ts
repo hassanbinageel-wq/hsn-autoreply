@@ -131,7 +131,7 @@ describe("Salla store connection", () => {
   it("refuses a callback without a valid state", async () => {
     // no code at all → refused; a code without our state is exchanged with Salla (here: no network → fails), never linked to anyone
     expect((await SELF.fetch(new Request(`${BASE}/oauth/salla/callback?state=forged`))).status).toBe(400);
-    const r = await SELF.fetch(new Request(`${BASE}/oauth/salla/callback?code=x&state=forged`), { redirect: "manual" } as any);
+    const r = await SELF.fetch(new Request(`${BASE}/oauth/salla/callback?code=x&state=forged`, { redirect: "manual" }));
     expect(r.status).not.toBe(200);
     expect(await DB.prepare("SELECT COUNT(*) AS n FROM stores").first<any>()).toMatchObject({ n: 0 });
   });
