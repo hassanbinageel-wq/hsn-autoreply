@@ -4,7 +4,7 @@ import { Link } from "../App";
 import { AreaChart } from "../components/Charts";
 import { DateTimeField } from "../components/DateTimeField";
 import { Icon } from "../components/Icon";
-import { Alert, Card, InfoDot, PageHeader, Spinner, Stat, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
+import { Alert, Card, InfoDot, Modal, PageHeader, Spinner, Stat, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 import { askConfirm } from "../components/Confirm";
 import { toCsv } from "../../shared/csv";
 import { saveFile } from "../lib/save";
@@ -146,7 +146,7 @@ export function AnalyticsPage() {
             <p className="muted mt-2 text-xs">«أشخاص علّقوا» محسوب لكل يوم لحاله — نفس الشخص في يومين ينحسب في كل يوم، فمجموع الأيام ما يساوي عدد الأشخاص الكلي.</p>
           </Card>
 
-          <InstagramMetricsCard />
+          <InstagramMetricsCard ig={data.instagram} onChanged={reload} periodLabel={periodLabel} />
 
           {/* Campaigns */}
           <Card
@@ -240,7 +240,7 @@ export function AnalyticsPage() {
 
           <FollowCard f={data.follow} />
           <RetentionCard r={data.retention} recheck={data.recheck} onChanged={reload} periodLabel={periodLabel} />
-          <AudienceCard />
+          <AudienceCard ig={data.instagram} />
         </>
       ) : null}
     </div>
@@ -273,33 +273,246 @@ function StatusPill({ kind }: { kind: "permission" | "soon" }) {
   );
 }
 
-/** Instagram's own numbers: honest "not available" until the insights permission is granted. */
-function InstagramMetricsCard() {
-  const items = ["إجمالي المشاهدات", "الوصول (حسابات فريدة)", "الإعجابات", "المشاركات", "الحفظ", "الحسابات المتفاعلة"];
+const STOP_REASON: Record<string, string> = {
+  permission: "Meta رفضت القراءة — غالبًا الصلاحية انسحبت أو ما انضافت للتطبيق. أعد ربط الحساب.",
+  auth: "انتهى ربط الحساب — أعد الربط من صفحة الربط.",
+  rate_limited: "Meta طلبت التمهل مؤقتًا — بنكمل في الجولة الجاية تلقائيًا.",
+};
+const nOrDash = (v: number | null | undefined) => (typeof v === "number" ? fmt(v) : "—");
+
+/** Owner-only: who is asked for the insights permission at connect time. */
+function ScopeControl({ mode, onChanged }: { mode: "off" | "owner" | "all"; onChanged: () => void }) {
+  const set = async (m: "off" | "owner" | "all") => {
+    if (m !== "off" && !(await askConfirm({
+      title: "طلب صلاحية الإحصاءات عند الربط؟",
+      message: "قبل التفعيل لازم تضيف صلاحية instagram_business_manage_insights لتطبيقك في لوحة Meta (Instagram › API setup with Instagram login › الصلاحيات)، وإلا بيفشل الربط.\n\nقبل موافقة Meta في مراجعة التطبيق، الصلاحية تشتغل فقط للحسابات اللي لها دور في التطبيق (مثل حسابك). لا تختار «كل العملاء» قبل الموافقة.\n\nبعد التفعيل افتح صفحة الربط واضغط «ربط» من جديد.",
+      confirmLabel: "فعّل",
+    }))) return;
+    try {
+      await api("/api/analytics/insights-scope", { method: "PUT", body: { mode: m } });
+      toast("تم الحفظ");
+      onChanged();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    }
+  };
+  const opts: Array<[typeof mode, string]> = [["off", "إيقاف"], ["owner", "حسابي فقط"], ["all", "كل العملاء"]];
   return (
-    <Card title="إحصاءات إنستقرام" action={<StatusPill kind="permission" />}>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        {items.map((l) => (
-          <div key={l} className="surface-2 rounded-xl p-3 text-center">
-            <div className="font-display text-lg font-extrabold text-[var(--muted)]">—</div>
-            <div className="muted text-xs">{l}</div>
+    <div className="mt-3 rounded-2xl border border-dashed border-[var(--border)] p-3 text-sm">
+      <div className="mb-2 font-semibold">لإدارة الخدمة: طلب صلاحية الإحصاءات عند ربط الحساب</div>
+      <div className="seg" role="group" aria-label="طلب صلاحية الإحصاءات">
+        {opts.map(([k, l]) => <button key={k} type="button" aria-pressed={mode === k} className={mode === k ? "on" : ""} onClick={() => mode !== k && set(k)}>{l}</button>)}
+      </div>
+    </div>
+  );
+}
+
+/** Instagram's own numbers (views, reach, likes…) from stored snapshots; "—" = unavailable, never 0. */
+function InstagramMetricsCard({ ig, onChanged, periodLabel }: { ig: any; onChanged: () => void; periodLabel: string }) {
+  const [busy, setBusy] = useState(false);
+  const [detail, setDetail] = useState<any | null>(null);
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      const r = await api<any>("/api/analytics/insights/refresh", { method: "POST", body: {} });
+      toast(r.ok ? "تم تحديث أرقام إنستقرام" : STOP_REASON[r.summary?.stopped] ?? "ما اكتمل التحديث", r.ok ? undefined : "bad");
+      onChanged();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const owner = ig?.scope_mode !== undefined && <ScopeControl mode={ig.scope_mode} onChanged={onChanged} />;
+  if (!ig?.granted) {
+    return (
+      <Card title="إحصاءات إنستقرام" action={<StatusPill kind="permission" />}>
+        <p className="muted text-sm">
+          المشاهدات والوصول والإعجابات والحفظ تجي من إنستقرام نفسه وتحتاج صلاحية <span dir="ltr">instagram_business_manage_insights</span> على الحساب المربوط.
+          {ig?.requested ? <> الصلاحية مطلوبة الحين عند الربط — <Link to="/connection" className="font-semibold text-[var(--primary)]">أعد ربط الحساب</Link> عشان تبدأ.</> : " مو مفعّلة لحسابك بعد."}
+        </p>
+        {owner}
+      </Card>
+    );
+  }
+  const t = ig.totals;
+  const st = ig.status;
+  const tiles: Array<[string, string, string]> = [
+    ["المشاهدات", "views", "مجموع مشاهدات المنشورات اللي نُشرت في الفترة (قيمة تراكمية من يوم النشر حسب آخر قراءة). المشاهدة الواحدة ممكن تتكرر من نفس الشخص."],
+    ["الإعجابات", "likes", "مجموع الإعجابات على منشورات الفترة حسب آخر قراءة."],
+    ["التعليقات", "comments", "عدد التعليقات حسب إنستقرام (يشمل اللي ما مرّت على حملاتك)."],
+    ["المشاركات", "shares", "عدد مرات مشاركة المنشورات."],
+    ["الحفظ", "saved", "عدد مرات حفظ المنشورات."],
+  ];
+  return (
+    <Card
+      title="إحصاءات إنستقرام"
+      action={<button className="btn btn-ghost min-h-9 text-xs" onClick={refresh} disabled={busy}><Icon name="refresh" size={15} />{busy ? "…" : "تحديث من إنستقرام"}</button>}
+    >
+      <p className="muted mb-3 text-xs">
+        {st?.at ? <>آخر قراءة: {fmtTime(st.at)}. </> : "ما صارت قراءة بعد — أول قراءة خلال ساعة أو اضغط «تحديث». "}
+        أرقام Meta ممكن تتأخر لين 48 ساعة. «—» = غير متاحة من Meta، مو صفر. المنشورات اللي نُشرت في الفترة: {fmt(t?.posts ?? 0)}.
+      </p>
+      {st && !st.ok && st.reason && <Alert tone="warn">{STOP_REASON[st.reason] ?? st.message}</Alert>}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {tiles.map(([label, k, info]) => (
+          <div key={k} className="surface-2 rounded-xl p-3">
+            <div className="flex items-center justify-between gap-1"><span className="muted text-xs">{label}</span><InfoDot text={info} /></div>
+            <div className="font-display mt-1 text-xl font-extrabold tabular-nums">{t?.[k]?.posts ? fmt(t[k].sum) : "—"}</div>
+            {t?.[k]?.posts > 0 && t[k].posts < t.posts && <div className="muted text-[10px]">من {t[k].posts} منشور فيها بيانات</div>}
           </div>
         ))}
       </div>
-      <p className="muted mt-3 text-sm">
-        هذي الأرقام تجي من إنستقرام نفسه وتحتاج صلاحية <span dir="ltr">instagram_business_manage_insights</span>. «—» تعني غير متاحة، مو صفر. بعد موافقتك نضيف الصلاحية وتعيد ربط حسابك، فتظهر هنا وفي جدول المنشورات.
-      </p>
+      <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-2 sm:grid-cols-2">
+        <div className="surface-2 rounded-xl p-3 text-sm">
+          <div className="flex items-center justify-between gap-1"><b>الوصول: متابعون وغير متابعين</b><InfoDot text="من إحصاءات الحساب اليومية. مجموع الأيام ممكن يكرر نفس الشخص، فالمعروض نسبة تقريبية مو عدد أشخاص فريد. الوصول ما يُجمع بين المنشورات." /></div>
+          {ig.follow_reach ? (
+            <>
+              <div className="mt-2 flex h-3 overflow-hidden rounded-full bg-[var(--border)]">
+                <div className="bg-violet-500" style={{ width: pct(ig.follow_reach.follower, ig.follow_reach.follower + ig.follow_reach.non_follower) }} />
+                <div className="bg-orange-400" style={{ width: pct(ig.follow_reach.non_follower, ig.follow_reach.follower + ig.follow_reach.non_follower) }} />
+              </div>
+              <div className="mt-1.5 flex flex-wrap justify-between gap-2 text-xs">
+                <span><span className="inline-block size-2 rounded-full bg-violet-500" /> متابعون {pct(ig.follow_reach.follower, ig.follow_reach.follower + ig.follow_reach.non_follower)}</span>
+                <span><span className="inline-block size-2 rounded-full bg-orange-400" /> غير متابعين {pct(ig.follow_reach.non_follower, ig.follow_reach.follower + ig.follow_reach.non_follower)}</span>
+              </div>
+              <div className="muted mt-1 text-[11px]">من {ig.follow_reach.days} يوم فيها بيانات</div>
+            </>
+          ) : <p className="muted mt-2 text-xs">ما فيه بيانات لهذي الفترة بعد (تُقرأ مرة يوميًا).</p>}
+        </div>
+        <div className="surface-2 rounded-xl p-3 text-sm">
+          <div className="flex items-center justify-between gap-1"><b>متابعون جدد</b><InfoDot text="حسب Meta: عدد المتابعين الجدد يوميًا (يحتاج 100 متابع أو أكثر). ما يطرح اللي ألغوا المتابعة." /></div>
+          {ig.new_followers ? (
+            <><div className="font-display mt-1 text-xl font-extrabold tabular-nums">{fmt(ig.new_followers.value)}</div><div className="muted text-[11px]">من {ig.new_followers.days} يوم فيها بيانات</div></>
+          ) : <p className="muted mt-2 text-xs">غير متاح بعد (أو الحساب أقل من 100 متابع).</p>}
+        </div>
+      </div>
+
+      {ig.posts.length > 0 && (
+        <>
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <b className="text-sm">أداء المنشورات</b>
+            <button className="btn btn-ghost min-h-9 text-xs" onClick={() =>
+              download("instagram-posts.csv", ["المنشور", "النوع", "تاريخ النشر", "المشاهدات", "الوصول", "الإعجابات", "التعليقات", "المشاركات", "الحفظ", "ردود الستوري", "وقت القراءة", "الفترة"],
+                ig.posts.map((p: any) => ({ "المنشور": p.permalink ?? p.media_id, "النوع": TYPE_LABEL[p.content_type] ?? "", "تاريخ النشر": p.posted_at ? fmtTime(p.posted_at) : "", "المشاهدات": p.views ?? "", "الوصول": p.reach ?? "", "الإعجابات": p.likes ?? "", "التعليقات": p.comments ?? "", "المشاركات": p.shares ?? "", "الحفظ": p.saved ?? "", "ردود الستوري": p.replies ?? "", "وقت القراءة": fmtTime(p.captured_at), "الفترة": periodLabel })))
+            }>⬇️ CSV</button>
+          </div>
+          <div className="-mx-4 mt-2 overflow-x-auto sm:-mx-5">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead><tr className="muted bg-[var(--surface-2)] text-right text-xs">
+                <th className="px-4 py-2 font-semibold">المنشور</th><th className="px-2 py-2 font-semibold">مشاهدات</th><th className="px-2 py-2 font-semibold">وصول</th>
+                <th className="px-2 py-2 font-semibold">إعجابات</th><th className="px-2 py-2 font-semibold">تعليقات</th><th className="px-2 py-2 font-semibold">مشاركات</th><th className="px-2 py-2 font-semibold">حفظ</th><th className="px-2 py-2 font-semibold">آخر قراءة</th>
+              </tr></thead>
+              <tbody>
+                {ig.posts.map((p: any) => (
+                  <tr key={p.media_id} className="cursor-pointer border-t border-[var(--border)] hover:bg-[var(--surface-2)]" onClick={() => setDetail(p)}>
+                    <td className="px-4 py-2">
+                      <div className="flex items-center gap-2">
+                        {p.thumbnail_url ? <img src={p.thumbnail_url} alt="" className="size-9 shrink-0 rounded-lg object-cover" loading="lazy" onError={(e) => ((e.target as HTMLImageElement).style.visibility = "hidden")} /> : <span className="surface-2 size-9 shrink-0 rounded-lg" />}
+                        <div className="min-w-0">
+                          <div className="max-w-[12rem] truncate text-xs">{p.caption || "بدون وصف"}</div>
+                          <div className="muted text-[11px]">{TYPE_LABEL[p.content_type] ?? ""}{p.posted_at ? ` · ${fmtDate(p.posted_at)}` : ""}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-2 py-2 tabular-nums">{nOrDash(p.views)}</td>
+                    <td className="px-2 py-2 tabular-nums">{nOrDash(p.reach)}</td>
+                    <td className="px-2 py-2 tabular-nums">{nOrDash(p.likes)}</td>
+                    <td className="px-2 py-2 tabular-nums">{nOrDash(p.comments)}</td>
+                    <td className="px-2 py-2 tabular-nums">{nOrDash(p.shares)}</td>
+                    <td className="px-2 py-2 tabular-nums">{p.content_type === "STORY" ? <span title="ردود الستوري">{nOrDash(p.replies)} ↩</span> : nOrDash(p.saved)}</td>
+                    <td className="muted px-2 py-2 text-[11px]">{p.status === "empty" ? "Meta ما رجّعت أرقام" : p.status === "ok" ? fmtTime(p.captured_at) : "تعذّرت القراءة"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted mt-2 text-xs">قيم كل منشور تراكمية من يوم نشره (مو داخل الفترة فقط). الستوري تُقرأ كل ساعة لين تنتهي بعد 24 ساعة، وتحتاج 5 مشاهدين على الأقل حسب Meta. اضغط أي منشور لتشوف تطوره.</p>
+        </>
+      )}
+      {owner}
+      {detail && <PostDetail post={detail} onClose={() => setDetail(null)} />}
     </Card>
   );
 }
 
-function AudienceCard() {
+function PostDetail({ post, onClose }: { post: any; onClose: () => void }) {
+  const { data } = useAsync(() => api<{ items: any[] }>(`/api/analytics/media/${encodeURIComponent(post.media_id)}/insights`), [post.media_id]);
+  const items = (data?.items ?? []).filter((i) => i.status === "ok");
   return (
-    <Card title="الجمهور (الجنس، العمر، الدول، متابع / غير متابع)" action={<StatusPill kind="permission" />}>
-      <p className="muted text-sm">
-        إنستقرام يعطي هذي البيانات <b>على مستوى الحساب كله فقط</b> (أعلى 45 قيمة، وبشرط 100 متابع أو أكثر)، وما يقدر النظام ينسبها لحملة أو لأشخاص محددين. تظهر هنا بعد صلاحية الإحصاءات، مع توضيح الجمهور اللي تمثله
-        (المتابعون أو اللي وصلهم المحتوى). ما نستنتج الجنس أو العمر من الاسم أو الصورة.
+    <Modal open onClose={onClose} title="تطور المنشور" center>
+      <div className="space-y-3 text-sm">
+        <div className="flex items-center gap-3">
+          {post.thumbnail_url && <img src={post.thumbnail_url} alt="" className="size-14 rounded-xl object-cover" />}
+          <div className="min-w-0">
+            <div className="line-clamp-2">{post.caption || "بدون وصف"}</div>
+            <div className="muted text-xs">{TYPE_LABEL[post.content_type] ?? ""}{post.posted_at ? ` · نُشر ${fmtTime(post.posted_at)}` : ""}</div>
+            {post.permalink && <a href={post.permalink} target="_blank" rel="noreferrer" className="text-xs font-semibold text-[var(--primary)]">فتح في إنستقرام ↗</a>}
+          </div>
+        </div>
+        {!data ? <Spinner /> : items.length < 2 ? (
+          <p className="muted">يحتاج قراءتين أو أكثر عشان يظهر التطور. القراءات تصير تلقائيًا (المنشورات الجديدة كل 3 ساعات).</p>
+        ) : (
+          <AreaChart
+            labels={items.map((i) => new Intl.DateTimeFormat("ar-SA-u-ca-gregory-nu-latn", { day: "numeric", month: "short", hour: "numeric" }).format(new Date(i.captured_at)))}
+            series={[
+              { label: "مشاهدات", color: "#7c3aed", values: items.map((i) => i.views ?? 0) },
+              { label: "وصول", color: "#c026d3", values: items.map((i) => i.reach ?? 0) },
+              { label: "تفاعلات", color: "#f97316", values: items.map((i) => i.total_interactions ?? 0) },
+            ]}
+          />
+        )}
+        <p className="muted text-xs">كل نقطة = القيمة التراكمية وقت القراءة (لا تُجمع النقاط).</p>
+      </div>
+    </Modal>
+  );
+}
+
+const AGE_ORDER = ["13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
+const GENDER: Record<string, string> = { F: "إناث", M: "ذكور", U: "غير معروف" };
+function countryName(code: string) {
+  try {
+    return new Intl.DisplayNames(["ar"], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+function AudienceCard({ ig }: { ig: any }) {
+  const d = ig?.demographics;
+  const block = (title: string, key: string, label: (k: string) => string, sort?: (a: any, b: any) => number) => {
+    const g = d?.[key];
+    if (!g) return <div className="surface-2 rounded-xl p-3 text-sm"><b>{title}</b><p className="muted mt-1 text-xs">غير متاح.</p></div>;
+    const items = [...g.items].sort(sort ?? ((a: any, b: any) => b.value - a.value));
+    const total = items.reduce((a: number, x: any) => a + x.value, 0);
+    return (
+      <div className="surface-2 rounded-xl p-3 text-sm">
+        <b>{title}</b>
+        <div className="mt-2 space-y-1.5">
+          {items.slice(0, 8).map((x: any) => (
+            <div key={x.dim} className="grid grid-cols-[7.5rem_minmax(0,1fr)_2.6rem] items-center gap-2 text-xs">
+              <span className="truncate">{label(x.dim)}</span>
+              <div className="h-2 overflow-hidden rounded-full bg-[var(--border)]"><div className="h-full rounded-full bg-violet-500" style={{ width: pct(x.value, total) }} /></div>
+              <span className="tabular-nums">{pct(x.value, total)}</span>
+            </div>
+          ))}
+        </div>
+        <div className="muted mt-2 text-[10px]">قراءة {g.day}{items.length > 8 ? ` · أعلى 8 من ${items.length}` : ""}</div>
+      </div>
+    );
+  };
+  return (
+    <Card title="جمهور المتابعين (العمر، الجنس، الدول)" action={!ig?.granted ? <StatusPill kind="permission" /> : undefined}>
+      <p className="muted mb-3 text-sm">
+        من إنستقرام <b>على مستوى الحساب كله</b> (متابعوك، مو حملة محددة)، ويشترط 100 متابع أو أكثر، وMeta تعطي أعلى المجموعات فقط — فالنسب من اللي رجّعته Meta، مو من كل المتابعين. ما نستنتج الجنس أو العمر من الاسم أو الصورة. تتحدث مرة أسبوعيًا.
       </p>
+      {!ig?.granted ? <p className="muted text-sm">تظهر بعد تفعيل صلاحية الإحصاءات.</p> : !d ? <p className="muted text-sm">ما وصلت بيانات بعد — يا إن الحساب أقل من 100 متابع، يا إن أول قراءة لسا ما صارت.</p> : (
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2 md:grid-cols-3">
+          {block("العمر", "age", (k) => k, (a, b) => AGE_ORDER.indexOf(a.dim) - AGE_ORDER.indexOf(b.dim))}
+          {block("الجنس", "gender", (k) => GENDER[k] ?? k)}
+          {block("الدول", "country", countryName)}
+        </div>
+      )}
     </Card>
   );
 }

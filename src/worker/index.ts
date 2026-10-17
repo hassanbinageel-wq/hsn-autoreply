@@ -1,5 +1,6 @@
 import { createApp } from "./app";
 import { runFollowRecheck } from "./services/retention";
+import { runInsights } from "./services/insights";
 import type { Env } from "./env";
 import { all, getSetting, OWNER_TENANT, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
@@ -50,7 +51,9 @@ export async function cleanup(db: D1Database, now = Date.now()): Promise<void> {
     db.prepare("DELETE FROM oauth_states WHERE expires_at < ?").bind(now),
     db.prepare("DELETE FROM rate_limits WHERE window_start < ?").bind(now - 86_400_000),
     db.prepare("DELETE FROM audit_logs WHERE at < ?").bind(now - 365 * 86_400_000),
-    db.prepare("DELETE FROM media_cache WHERE kind = 'story' AND expires_at < ?").bind(now - 7 * 86_400_000),
+    db.prepare("DELETE FROM media_cache WHERE kind = 'story' AND expires_at < ? AND media_id NOT IN (SELECT media_id FROM media_insights)").bind(now - 7 * 86_400_000),
+    db.prepare("DELETE FROM media_insights WHERE captured_at < ?").bind(now - 400 * 86_400_000),
+    db.prepare("DELETE FROM account_insights WHERE captured_at < ?").bind(now - 400 * 86_400_000),
   ]);
 }
 
@@ -101,6 +104,8 @@ export default {
     await autoRecover(env, ectx, new Date(controller.scheduledTime).getUTCMinutes()).catch((e) => console.error("recover", sanitize(String(e))));
     // Optional follow re-check for retention analytics (off unless the customer enables it; few people per hour).
     await runFollowRecheck(env, ectx, new Date(controller.scheduledTime).getUTCMinutes()).catch((e) => console.error("follow recheck", sanitize(String(e))));
+    // Instagram insights snapshots, hourly per customer (only accounts that granted the insights permission).
+    await runInsights(env, new Date(controller.scheduledTime).getUTCMinutes(), () => used++).catch((e) => console.error("insights", sanitize(String(e))));
     await runQueue(ectx, {
       maxJobs: 25,
       includeDemo: false,

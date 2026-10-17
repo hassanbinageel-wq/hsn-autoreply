@@ -8,7 +8,7 @@ import { missingSecrets } from "./env";
 import { all, audit, first, getSetting, OWNER_TENANT, run, setSetting, settingKey, tenantSettingsFilter } from "./lib/db";
 import { hashPassword, randomToken, sha256Hex, timingSafeEqual, verifyMetaSignature, verifyPassword } from "./lib/crypto";
 import { parseWebhook } from "./meta/webhook-parse";
-import { INSTAGRAM_SCOPES, WEBHOOK_FIELDS, sanitize } from "./meta/client";
+import { INSIGHTS_SCOPE, INSTAGRAM_SCOPES, WEBHOOK_FIELDS, sanitize } from "./meta/client";
 import type { MediaItem } from "./meta/types";
 import {
   allowedAppOrigins,
@@ -62,6 +62,7 @@ import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage } from "./services/usage";
 import { recoverMissedComments } from "./services/recover";
 import { auditCampaignComments } from "./services/audit";
+import { captureInsights, insightsAccount, insightsScopeMode, insightsSummary, mediaInsightsSeries, wantsInsightsScope } from "./services/insights";
 import { analyticsByCampaign, analyticsByPost, analyticsDevices, analyticsFollow, analyticsHeatmap, analyticsOverview, analyticsRetention, osFamily, tzOffsetMinutes, type AnalyticsFilter, type EventType, type HeatKind } from "./services/analytics";
 import { deleteDraws, DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
 import { instagramShortcode } from "../shared/draw";
@@ -1003,7 +1004,8 @@ export function createApp() {
       now,
       now + 10 * 60_000,
     );
-    return c.json({ url: metaClient(c.env).authorizeUrl(redirectUri(c.env), state) });
+    const extra = (await wantsInsightsScope(c.env.DB, T(c))) ? [INSIGHTS_SCOPE] : [];
+    return c.json({ url: metaClient(c.env).authorizeUrl(redirectUri(c.env), state, extra) });
   });
 
   api.post("/account/resubscribe", async (c) => {
@@ -1265,7 +1267,7 @@ export function createApp() {
     if (!f) return apiError(c, 422, "validation", "فترة غير صحيحة");
     const heat = (["comments", "messages", "clicks"] as const).includes(c.req.query("heat") as HeatKind) ? (c.req.query("heat") as HeatKind) : "comments";
     const db = c.env.DB;
-    const [overview, campaigns, posts, heatmap, devices, follow, retention, recheck_enabled, recheck_days] = await Promise.all([
+    const [overview, campaigns, posts, heatmap, devices, follow, retention, recheck_enabled, recheck_days, instagram] = await Promise.all([
       analyticsOverview(db, T(c), f),
       analyticsByCampaign(db, T(c), f),
       analyticsByPost(db, T(c), f),
@@ -1275,6 +1277,7 @@ export function createApp() {
       analyticsRetention(db, T(c), f),
       getSetting(db, T(c), "follow_recheck_enabled", false),
       getSetting(db, T(c), "follow_recheck_days", 7),
+      insightsSummary(db, T(c), f),
     ]);
     return c.json({
       generated_at: Date.now(),
@@ -1287,7 +1290,35 @@ export function createApp() {
       follow,
       retention,
       recheck: { enabled: !!recheck_enabled, days: Number(recheck_days) || 7 },
+      instagram: { ...instagram, scope_mode: c.get("session").is_owner ? await insightsScopeMode(db) : undefined },
     });
+  });
+  // Every stored reading of one post (lifetime values over time).
+  api.get("/analytics/media/:mid/insights", async (c) => {
+    const blocked = await planBlock(c, "campaign_stats");
+    if (blocked) return blocked;
+    return c.json({ items: await mediaInsightsSeries(c.env.DB, T(c), c.req.param("mid").slice(0, 64)) });
+  });
+  // Manual refresh of Instagram metrics (a few times an hour; the hourly job does the rest).
+  api.post("/analytics/insights/refresh", async (c) => {
+    const blocked = await planBlock(c, "campaign_stats");
+    if (blocked) return blocked;
+    const account = await insightsAccount(c.env.DB, T(c));
+    if (!account) return apiError(c, 409, "no_permission", "صلاحية الإحصاءات غير مفعّلة على الحساب المربوط");
+    if (!(await rateLimit(c.env.DB, `insights:${T(c)}`, 4, 3_600_000))) return apiError(c, 429, "rate_limited", "حدّثت كثير — جرّب بعد شوي (4 مرات بالساعة)");
+    const token = await getAccessToken(c.env, c.env.DB, account);
+    if (!token) return apiError(c, 409, "no_token", "أعد ربط الحساب");
+    const summary = await captureInsights(c.env.DB, metaClient(c.env), account, token, T(c), { left: 14 });
+    return c.json({ ok: !summary.stopped || summary.stopped === "budget", summary });
+  });
+  // Owner: who is asked for the insights permission when connecting (it must be added to the Meta app first).
+  api.put("/analytics/insights-scope", async (c) => {
+    if (!c.get("session").is_owner) return apiError(c, 403, "owner_only", "هذا الإعداد متاح لإدارة الخدمة فقط");
+    const p = await parseBody(c, z.object({ mode: z.enum(["off", "owner", "all"]) }));
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "insights_scope", p.data.mode);
+    await audit(c.env.DB, T(c), c.get("session").username, "insights_scope.updated", undefined, p.data);
+    return c.json({ ok: true });
   });
   api.put("/analytics/recheck", async (c) => {
     const p = await parseBody(c, z.object({ enabled: z.boolean(), days: z.number().int().min(1).max(90) }));

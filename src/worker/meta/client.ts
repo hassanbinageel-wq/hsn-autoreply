@@ -33,7 +33,19 @@ export const INSTAGRAM_SCOPES = [
   "instagram_business_manage_comments",
 ] as const;
 
+/** Optional: Instagram's own metrics (views, reach, saves, audience). Requested only where the owner enabled it. */
+export const INSIGHTS_SCOPE = "instagram_business_manage_insights";
+
 export const WEBHOOK_FIELDS = ["comments", "messages", "messaging_postbacks", "message_reactions"] as const;
+
+export interface InsightsResponse {
+  data?: Array<{
+    name: string;
+    period?: string;
+    values?: Array<{ value?: number; end_time?: string }>;
+    total_value?: { value?: number; breakdowns?: Array<{ dimension_keys?: string[]; results?: Array<{ dimension_values?: string[]; value?: number }> }> };
+  }>;
+}
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -155,12 +167,12 @@ export class HttpMetaClient implements MetaClient {
   }
 
   // ---------- OAuth ----------
-  authorizeUrl(redirectUri: string, state: string): string {
+  authorizeUrl(redirectUri: string, state: string, extraScopes: readonly string[] = []): string {
     const u = new URL("https://www.instagram.com/oauth/authorize");
     u.searchParams.set("client_id", this.opts.appId);
     u.searchParams.set("redirect_uri", redirectUri);
     u.searchParams.set("response_type", "code");
-    u.searchParams.set("scope", INSTAGRAM_SCOPES.join(","));
+    u.searchParams.set("scope", [...INSTAGRAM_SCOPES, ...extraScopes].join(","));
     u.searchParams.set("state", state);
     u.searchParams.set("enable_fb_login", "0");
     u.searchParams.set("force_authentication", "1");
@@ -259,6 +271,21 @@ export class HttpMetaClient implements MetaClient {
   async listStories(token: string): Promise<MetaResult<Paged<MediaItem>>> {
     const u = new URL(`${this.graphBase}/me/stories`);
     u.searchParams.set("fields", "id,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp");
+    return this.request(u.toString(), this.authGet(token), false);
+  }
+
+  // ---------- Insights (instagram_business_manage_insights) ----------
+  /** Lifetime metrics of one post / reel / story. Meta returns an empty list (not 0) for unavailable values. */
+  async mediaInsights(token: string, mediaId: string, metrics: readonly string[]): Promise<MetaResult<InsightsResponse>> {
+    const u = new URL(`${this.graphBase}/${encodeURIComponent(mediaId)}/insights`);
+    u.searchParams.set("metric", metrics.join(","));
+    return this.request(u.toString(), this.authGet(token), false);
+  }
+
+  /** Account-level insights (`/me/insights`) with the given query (metric, period, breakdown, metric_type, since, until, timeframe). */
+  async accountInsights(token: string, query: Record<string, string>): Promise<MetaResult<InsightsResponse>> {
+    const u = new URL(`${this.graphBase}/me/insights`);
+    for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
     return this.request(u.toString(), this.authGet(token), false);
   }
 

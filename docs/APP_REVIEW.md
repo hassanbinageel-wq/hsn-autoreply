@@ -15,6 +15,10 @@
 | `instagram_business_manage_comments` | استلام التعليقات (Webhook)، الرد العام تحت التعليق، قراءة تعليقات المنشور للسحب ولاسترجاع الفائت |
 | `instagram_business_manage_messages` | الرد الخاص على التعليق (Private Reply) ورسائل المحادثة ضمن نافذة 24 ساعة، وصندوق الرسائل |
 
+| `instagram_business_manage_insights` (اختيارية — من v2.13.0) | أرقام إنستقرام نفسه في صفحة «التحليلات»: مشاهدات ووصول وإعجابات وحفظ ومشاركات كل منشور وستوري، والوصول للمتابعين مقابل غير المتابعين، والمتابعين الجدد، وجمهور المتابعين (العمر والجنس والدول) |
+
+صلاحية الإحصاءات ما تنطلب عند الربط إلا إذا فعّلها المالك من «التحليلات» ← «طلب صلاحية الإحصاءات عند ربط الحساب»: إيقاف (الافتراضي) / حسابي فقط / كل العملاء. قبل موافقة Meta تشتغل فقط للحسابات اللي لها دور في التطبيق، فلا تختار «كل العملاء» قبل الموافقة. ولازم تنضاف الصلاحية للتطبيق في لوحة Meta أولًا، وإلا بيفشل الربط.
+
 لا تطلب أي صلاحية غيرها. كل صلاحية زيادة تحتاج تبرير وفيديو، وتصعّب الموافقة.
 
 ## نص التبرير لكل صلاحية (انسخه بالإنجليزي في نموذج المراجعة)
@@ -27,6 +31,9 @@
 
 **instagram_business_manage_messages**
 > When a person comments a keyword, we send exactly one Private Reply to that comment within 7 days of the comment, as allowed by the Private Replies feature. We send further messages only after the person replies (inside the 24-hour messaging window). The owner can also answer conversations manually from the app inbox inside the allowed window. We never message people who did not interact with the account first.
+
+**instagram_business_manage_insights**
+> The account owner sees the performance of their own posts, reels and stories in the app's Analytics page: views, reach, likes, comments, shares and saves per post, follower vs non-follower reach, daily new followers, and aggregated follower demographics (age, gender, country) as returned by the API. We store periodic snapshots only for the connected account's own media, show "unavailable" when the API returns no value, and never attribute demographics to individual people. Data is visible only to that account's owner and is deleted with the account.
 
 ## سيناريو الفيديو (Screencast)
 **ملاحظات عامة.** هذي أعراف شائعة في مراجعات Meta. ما قدرت أفتح صفحة إرشادات الفيديو الرسمية من هنا، فراجع التعليمات اللي تطلع لك في نموذج كل صلاحية داخل لوحة Meta.
@@ -48,6 +55,7 @@
 | 8 | المستخدم يضغط «ابدأ» ← يستلم المحتوى/الرابط | Follow-up only after the user replies (24h window) |
 | 9 | صفحة «الرسائل» في اللوحة: المحادثة + رد يدوي | Owner replies manually inside the messaging window |
 | 10 | «السحوبات» ← اختيار المنشور ← جلب التعليقات ← تنفيذ السحب | instagram_business_manage_comments: reading comments on the owner's own post for a giveaway |
+| 10ب | «التحليلات» ← بطاقة «إحصاءات إنستقرام» ← «تحديث من إنستقرام» ← جدول أداء المنشورات ← فتح منشور ← بطاقة «جمهور المتابعين» | instagram_business_manage_insights: the owner views insights of their own media and aggregated audience |
 | 11 | فتح /privacy و /data-deletion | Privacy policy and data deletion |
 | 12 | «الربط» ← «فصل الحساب وإيقاف الأتمتة» | Owner can disconnect at any time |
 
