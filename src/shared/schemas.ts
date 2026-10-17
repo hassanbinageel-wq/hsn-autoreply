@@ -64,12 +64,14 @@ export const campaignInputSchema = z
     auto_new_media: z.boolean().default(false),
     auto_new_reels_only: z.boolean().default(false),
     auto_new_since: z.number().int().nullable().optional(),
+    /** A campaign made for a scheduled post: it gets the post's id once the post is published. */
+    for_scheduled_post: z.number().int().positive().optional(),
   })
   .superRefine((c, ctx) => {
     if (!c.match_all && !c.keywords.some((k) => k.kind === "include") && c.type !== "story_mention") {
       ctx.addIssue({ code: "custom", path: ["keywords"], message: "أضف كلمة تشغيل واحدة على الأقل أو فعّل «جميع التعليقات/الردود»" });
     }
-    if (c.scope === "selected" && c.media_ids.length === 0 && !(c.type === "comment" && c.auto_new_media)) {
+    if (c.scope === "selected" && c.media_ids.length === 0 && !(c.type === "comment" && (c.auto_new_media || c.for_scheduled_post))) {
       ctx.addIssue({ code: "custom", path: ["media_ids"], message: "اختر منشورًا أو ستوري واحدة على الأقل" });
     }
     if (!c.final_text.trim() && !c.final_url) {

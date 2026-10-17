@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "../App";
+import { Link, navigate } from "../App";
 import { Icon } from "../components/Icon";
 import { api, authedObjectUrl, uploadFile } from "../api";
 import { DateTimeField } from "../components/DateTimeField";
 import { askConfirm } from "../components/Confirm";
-import { Alert, Card, Field, Modal, PageHeader, Spinner, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
+import { Alert, Card, Field, InfoDot, Modal, PageHeader, Spinner, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 
 /**
  * Scheduled publishing through Meta's official Content Publishing API. The server keeps the time and publishes;
@@ -114,7 +114,11 @@ function Planner({ meta }: { meta: any }) {
   const off: number = meta.tz_offset_min ?? 180;
   const [view, setView] = useState<View>("month");
   const [cursor, setCursor] = useState(() => dayOf(Date.now(), off));
-  const [editing, setEditing] = useState<{ id?: number; at?: number } | null>(null);
+  // Coming back from "new campaign for this post": reopen that post's editor.
+  const [editing, setEditing] = useState<{ id?: number; at?: number } | null>(() => {
+    const n = Number(new URLSearchParams(location.hash.split("?")[1] ?? "").get("post"));
+    return n > 0 ? { id: n } : null;
+  });
   const [detail, setDetail] = useState<number | null>(null);
   // Visible range in day indexes.
   const range = useMemo(() => {
@@ -218,7 +222,7 @@ function Planner({ meta }: { meta: any }) {
       </div>
       <p className="muted mt-2 text-xs">الأوقات بتوقيت حسابك (الإعدادات). Meta ما فيها جدولة، فالنظام هو اللي ينشر في الوقت — عادةً خلال دقيقة إلى دقيقتين، والفيديو ياخذ وقت أطول للمعالجة.</p>
 
-      {editing && <PostEditor id={editing.id} presetAt={editing.at} off={off} limits={meta.limits} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); }} />}
+      {editing && <PostEditor id={editing.id} presetAt={editing.at} off={off} limits={meta.limits} onClose={() => { setEditing(null); if (location.hash.includes("?")) history.replaceState(null, "", "#/schedule"); }} onSaved={() => { setEditing(null); reload(); }} />}
       {detail && <PostDetail id={detail} off={off} onClose={() => setDetail(null)} onChanged={reload} onEdit={(id) => { setDetail(null); setEditing({ id }); }} />}
     </Card>
   );
@@ -382,7 +386,7 @@ function PostEditor({ id, presetAt, off, limits, onClose, onSaved }: { id?: numb
   if (caption.length > limits.captionChars) problems.push("الوصف طويل");
   if (hashtags > limits.hashtags) problems.push("هاشتاقات كثيرة");
 
-  const save = async (submit: boolean) => {
+  const save = async (submit: boolean, then?: (postId: number) => void) => {
     setBusy("حفظ…");
     try {
       const body = { kind, caption: kind === "STORY" ? null : caption, publish_at: publishAt, share_to_feed: shareToFeed, campaign_id: campaign ? Number(campaign) : null };
@@ -397,6 +401,7 @@ function PostEditor({ id, presetAt, off, limits, onClose, onSaved }: { id?: numb
         await uploadFile(`/api/schedule/${postId}/media?role=item&position=${i}&w=${f.w ?? ""}&h=${f.h ?? ""}`, f.blob, (p) => setBusy(`رفع ${n} من ${fresh.length}… ${Math.round(p * 100)}%`));
       }
       if (cover?.blob && kind === "REELS") await uploadFile(`/api/schedule/${postId}/media?role=cover`, cover.blob, (p) => setBusy(`رفع الغلاف… ${Math.round(p * 100)}%`));
+      if (then) return then(postId!);
       if (submit) {
         await api(`/api/schedule/${postId}/submit`, { body: {} });
         toast(`تمت الجدولة — ${fmtTime(publishAt)}`);
@@ -448,7 +453,7 @@ function PostEditor({ id, presetAt, off, limits, onClose, onSaved }: { id?: numb
 
             {kind === "REELS" && (
               <>
-                <Field label="غلاف الريل (اختياري)" hint="صورة تظهر كغلاف. بدونها Meta تختار لقطة من الفيديو.">
+                <Field label={<span className="inline-flex items-center gap-1">غلاف الريل (اختياري) <InfoDot text="الصورة اللي تظهر على الريل في حسابك قبل ما أحد يشغّله. إذا ما اخترت، إنستقرام يختار لقطة من الفيديو تلقائيًا." /></span>} hint="صورة تظهر كغلاف. بدونها Meta تختار لقطة من الفيديو.">
                   <div className="flex items-center gap-2">
                     {cover?.url && <img src={cover.url} alt="" className="size-14 rounded-lg object-cover" />}
                     <button type="button" className="btn btn-ghost min-h-9 text-xs" onClick={() => pickCover.current?.click()}>{cover ? "تغيير" : "اختيار صورة"}</button>
@@ -456,7 +461,7 @@ function PostEditor({ id, presetAt, off, limits, onClose, onSaved }: { id?: numb
                     <input ref={pickCover} type="file" accept="image/*" hidden onChange={async (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return; const j = await toJpeg(f); if (cover?.serverId) setRemoved((r) => [...r, cover.serverId!]); setCover({ key: "cover", blob: j.blob, mime: "image/jpeg", url: URL.createObjectURL(j.blob), w: j.w, h: j.h }); }} />
                   </div>
                 </Field>
-                <Toggle checked={shareToFeed} onChange={setShareToFeed} label="يظهر في شبكة الحساب أيضًا" description="بدونها يظهر في تبويب الريلز فقط." />
+                <Toggle checked={shareToFeed} onChange={setShareToFeed} label={<span className="inline-flex items-center gap-1">يظهر في شبكة الحساب أيضًا <InfoDot text="شبكة الحساب = المربعات اللي تطلع في صفحتك الشخصية تحت البايو (تبويب المنشورات). مفعّل: الريل يظهر هناك وفي تبويب الريلز. مطفأ: يظهر في تبويب الريلز فقط وما يدخل شبكة صفحتك، لكنه يبقى منشور عادي يقدر الناس يشوفونه ويعلقون عليه." /></span>} description="بدونها يظهر في تبويب الريلز فقط." />
               </>
             )}
 
@@ -466,16 +471,27 @@ function PostEditor({ id, presetAt, off, limits, onClose, onSaved }: { id?: numb
               </Field>
             ) : <p className="muted text-xs">الستوري ما لها وصف عبر واجهة النشر.</p>}
 
-            <Field label="وقت النشر" hint="بتوقيت حسابك.">
+            <Field label={<span className="inline-flex items-center gap-1">وقت النشر <InfoDot text="بتوقيت حسابك (من الإعدادات). Meta ما فيها جدولة، فالنظام ينشر بنفسه في هذا الوقت — عادةً خلال دقيقة إلى دقيقتين، والفيديو ياخذ وقت أطول عشان Meta تعالجه. إذا فات الوقت بأكثر من 6 ساعات بدون ما ينتشر، يوقف ويبلغك." /></span>} hint="بتوقيت حسابك.">
               <DateTimeField value={when} onChange={(v) => v && setWhen(v)} label="وقت النشر" clearable={false} />
             </Field>
 
             {kind !== "STORY" && (
-              <Field label="تشغيل حملة على هذا المنشور (اختياري)" hint="أول ما ينتشر المنشور، تنربط الحملة فيه وتتفعّل تلقائيًا — والتعليقات من أول لحظة تنحسب.">
+              <Field
+                label={<span className="inline-flex items-center gap-1">تشغيل حملة على هذا المنشور (اختياري) <InfoDot text="تختار حملة رد تلقائي (أو تسوي وحدة جديدة) — وأول ما ينتشر المنشور، النظام يربطها فيه ويفعّلها بنفسه، فأي تعليق فيه الكلمة يوصله الرد من أول لحظة. بدون حملة: المنشور ينتشر عادي بدون ردود تلقائية." /></span>}
+                hint="أول ما ينتشر المنشور، تنربط الحملة فيه وتتفعّل تلقائيًا — والتعليقات من أول لحظة تنحسب."
+              >
                 <select className="input" value={campaign} onChange={(e) => setCampaign(e.target.value)}>
                   <option value="">بدون حملة</option>
                   {(campaigns ?? []).filter((c: any) => c.type === "comment").map((c: any) => <option key={c.id} value={c.id}>{c.name}{c.status === "active" ? " (نشطة)" : ""}</option>)}
                 </select>
+                <button
+                  type="button"
+                  className="btn btn-ghost mt-2 min-h-9 text-xs"
+                  disabled={!!busy}
+                  onClick={() => save(false, (pid) => { toast("حفظنا المنشور كمسودة — كمّل إعداد الحملة"); navigate(`/campaigns/new?for_post=${pid}`); })}
+                >
+                  <Icon name="plus" size={15} />حملة جديدة خاصة بهذا المنشور
+                </button>
               </Field>
             )}
 

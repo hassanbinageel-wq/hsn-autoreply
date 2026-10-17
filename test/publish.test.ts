@@ -235,4 +235,40 @@ describe("scheduled publishing", () => {
     expect((await post(id)).caption).toBe("عرض");
     void IG_ID;
   });
+
+  it("a campaign made for a scheduled post is linked to it and starts on it once published; usage is owner-only", async () => {
+    const id = await seedPost("IMAGE", { status: "draft" });
+    const call = async (p: string, h: Record<string, string> = {}, method = "GET", body?: unknown) => {
+      const r = await SELF.fetch(new Request(BASE + p, { method, headers: { "Content-Type": "application/json", ...h }, body: body === undefined ? undefined : JSON.stringify(body) }));
+      return { status: r.status, body: (await r.json().catch(() => null)) as any };
+    };
+    const login = async (u: string, pw: string) => ({ Authorization: `Bearer ${(await call("/api/auth/login", {}, "POST", { username: u, password: pw, client: "app" })).body.token}` });
+    await call("/api/auth/setup", {}, "POST", { setup_token: "test_setup_token_123456", username: "admin", password: "a-very-strong-password" });
+    const OWNER = await login("admin", "a-very-strong-password");
+    const created = await call("/api/campaigns", OWNER, "POST", {
+      name: "حملة المنشور", type: "comment", scope: "selected", media_ids: [], for_scheduled_post: id,
+      keywords: [{ keyword: "سعر", kind: "include", match_type: "contains" }], final_text: "السعر في الرابط https://example.com/p",
+    });
+    expect(created.status).toBe(200);
+    const cid = created.body.id;
+    expect((await post(id)).campaign_id).toBe(cid);
+    expect((await call(`/api/campaigns/${cid}`, OWNER)).body.scheduled_post.id).toBe(id);
+    // still a draft campaign until the post is live
+    expect((await DB.prepare("SELECT status FROM campaigns WHERE id = ?").bind(cid).first<any>()).status).toBe("draft");
+    await DB.prepare("UPDATE scheduled_posts SET status = 'scheduled' WHERE id = ?").bind(id).run();
+    await step(new FakePublish(), id);
+    expect((await DB.prepare("SELECT status FROM campaigns WHERE id = ?").bind(cid).first<any>()).status).toBe("active");
+    expect(await DB.prepare("SELECT 1 FROM campaign_media WHERE campaign_id = ? AND media_id = 'ig_media_1'").bind(cid).first()).toBeTruthy();
+    // a campaign for another customer's post is refused
+    const t = await call("/api/owner/tenants", OWNER, "POST", { name: "متجر ب", username: "shop_b", password: "another-strong-password" });
+    await call(`/api/owner/tenants/${t.body.id}/plan`, OWNER, "POST", { plan_id: "max", days: 30 });
+    const B = await login("shop_b", "another-strong-password");
+    const id2 = await seedPost("IMAGE", { status: "draft" });
+    const refused = await call("/api/campaigns", B, "POST", { name: "x", type: "comment", scope: "selected", media_ids: [], for_scheduled_post: id2, keywords: [{ keyword: "a", kind: "include", match_type: "contains" }], final_text: "x" });
+    expect(refused.status).toBe(404);
+    // usage meters: owner only
+    const u = await call("/api/owner/usage", OWNER);
+    expect(u.body.meters.map((m: any) => m.key)).toEqual(expect.arrayContaining(["requests", "writes", "d1_size", "r2_size"]));
+    expect((await call("/api/owner/usage", B)).status).toBe(403);
+  });
 });

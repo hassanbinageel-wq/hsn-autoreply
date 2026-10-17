@@ -244,12 +244,19 @@ export function CampaignWizard({ id }: { id: number | null }) {
   const [templates, setTemplates] = useState<any[]>([]);
   const [account, setAccount] = useState<any>(null);
   const [testText, setTestText] = useState("أبغى الكورس");
+  // A campaign made for a scheduled post (from the scheduling editor): it is linked to that post and turns on by
+  // itself once the post is published.
+  const [forPost, setForPost] = useState<{ id: number; publish_at?: number } | null>(() => {
+    const n = Number(new URLSearchParams(location.hash.split("?")[1] ?? "").get("for_post"));
+    return n > 0 ? { id: n } : null;
+  });
   const [sim, setSim] = useState<any>(null);
 
   useEffect(() => {
     if (id) {
       api(`/api/campaigns/${id}`)
-        .then((c) =>
+        .then((c) => {
+          if (c.scheduled_post) setForPost({ id: c.scheduled_post.id, publish_at: c.scheduled_post.publish_at });
           setForm({
             ...EMPTY,
             ...Object.fromEntries(Object.entries(c).filter(([, v]) => v !== null)),
@@ -267,11 +274,12 @@ export function CampaignWizard({ id }: { id: number | null }) {
             auto_new_since: c.auto_new_since ?? null,
             schedule_start: c.schedule_start,
             schedule_end: c.schedule_end,
-          } as Form),
-        )
+          } as Form);
+        })
         .catch((e) => toast(e.message, "bad"))
         .finally(() => setLoading(false));
     }
+    if (!id && forPost) setForm((f) => ({ ...f, type: "comment", scope: "selected", media_ids: [], auto_new_media: false, auto_new_since: null }));
     api("/api/media?kind=media").then((r) => setMedia(r.items)).catch(() => undefined);
     api("/api/media?kind=story").then((r) => setStories(r.items)).catch(() => undefined);
     api("/api/templates").then(setTemplates).catch(() => undefined);
@@ -295,6 +303,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
     public_reply_fallback_text: form.public_reply_fallback_text || null,
     media_ids: form.scope === "selected" ? form.media_ids : [],
     public_reply_enabled: isComment && form.public_reply_enabled,
+    ...(forPost ? { for_scheduled_post: forPost.id, type: "comment" as const, scope: "selected" as const } : {}),
   });
 
   const save = async (): Promise<number | null> => {
@@ -388,6 +397,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
           </Field>
         );
       case 1:
+        if (forPost) return <Alert tone="info">حملة تعليقات على المنشور المجدول.</Alert>;
         return (
           <div className="space-y-2">
             {(["comment", "story_reply", "story_mention"] as const).map((t) => (
@@ -406,6 +416,12 @@ export function CampaignWizard({ id }: { id: number | null }) {
           </div>
         );
       case 2:
+        if (forPost)
+          return (
+            <Alert tone="info">
+              هذي الحملة مربوطة بـ<b>منشور مجدول</b>{forPost.publish_at ? ` (${fmtTime(forPost.publish_at)})` : ""}. أول ما ينتشر، تنربط فيه وتتفعّل تلقائيًا — والتعليقات من أول لحظة تنحسب. ما تحتاج تختار منشور.
+            </Alert>
+          );
         if (form.type === "story_mention") return <Alert tone="info">حملات المنشن تعمل على جميع إشعارات المنشن المؤهلة — لا يوجد نطاق عناصر.</Alert>;
         return (
           <div className="space-y-3">
@@ -711,12 +727,30 @@ export function CampaignWizard({ id }: { id: number | null }) {
             )}
             {quick && (
               <div className="surface-2 space-y-1 rounded-xl p-3 text-sm">
-                <div><span className="muted">المنشور: </span>{form.scope === "all" ? "جميع المنشورات والريلز" : `${form.media_ids.length} منشور محدد`}</div>
+                <div><span className="muted">المنشور: </span>{forPost ? "المنشور المجدول (يتربط عند النشر)" : form.scope === "all" ? "جميع المنشورات والريلز" : `${form.media_ids.length} منشور محدد`}</div>
                 <div><span className="muted">الكلمات: </span>{form.match_all ? "أي تعليق" : form.keywords.filter((k) => k.kind === "include").map((k) => k.keyword).join("، ") || "— لم تُحدد كلمة"}</div>
                 <div><span className="muted">الرابط: </span><span dir="ltr">{form.final_url || "—"}</span></div>
               </div>
             )}
             {!account || account.status !== "active" ? <Alert tone="warn">لا يوجد حساب متصل ونشط — يمكنك الحفظ كمسودة، لكن التفعيل لن يعالج أحداثًا حقيقية قبل الربط.</Alert> : null}
+            {forPost ? (
+              <>
+                <Alert tone="info">الحملة تنحفظ الحين وتتفعّل تلقائيًا أول ما ينتشر المنشور المجدول. بعد الحفظ نرجعك للمنشور عشان تكمل جدولته.</Alert>
+                <button
+                  className="btn btn-primary"
+                  disabled={saving}
+                  onClick={async () => {
+                    const cid = await save();
+                    if (!cid) return;
+                    toast("تم حفظ الحملة وربطها بالمنشور ✅");
+                    navigate(`/schedule?post=${forPost.id}`);
+                  }}
+                >
+                  حفظ وربطها بالمنشور
+                </button>
+              </>
+            ) : (
+            <>
             <p>بعد التفعيل تُعالج الأحداث الجديدة فقط (الأحدث من لحظة التفعيل) ما لم تختر غير ذلك.</p>
             <div className="flex flex-wrap gap-2">
               <button
@@ -734,6 +768,8 @@ export function CampaignWizard({ id }: { id: number | null }) {
               </button>
               <button className="btn btn-ghost" disabled={saving} onClick={async () => (await save()) && navigate("/campaigns")}>حفظ كمسودة</button>
             </div>
+            </>
+            )}
           </div>
         );
     }

@@ -59,7 +59,7 @@ import { cacheMediaStmt } from "./services/media";
 import { markRead, recordMessage, refreshAvatars } from "./services/inbox";
 import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
 import { MESSAGING_WINDOW_MS } from "./engine/context";
-import { estimateUsage } from "./services/usage";
+import { estimateUsage, platformUsage } from "./services/usage";
 import { recoverMissedComments } from "./services/recover";
 import { auditCampaignComments } from "./services/audit";
 import { LIMITS, hasPublishScope, isImage, isVideo, optionalScopes, publishScopeMode, removeFiles, validatePost, verifyMediaUrl, wantsPublishScope, type PostKind } from "./services/publish";
@@ -695,6 +695,8 @@ export function createApp() {
     await audit(c.env.DB, T(c), c.get("session").username, p.data.allowed ? "follow_gate.allowed" : "follow_gate.disallowed", `tenant:${t.id}`);
     return c.json({ ok: true });
   });
+  // Cloudflare free-plan usage (requests, database writes and size, R2 storage) for the owner.
+  owner.get("/usage", async (c) => c.json(await platformUsage(c.env.DB, !!c.env.MEDIA)));
   // Plan of one customer, set by hand (e.g. a payment received outside the codes).
   owner.post("/tenants/:tid/plan", async (c) => {
     const t = await tenantParam(c);
@@ -1150,7 +1152,14 @@ export function createApp() {
       all(c.env.DB, "SELECT keyword, kind, match_type FROM campaign_keywords WHERE campaign_id = ? ORDER BY id", id),
       all<{ media_id: string }>(c.env.DB, "SELECT media_id FROM campaign_media WHERE campaign_id = ?", id),
     ]);
-    return c.json({ ...row, keywords, media_ids: media.map((m) => m.media_id) });
+    // The scheduled post this campaign waits for (until it is published and gets its id).
+    const scheduled_post = await first(
+      c.env.DB,
+      "SELECT id, kind, publish_at, status FROM scheduled_posts WHERE campaign_id = ? AND tenant_id = ? AND status NOT IN ('published','cancelled') ORDER BY publish_at LIMIT 1",
+      id,
+      T(c),
+    );
+    return c.json({ ...row, keywords, media_ids: media.map((m) => m.media_id), scheduled_post });
   });
 
   // Per-post performance of one campaign: comments, people reached, follow conversions, deliveries.
@@ -1643,6 +1652,16 @@ export function createApp() {
         ? d.auto_new_since ?? (id !== null ? (await first<{ v: number | null }>(c.env.DB, "SELECT auto_new_since AS v FROM campaigns WHERE id = ? AND tenant_id = ?", id, T(c)))?.v : null) ?? now
         : null,
     };
+    // A campaign for a scheduled post: the post must be the customer's and not live yet; the post's id is attached
+    // when it is published (see services/publish.ts).
+    const forPost = d.for_scheduled_post
+      ? await first<{ id: number }>(c.env.DB, "SELECT id FROM scheduled_posts WHERE id = ? AND tenant_id = ? AND status IN ('draft','scheduled','failed','cancelled') AND kind != 'STORY'", d.for_scheduled_post, T(c))
+      : null;
+    if (d.for_scheduled_post && !forPost) return apiError(c, 404, "post", "المنشور المجدول غير موجود أو انتشر");
+    if (forPost) {
+      cols.type = "comment";
+      cols.scope = "selected";
+    }
     const keys = Object.keys(cols);
     const before = id !== null ? await campaignSnapshot(c.env.DB, id) : null;
     let campaignId: number;
@@ -1668,6 +1687,7 @@ export function createApp() {
       ...d.keywords.map((k) => c.env.DB.prepare("INSERT INTO campaign_keywords (campaign_id, keyword, kind, match_type) VALUES (?, ?, ?, ?)").bind(campaignId, k.keyword, k.kind, k.match_type)),
       ...[...new Set(d.media_ids)].map((m) => c.env.DB.prepare("INSERT INTO campaign_media (campaign_id, media_id) VALUES (?, ?)").bind(campaignId, m)),
     ]);
+    if (forPost) await run(c.env.DB, "UPDATE scheduled_posts SET campaign_id = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", campaignId, now, forPost.id, T(c));
     await audit(c.env.DB, T(c), c.get("session").username, id ? "campaign.updated" : "campaign.created", String(campaignId));
     if (before) await recordUndo(c.env.DB, T(c), c.get("session").username, "campaign.update", `campaign:${campaignId}`, `تعديل الحملة «${before.row.name}»`, before);
     else await recordUndo(c.env.DB, T(c), c.get("session").username, "campaign.create", `campaign:${campaignId}`, `إنشاء الحملة «${d.name}»`, { id: campaignId });

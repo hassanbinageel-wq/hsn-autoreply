@@ -3,7 +3,7 @@ import type { NotifyKind } from "../engine/context";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
 import { all, first, getSetting, OWNER_TENANT, setSetting, settingKey } from "../lib/db";
 import { sanitize } from "../meta/client";
-import { estimateUsage } from "./usage";
+import { estimateUsage, platformUsage } from "./usage";
 import { getEntitlement } from "./plans";
 
 /**
@@ -262,6 +262,12 @@ async function runTenantNotifications(env: Env, tenantId: number, now: number): 
     if ((f?.n ?? 0) >= 3) await notify(env, tenantId, "failures", `⚠️ ${f!.n} رسائل فشلت أو نتيجتها غير مؤكدة خلال الساعة الأخيرة. افتح «السجل» في التطبيق للتفاصيل.`);
   }
   if (s.alert_usage && tenantId === OWNER_TENANT) {
+    // Storage (database, R2) once an hour: an early warning at 70%.
+    if (Math.floor(now / 60_000) % 60 === 0) {
+      const p = await platformUsage(env.DB, !!env.MEDIA, now);
+      const full = p.meters.filter((x) => !["requests", "writes"].includes(x.key) && x.pct >= 70);
+      if (full.length) await notify(env, tenantId, "usage", `⚠️ اقتربت من حد Cloudflare المجاني: ${full.map((x) => `${x.label} ${x.pct}%`).join("، ")}. التفاصيل في «الاستهلاك» بلوحة الإدارة.`);
+    }
     const u = await estimateUsage(env.DB, now);
     const worst = u.writes.pct >= u.requests.pct ? { name: "عمليات الكتابة في قاعدة البيانات", ...u.writes } : { name: "الطلبات", ...u.requests };
     if (worst.pct >= 80) {
