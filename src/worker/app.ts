@@ -62,7 +62,7 @@ import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
 import { claimStore, completeSallaOAuth, handleSallaWebhook, sallaAuthorizeUrl, sallaConfigured, syncProducts, verifySallaWebhook } from "./services/salla";
-import { storeAnalytics, storeProductCosts, storeProducts } from "./services/store";
+import { storeAnalytics, storeCampaignDetail, storeProductCosts, storeProducts } from "./services/store";
 import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
 import { auditCampaignComments } from "./services/audit";
@@ -1736,6 +1736,16 @@ export function createApp() {
     return c.json({ ok: true });
   });
   api.get("/store/products", async (c) => c.json({ items: await storeProducts(c.env.DB, T(c)) }));
+  api.get("/store/campaigns/:id", async (c) => {
+    const blocked = await planBlock(c, "store");
+    if (blocked) return blocked;
+    const id = idParam(c);
+    const f = await analyticsFilter(c);
+    if (!id || !f) return apiError(c, 422, "validation", "طلب غير صحيح");
+    const d = await storeCampaignDetail(c.env.DB, T(c), id, f);
+    if (!d) return apiError(c, 404, "not_found", "الحملة غير موجودة");
+    return c.json({ generated_at: Date.now(), filter: { from: f.from, to: f.to, tz_offset_min: f.tzOffsetMin }, ...d });
+  });
   // Product costs for profit: per product (entered here wins over Salla's cost price) and a default % of the price.
   api.get("/store/costs", async (c) => {
     const s = await first<{ default_cost_pct: number | null }>(c.env.DB, "SELECT default_cost_pct FROM stores WHERE tenant_id = ? AND status != 'disconnected' ORDER BY id DESC LIMIT 1", T(c));

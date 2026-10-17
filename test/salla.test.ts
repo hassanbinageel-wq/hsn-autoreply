@@ -2,7 +2,7 @@ import { exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DB, resetDb, seedAccount, TEST_ENV } from "./helpers";
 import { claimStore, completeSallaOAuth, handleSallaWebhook, parseOrder, sallaAuthorizeUrl, verifySallaWebhook } from "../src/worker/services/salla";
-import { normalizeUrl, storeAnalytics, storeProductCosts } from "../src/worker/services/store";
+import { normalizeUrl, storeAnalytics, storeCampaignDetail, storeProductCosts } from "../src/worker/services/store";
 
 const BASE = "https://hsn.example.workers.dev";
 const SELF = (exports as any).default as { fetch: (r: Request) => Promise<Response> };
@@ -167,6 +167,37 @@ describe("Salla store connection", () => {
     // costs are per customer
     expect((await storeProductCosts(DB, 1)).length).toBe(2);
     expect(await storeProductCosts(DB, 999)).toEqual([]);
+  });
+
+  it("shows one campaign's sales funnel (triggered → delivered → clicked → ordered with its code), money and orders — per customer", async () => {
+    await completeSallaOAuth(TEST_ENV, "c", 1, fakeSalla().f);
+    const now = Date.now();
+    const acc = await DB.prepare("SELECT id FROM instagram_accounts").first<any>();
+    const camp = await DB.prepare("INSERT INTO campaigns (tenant_id, name, type, status, final_text, store_coupon, created_at, updated_at) VALUES (1, 'ريل الجاكيت', 'comment', 'active', 'x', 'REEL18', ?, ?) RETURNING id").bind(now, now).first<any>();
+    // 4 people commented, 3 got the content, 2 clicked (one twice)
+    for (let i = 1; i <= 4; i++) {
+      const p = await DB.prepare("INSERT INTO participants (account_id, igsid, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id").bind(acc.id, `P${i}`, now, now).first<any>();
+      const fl = await DB.prepare(
+        `INSERT INTO conversation_flows (account_id, campaign_id, participant_id, trigger_type, source_comment_id, state, start_token, verify_token, private_reply_status, content_delivered_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'comment', ?, ?, ?, ?, 'accepted', ?, ?, ?) RETURNING id`,
+      ).bind(acc.id, camp.id, p.id, `cm${i}`, i <= 3 ? "content_sent" : "awaiting_follow", `st_${i}aaaaaaaaaaaaaaa`, `vt_${i}aaaaaaaaaaaaaaa`, i <= 3 ? now : null, now, now).first<any>();
+      if (i <= 2) await DB.prepare("INSERT INTO link_clicks (flow_id, account_id, clicked_at, os) VALUES (?, ?, ?, 'ios')").bind(fl.id, acc.id, now).run();
+      if (i === 1) await DB.prepare("INSERT INTO link_clicks (flow_id, account_id, clicked_at, os) VALUES (?, ?, ?, 'ios')").bind(fl.id, acc.id, now).run();
+    }
+    await handleSallaWebhook(TEST_ENV, orderPayload("o1", { coupon: "reel18", total: 120 }));
+    await handleSallaWebhook(TEST_ENV, orderPayload("o2", { coupon: "REEL18", total: 80, status: "canceled" }));
+    await handleSallaWebhook(TEST_ENV, orderPayload("o3", { total: 500 }));
+    const range = { from: now - 7 * DAY, to: now + 60_000, tzOffsetMin: 180 };
+    const d: any = await storeCampaignDetail(DB, 1, camp.id, range);
+    expect(d.funnel).toEqual({ triggered: 4, delivered: 3, clickers: 2, clicks: 3, orders: 1 });
+    expect(d.totals).toMatchObject({ orders: 1, revenue: 120, excluded: 1 });
+    // the campaign's orders, cancelled ones marked as not counted
+    expect(d.orders.map((o: any) => [o.total, o.counted]).sort()).toEqual([[120, true], [80, false]].sort());
+    expect(JSON.stringify(d.orders)).not.toContain("سارة");
+    // the store page lists it with its money; another customer cannot open it
+    const a: any = await storeAnalytics(DB, 1, range);
+    expect(a.campaigns.find((c: any) => c.id === camp.id)).toMatchObject({ orders: 1, revenue: 120, shared_coupon: false });
+    expect(await storeCampaignDetail(DB, 999, camp.id, range)).toBeNull();
   });
 
   it("refuses a callback without a valid state", async () => {

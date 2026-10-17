@@ -32,6 +32,7 @@ export function StorePage() {
   const [days, setDays] = useState(30);
   const [metric, setMetric] = useState<"orders" | "revenue">("orders");
   const [costs, setCosts] = useState(false);
+  const [openCampaign, setOpenCampaign] = useState<number | null>(null);
   const [off, setOff] = useState(180);
   const range = useMemo(() => {
     const now = Date.now();
@@ -85,6 +86,53 @@ export function StorePage() {
             <Tile label="العملاء" value={fmt(data.customers.known)} sub={data.customers.known ? `${fmt(data.customers.new)} جديد · ${fmt(data.customers.returning)} متكرر` : undefined} info="عملاء مميّزين في الفترة. «جديد» = أول طلب له من وقت ربط المتجر كان في هذي الفترة. ما نحفظ اسم العميل — بس رمز مشفّر يميّزه." />
           </div>
 
+          <Card
+            title={<span className="flex items-center gap-1.5">الحملات المربوطة بالمتجر <InfoDot text="الحملات اللي لها كود خصم أو رابط منتج من متجرك. اضغط على أي حملة عشان تشوف مسار البيع: من التعليق لين الطلب." /></span>}
+            action={<button className="btn btn-ghost min-h-9 text-xs" disabled={!data.campaigns.length} onClick={() => csv("store-campaigns.csv", ["الحملة", "كود الخصم", "المنتج", "استلموا المحتوى", "ضغطات", "طلبات بالكود", "مبيعات بالكود", "ربح تقديري"], data.campaigns.map((c: any) => ({ "الحملة": c.name, "كود الخصم": c.coupon ?? "", "المنتج": c.product?.name ?? "", "استلموا المحتوى": c.delivered, "ضغطات": c.clicks, "طلبات بالكود": c.orders ?? "", "مبيعات بالكود": c.revenue ?? "", "ربح تقديري": c.profit ?? "" })))}>⬇️ CSV</button>}
+          >
+            {!data.campaigns.length ? (
+              <p className="muted text-sm">ما فيه حملات مربوطة بالمتجر. في محرر الحملة ← خطوة «الرسالة»: اختر منتج من متجرك كرابط، وحط <b>كود خصم خاص بالحملة</b> عشان تنحسب طلباتها بدقة.</p>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {data.campaigns.map((c: any) => (
+                  <button key={c.id} type="button" onClick={() => setOpenCampaign(c.id)} className="surface-2 group rounded-2xl border border-transparent p-3 text-right transition hover:border-violet-500/40 focus-visible:border-violet-500">
+                    <div className="flex items-center gap-3">
+                      {c.product?.image_url ? <img src={c.product.image_url} alt="" className="size-12 shrink-0 rounded-xl object-cover" loading="lazy" /> : <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-[var(--surface)] text-xl">🎯</span>}
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-semibold">{c.name}</div>
+                        <div className="muted flex flex-wrap items-center gap-1.5 text-[11px]">
+                          {c.coupon ? <span className="chip bg-[var(--surface)] font-mono" dir="ltr">{c.coupon}</span> : <span className="text-amber-600">بدون كود خصم</span>}
+                          {c.product && <span className="truncate">🛍️ {c.product.name}</span>}
+                        </div>
+                      </div>
+                      <Icon name="chev" size={16} className="muted -rotate-90 transition group-hover:-translate-x-0.5" />
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                      <Mini label="طلبات" value={c.orders === null ? "—" : fmt(c.orders)} />
+                      <Mini label="مبيعات" value={c.revenue === null ? "—" : money(c.revenue, cur)} />
+                      <Mini label="ربح" value={c.profit === null ? "—" : money(c.profit, cur)} tone={c.profit !== null ? (c.profit < 0 ? "bad" : "good") : undefined} />
+                    </div>
+                    <div className="muted mt-2 text-[11px]">{fmt(c.delivered)} استلموا · {fmt(c.clickers)} ضغطوا{c.orders !== null ? ` · تحويل ${pct(c.orders, c.clickers)}` : ""}</div>
+                    {c.shared_coupon && <div className="mt-1 text-[11px] text-amber-600">⚠️ نفس الكود مستخدم في حملة ثانية — الأرقام مشتركة بينهم</div>}
+                  </button>
+                ))}
+              </div>
+            )}
+            {data.unlinked?.length > 0 && (
+              <details className="mt-3">
+                <summary className="muted cursor-pointer text-xs">حملات غير مربوطة بالمتجر ({data.unlinked.length}) — ما نقدر نحسب لها مبيعات</summary>
+                <ul className="mt-2 divide-y divide-[var(--border)]">
+                  {data.unlinked.map((c: any) => (
+                    <li key={c.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                      <span className="truncate">{c.name}</span>
+                      <Link to={`/campaigns/${c.id}`} className="btn btn-ghost min-h-8 shrink-0 px-3 text-xs">اربطها بكود خصم</Link>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </Card>
+
           {data.costs.products > 0 && data.costs.with_cost === 0 && data.costs.default_pct === null && (
             <Alert tone="info">عشان نحسب <b>الربح</b>: أدخل تكلفة كل منتج أو نسبة تكلفة تقريبية من زر «تكاليف المنتجات». إذا كنت مدخل «سعر التكلفة» في منتجات سلة نجيبه تلقائيًا مع تحديث المنتجات.</Alert>
           )}
@@ -93,38 +141,6 @@ export function StorePage() {
             {data.series.some((d: any) => d.orders) ? (
               <AreaChart labels={labels} series={[metric === "orders" ? { label: "طلبات", color: "#7c3aed", values: data.series.map((d: any) => d.orders) } : { label: "مبيعات", color: "#10b981", values: data.series.map((d: any) => Math.round(d.revenue)) }]} />
             ) : <p className="muted py-6 text-center text-sm">ما فيه طلبات في هذي الفترة بعد.</p>}
-          </Card>
-
-          <Card
-            title="الحملات: من التعليق للطلب"
-            action={<button className="btn btn-ghost min-h-9 text-xs" disabled={!data.campaigns.length} onClick={() => csv("store-campaigns.csv", ["الحملة", "كود الخصم", "المنتج", "استلموا المحتوى", "ضغطات", "طلبات بالكود", "مبيعات بالكود"], data.campaigns.map((c: any) => ({ "الحملة": c.name, "كود الخصم": c.coupon ?? "", "المنتج": c.product?.name ?? "", "استلموا المحتوى": c.delivered, "ضغطات": c.clicks, "طلبات بالكود": c.orders ?? "", "مبيعات بالكود": c.revenue ?? "" })))}>⬇️ CSV</button>}
-          >
-            {!data.campaigns.length ? (
-              <p className="muted text-sm">ما فيه حملات مربوطة بالمتجر. في محرر الحملة ← خطوة «الرسالة»: اختر منتج من متجرك كرابط، وحط <b>كود خصم خاص بالحملة</b> عشان تنحسب طلباتها بدقة.</p>
-            ) : (
-              <div className="-mx-4 overflow-x-auto sm:-mx-5">
-                <table className="w-full min-w-[680px] text-sm">
-                  <thead><tr className="muted bg-[var(--surface-2)] text-right text-xs">
-                    <th className="px-4 py-2 font-semibold">الحملة</th><th className="px-2 py-2 font-semibold">الكود</th><th className="px-2 py-2 font-semibold">استلموا</th>
-                    <th className="px-2 py-2 font-semibold">ضغطات</th><th className="px-2 py-2 font-semibold">طلبات</th><th className="px-2 py-2 font-semibold">مبيعات</th><th className="px-2 py-2 font-semibold">تحويل</th>
-                  </tr></thead>
-                  <tbody>
-                    {data.campaigns.map((c: any) => (
-                      <tr key={c.id} className="border-t border-[var(--border)]">
-                        <td className="px-4 py-2"><Link to={`/campaigns/${c.id}`} className="font-semibold hover:underline">{c.name}</Link>{c.product && <div className="muted text-[11px]">🛍️ {c.product.name}</div>}</td>
-                        <td className="px-2 py-2 text-xs" dir="ltr">{c.coupon ?? <span className="muted">—</span>}</td>
-                        <td className="px-2 py-2 tabular-nums">{fmt(c.delivered)}</td>
-                        <td className="px-2 py-2 tabular-nums">{fmt(c.clicks)}</td>
-                        <td className="px-2 py-2 tabular-nums font-semibold">{c.orders ?? <span className="muted" title="بدون كود خصم ما نقدر ننسب الطلبات للحملة">—</span>}</td>
-                        <td className="px-2 py-2 tabular-nums">{c.revenue !== null ? money(c.revenue, cur) : "—"}</td>
-                        <td className="px-2 py-2 tabular-nums">{c.orders !== null ? pct(c.orders, c.clicks) : "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <p className="muted mt-2 text-xs">«تحويل» = طلبات بالكود ÷ ضغطات الرابط. «—» تعني الحملة ما عندها كود خصم، فما نقدر ننسب لها طلبات بدقة.</p>
           </Card>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -173,6 +189,7 @@ export function StorePage() {
           </Card>
         </>
       )}
+      {openCampaign !== null && <CampaignStore id={openCampaign} range={range} onClose={() => setOpenCampaign(null)} />}
       {costs && <CostsEditor cur={cur} onClose={(saved) => { setCosts(false); if (saved) reload(); }} />}
     </div>
   );
@@ -267,6 +284,123 @@ function CostsEditor({ cur, onClose }: { cur: string; onClose: (saved: boolean) 
             <button className="btn btn-ghost" onClick={() => onClose(false)}>إلغاء</button>
             <button className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "…" : "حفظ"}</button>
           </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function Mini({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {
+  return (
+    <div className="rounded-xl bg-[var(--surface)] px-1.5 py-1.5">
+      <div className="muted text-[10px]">{label}</div>
+      <div className={`truncate text-sm font-bold tabular-nums ${tone === "bad" ? "text-rose-600" : tone === "good" ? "text-emerald-600 dark:text-emerald-400" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+const ORDERED_INFO =
+  "تنحسب هنا الطلبات اللي استخدمت كود خصم الحملة فقط — هذي الطريقة الوحيدة اللي نقدر نتأكد فيها إن الطلب جا من الحملة. الشخص اللي ضغط الرابط واشترى بدون ما يكتب الكود ما يظهر هنا، فنسبة الشراء الحقيقية ممكن تكون أعلى شوي من المعروض.";
+
+/** One campaign in the store: the sales funnel, money, daily orders and its orders, against the customer's averages. */
+function CampaignStore({ id, range, onClose }: { id: number; range: { from: number; to: number }; onClose: () => void }) {
+  const { data, error } = useAsync(() => api<any>(`/api/store/campaigns/${id}?from=${range.from}&to=${range.to}`), [id, range.from, range.to]);
+  const cur = data?.totals?.currency ?? "SAR";
+  const f = data?.funnel;
+  const steps = f
+    ? [
+        { key: "triggered", label: "علّقوا / تفاعلوا", value: f.triggered, info: "أشخاص مختلفين شغّلوا الحملة (تعليق أو رد على ستوري) في الفترة." },
+        { key: "delivered", label: "وصلتهم الرسالة", value: f.delivered, info: "أشخاص وصلتهم الرسالة الأخيرة اللي فيها الرابط والكود." },
+        { key: "clickers", label: "ضغطوا الرابط", value: f.clickers, info: "أشخاص مختلفين ضغطوا الرابط في الرسالة (مرة أو أكثر)." },
+        { key: "orders", label: "طلبوا بالكود", value: f.orders, info: ORDERED_INFO },
+      ]
+    : [];
+  const max = Math.max(1, ...steps.map((s) => s.value ?? 0));
+  // Where people stop, in plain words.
+  const hint = (() => {
+    if (!f || !data.campaign.coupon) return null;
+    if (f.triggered >= 10 && f.delivered / f.triggered < 0.7) return { t: "كثير ممن تفاعلوا ما وصلتهم الرسالة", d: "راجع سجل الحملة: ممكن حساباتهم مقفلة للرسائل أو انتهت مهلة الرد عند ميتا." };
+    if (f.delivered >= 10 && f.clickers / f.delivered < 0.15) return { t: "الرسالة توصل لكن قليل يضغطون الرابط", d: "جرّب رسالة أقصر، وحط العرض والسعر في أولها، وخلّ الرابط واضح." };
+    if (f.clickers >= 10 && (f.orders ?? 0) / f.clickers < 0.03) return { t: "الناس تضغط وتدخل المتجر لكن قليل يشترون", d: "غالبًا السبب في صفحة المنتج أو السعر أو الشحن أو المخزون — أو إنهم يشترون بدون ما يكتبون الكود. ذكّرهم بالكود في الرسالة." };
+    return null;
+  })();
+  const rate = (a: number | null, b: number) => (a === null || !b ? null : a / b);
+  const cmp = (v: number | null, avg: number | null) => {
+    if (v === null || avg === null || data.averages.campaigns < 2) return null;
+    return { text: `متوسط حملاتك ${Math.round(avg * 1000) / 10}%`, up: v >= avg };
+  };
+  const labels = (data?.series ?? []).map((d: any) => new Intl.DateTimeFormat("ar-SA-u-ca-gregory-nu-latn", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(d.day * DAY + 12 * 3_600_000)));
+  return (
+    <Modal open onClose={onClose} title={data?.campaign?.name ?? "الحملة في المتجر"} center>
+      {error ? <Alert tone="bad">{error}</Alert> : !data ? <Spinner /> : (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            {data.product?.image_url ? <img src={data.product.image_url} alt="" className="size-14 rounded-xl object-cover" /> : <span className="surface-2 grid size-14 place-items-center rounded-xl text-2xl">🎯</span>}
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-semibold">{data.product?.name ?? "بدون منتج مربوط"}</div>
+              <div className="muted text-xs">{data.campaign.coupon ? <>الكود <span className="font-mono" dir="ltr">{data.campaign.coupon}</span></> : "بدون كود خصم"} · {fmtDate(range.from)} — {fmtDate(range.to)}</div>
+            </div>
+            <Link to={`/campaigns/${id}/stats`} className="btn btn-ghost min-h-9 text-xs" onClick={onClose}>إحصائيات الحملة الكاملة</Link>
+          </div>
+          {!data.campaign.coupon && <Alert tone="warn">الحملة ما لها كود خصم، فنعرض المسار لين «ضغطوا الرابط» بس. أضف كود من محرر الحملة عشان تنحسب الطلبات.</Alert>}
+          {data.campaign.shared_coupon && <Alert tone="warn">نفس الكود مستخدم في حملة ثانية — الطلبات تنحسب للحملتين ولا نقدر نفرّقها. الأفضل كود خاص لكل حملة.</Alert>}
+
+          <section aria-label="مسار البيع">
+            <h3 className="mb-2 flex items-center gap-1.5 text-sm font-bold">مسار البيع <InfoDot text="كل خطوة: كم شخص وصلها، ونسبتهم من الخطوة اللي قبلها. المكان اللي ينزل فيه العدد كثير هو وين تخسر الناس." /></h3>
+            <ol className="space-y-2.5">
+              {steps.map((s, i) => {
+                const prev = i ? steps[i - 1].value : null;
+                const r = i && s.value !== null && prev ? s.value / prev : null;
+                const c = i === 2 ? cmp(rate(f.clickers, f.delivered), data.averages.click_rate) : i === 3 ? cmp(rate(f.orders, f.clickers), data.averages.order_rate) : null;
+                return (
+                  <li key={s.key}>
+                    <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
+                      <span className="flex items-center gap-1 font-semibold">{s.label}<InfoDot text={s.info} /></span>
+                      <span className="tabular-nums">
+                        <b>{s.value === null ? "—" : fmt(s.value)}</b>
+                        {r !== null && <span className="muted text-xs"> · {Math.round(r * 1000) / 10}% من اللي قبلها</span>}
+                      </span>
+                    </div>
+                    <div className="h-3 overflow-hidden rounded-full bg-[var(--surface-2)]"><div className="grad h-full rounded-full" style={{ width: `${s.value ? Math.max(2, (s.value / max) * 100) : 0}%` }} /></div>
+                    {c && <div className={`mt-0.5 text-[11px] ${c.up ? "text-emerald-600" : "text-rose-600"}`}>{c.up ? "▲ أعلى من" : "▼ أقل من"} {c.text}</div>}
+                  </li>
+                );
+              })}
+            </ol>
+            {hint && <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><b>💡 {hint.t}</b><p className="muted mt-0.5 text-xs">{hint.d}</p></div>}
+          </section>
+
+          {data.campaign.coupon && (
+            <div className="grid grid-cols-2 gap-2">
+              <Tile label="المبيعات" value={money(data.totals.revenue, cur)} info="مجموع طلبات الحملة (بالكود) بدون الملغية والمسترجعة." sub={data.totals.excluded ? `${data.totals.excluded} ملغي/مسترجع مستبعد` : undefined} />
+              <Tile label="الربح التقديري" value={data.totals.profit === null ? "—" : money(data.totals.profit, cur)} tone={data.totals.profit !== null && data.totals.profit < 0 ? "bad" : "good"} info="صافي مبيعات الحملة ناقص تكلفة المنتجات — يظهر لما تكون التكلفة معروفة." sub={data.totals.margin !== null ? `هامش ${Math.round(data.totals.margin * 100)}%` : undefined} />
+              <Tile label="متوسط الطلب" value={money(data.totals.aov, cur)} info="مبيعات الحملة ÷ طلباتها، مقارنة بمتوسط طلب المتجر كله." sub={data.averages.aov ? `متوسط المتجر ${money(data.averages.aov, cur)}` : undefined} />
+              <Tile label="القطع" value={fmt(data.totals.units)} info="عدد القطع في طلبات الحملة." />
+            </div>
+          )}
+
+          {data.series.some((d: any) => d.orders) && (
+            <div>
+              <h3 className="mb-1 text-sm font-bold">طلبات الحملة يوميًا</h3>
+              <AreaChart height={160} labels={labels} series={[{ label: "طلبات", color: "#7c3aed", values: data.series.map((d: any) => d.orders) }]} />
+            </div>
+          )}
+
+          {data.orders.length > 0 && (
+            <div>
+              <h3 className="mb-1 text-sm font-bold">طلبات الحملة <span className="muted text-xs font-normal">(بدون بيانات العملاء)</span></h3>
+              <div className="max-h-56 divide-y divide-[var(--border)] overflow-y-auto">
+                {data.orders.map((o: any) => (
+                  <div key={o.reference} className={`flex items-center gap-3 py-2 text-sm ${o.counted ? "" : "opacity-60"}`}>
+                    <span className="font-mono text-xs" dir="ltr">#{o.reference}</span>
+                    <span className="muted min-w-0 flex-1 truncate text-xs">{STATUS_AR[(o.status ?? "").toLowerCase()] ?? o.status ?? ""} · {o.units} قطعة</span>
+                    <span className="muted text-xs">{fmtDate(o.ordered_at)}</span>
+                    <span className="w-20 text-left font-semibold tabular-nums">{money(o.total, cur)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </Modal>

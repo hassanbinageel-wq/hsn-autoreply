@@ -176,6 +176,8 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
   );
 
   const coupons = countBy(counted, (o) => o.coupon, (o) => o.total ?? 0);
+  const ordersByCode = new Map<string, OrderRow[]>();
+  for (const o of counted) if (o.coupon) ordersByCode.set(o.coupon, [...(ordersByCode.get(o.coupon) ?? []), o]);
   const byCoupon = new Map(coupons.map((c) => [c.key, c]));
   const campaignRows = campaigns
     .map((c) => {
@@ -183,12 +185,15 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
       const fromCode = code ? byCoupon.get(code) ?? { orders: 0, revenue: 0 } : null;
       const product = productByUrl.get(normalizeUrl(c.final_url) ?? "") ?? null;
       const cl = clicks.find((x) => x.campaign_id === c.id);
+      const money = code ? summarize(ordersByCode.get(code) ?? [], productById, store.default_cost_pct) : null;
       return {
         id: c.id,
         name: c.name,
         status: c.status,
         coupon: code,
-        product: product ? { id: product.product_id, name: product.name } : null,
+        product: product ? { id: product.product_id, name: product.name, image_url: product.image_url } : null,
+        profit: money?.profit ?? null,
+        shared_coupon: code ? campaigns.filter((x) => x.id !== c.id && x.store_coupon?.trim().toUpperCase() === code).length > 0 : false,
         delivered: delivered.find((x) => x.campaign_id === c.id)?.people ?? 0,
         clicks: cl?.clicks ?? 0,
         clickers: cl?.people ?? 0,
@@ -197,6 +202,8 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
       };
     })
     .filter((c) => c.coupon || c.product || c.clicks > 0);
+  const linkedIds = new Set(campaignRows.map((c) => c.id));
+  const unlinked = campaigns.filter((c) => !linkedIds.has(c.id) && ["active", "paused"].includes(c.status)).slice(0, 20).map((c) => ({ id: c.id, name: c.name, status: c.status }));
   const attributedCodes = new Set(campaignRows.map((c) => c.coupon).filter(Boolean));
   const attributed = counted.filter((o) => o.coupon && attributedCodes.has(o.coupon));
   const campaignByCode = new Map(campaignRows.filter((c) => c.coupon).map((c) => [c.coupon!, { id: c.id, name: c.name }]));
@@ -293,7 +300,109 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
     statuses: countBy(orders, (o) => (o.status ?? "").toLowerCase() || null).slice(0, 10),
     coupons: coupons.slice(0, 15).map((c) => ({ code: c.key, orders: c.orders, revenue: c.revenue, campaign: campaignByCode.get(c.key) ?? null })),
     campaigns: campaignRows.sort((a, b) => (b.orders ?? -1) - (a.orders ?? -1) || b.clicks - a.clicks),
+    unlinked,
     products: productRows,
+    series: Array.from({ length: Math.max(0, Math.min(400, lastDay - firstDay + 1)) }, (_, i) => ({ day: firstDay + i, ...(series.get(firstDay + i) ?? { orders: 0, revenue: 0 }) })),
+  };
+}
+
+/** Funnel counts of one campaign in a period: people who triggered it, got the content, clicked the link. */
+async function campaignFunnel(db: D1Database, ids: number[], from: number, to: number) {
+  if (!ids.length) return new Map<number, { triggered: number; delivered: number; clickers: number; clicks: number }>();
+  const q = ids.map(() => "?").join(",");
+  const [trig, del, clk] = await Promise.all([
+    all<{ campaign_id: number; n: number }>(db, `SELECT campaign_id, COUNT(DISTINCT participant_id) AS n FROM conversation_flows WHERE campaign_id IN (${q}) AND is_demo = 0 AND created_at >= ? AND created_at < ? GROUP BY campaign_id`, ...ids, from, to),
+    all<{ campaign_id: number; n: number }>(db, `SELECT campaign_id, COUNT(DISTINCT participant_id) AS n FROM conversation_flows WHERE campaign_id IN (${q}) AND is_demo = 0 AND state = 'content_sent' AND content_delivered_at >= ? AND content_delivered_at < ? GROUP BY campaign_id`, ...ids, from, to),
+    all<{ campaign_id: number; n: number; clicks: number }>(db, `SELECT f.campaign_id, COUNT(DISTINCT f.participant_id) AS n, COUNT(*) AS clicks FROM link_clicks k JOIN conversation_flows f ON f.id = k.flow_id WHERE f.campaign_id IN (${q}) AND f.is_demo = 0 AND k.clicked_at >= ? AND k.clicked_at < ? GROUP BY f.campaign_id`, ...ids, from, to),
+  ]);
+  const m = new Map<number, { triggered: number; delivered: number; clickers: number; clicks: number }>();
+  for (const id of ids) {
+    const c = clk.find((x) => x.campaign_id === id);
+    m.set(id, { triggered: trig.find((x) => x.campaign_id === id)?.n ?? 0, delivered: del.find((x) => x.campaign_id === id)?.n ?? 0, clickers: c?.n ?? 0, clicks: c?.clicks ?? 0 });
+  }
+  return m;
+}
+
+/**
+ * One campaign in the store: its sales funnel (triggered → got the content → clicked → ordered with its code), money,
+ * daily orders and its orders (no shopper data), compared with the averages of the customer's other coded campaigns.
+ */
+export async function storeCampaignDetail(db: D1Database, t: number, campaignId: number, f: { from: number; to: number; tzOffsetMin: number }) {
+  const c = await first<{ id: number; name: string; status: string; type: string; store_coupon: string | null; final_url: string | null }>(
+    db,
+    "SELECT id, name, status, type, store_coupon, final_url FROM campaigns WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL",
+    campaignId,
+    t,
+  );
+  if (!c) return null;
+  const store = await first<{ id: number; default_cost_pct: number | null }>(
+    db,
+    "SELECT id, default_cost_pct FROM stores WHERE tenant_id = ? AND platform = 'salla' AND status != 'disconnected' ORDER BY id DESC LIMIT 1",
+    t,
+  );
+  if (!store) return { campaign: c, store: null };
+  const code = c.store_coupon?.trim().toUpperCase() || null;
+  const products = await all<Product>(db, "SELECT product_id, name, url, image_url, price, status, cost, cost_manual FROM store_products WHERE store_id = ?", store.id);
+  const productById = new Map(products.map((p) => [p.product_id, p]));
+  const product = products.find((p) => p.url && normalizeUrl(p.url) === normalizeUrl(c.final_url)) ?? null;
+  const all_ = await all<OrderRow & { reference: string | null }>(
+    db,
+    `SELECT order_id, reference, status, total, currency, coupon, items, ordered_at, discount, shipping, tax, payment_method, customer_hash, city FROM store_orders
+      WHERE store_id = ? AND deleted = 0 AND ordered_at >= ? AND ordered_at < ? ORDER BY ordered_at DESC LIMIT 20000`,
+    store.id,
+    f.from,
+    f.to,
+  );
+  const isCounted = (o: OrderRow) => !NOT_COUNTED.includes((o.status ?? "").toLowerCase());
+  const mine = code ? all_.filter((o) => o.coupon === code) : [];
+  const counted = mine.filter(isCounted);
+  const money = summarize(counted, productById, store.default_cost_pct);
+
+  // Averages over the customer's campaigns that have a discount code (the fair comparison for this one).
+  const coded = await all<{ id: number; store_coupon: string }>(db, "SELECT id, store_coupon FROM campaigns WHERE tenant_id = ? AND deleted_at IS NULL AND COALESCE(store_coupon, '') != ''", t);
+  const funnels = await campaignFunnel(db, [...new Set([c.id, ...coded.map((x) => x.id)])], f.from, f.to);
+  const fn = funnels.get(c.id)!;
+  let sDel = 0, sClk = 0, sOrd = 0;
+  const countedAll = all_.filter(isCounted);
+  for (const x of coded) {
+    const xf = funnels.get(x.id)!;
+    sDel += xf.delivered;
+    sClk += xf.clickers;
+    sOrd += countedAll.filter((o) => o.coupon === x.store_coupon.trim().toUpperCase()).length;
+  }
+  const storeAov = countedAll.length ? countedAll.reduce((a, o) => a + (o.total ?? 0), 0) / countedAll.length : null;
+
+  const series = new Map<number, { orders: number; revenue: number }>();
+  for (const o of counted) {
+    const day = Math.floor((o.ordered_at + f.tzOffsetMin * 60_000) / DAY);
+    const x = series.get(day) ?? { orders: 0, revenue: 0 };
+    x.orders++;
+    x.revenue += o.total ?? 0;
+    series.set(day, x);
+  }
+  const firstDay = Math.floor((f.from + f.tzOffsetMin * 60_000) / DAY);
+  const lastDay = Math.floor((f.to - 1 + f.tzOffsetMin * 60_000) / DAY);
+  const others = code ? coded.filter((x) => x.id !== c.id && x.store_coupon.trim().toUpperCase() === code).length : 0;
+  return {
+    campaign: { ...c, coupon: code, shared_coupon: others > 0 },
+    store: { id: store.id },
+    product: product ? { id: product.product_id, name: product.name, image_url: product.image_url, url: product.url, price: product.price } : null,
+    funnel: { ...fn, orders: code ? counted.length : null },
+    totals: { ...money, currency: counted.find((o) => o.currency)?.currency ?? "SAR", excluded: mine.length - counted.length },
+    averages: {
+      click_rate: sDel ? sClk / sDel : null,
+      order_rate: sClk ? sOrd / sClk : null,
+      aov: storeAov,
+      campaigns: coded.length,
+    },
+    orders: mine.slice(0, 50).map((o) => ({
+      reference: o.reference ?? o.order_id,
+      total: o.total,
+      status: o.status,
+      ordered_at: o.ordered_at,
+      units: parseItems(o.items).reduce((a, i) => a + (i.qty || 1), 0),
+      counted: isCounted(o),
+    })),
     series: Array.from({ length: Math.max(0, Math.min(400, lastDay - firstDay + 1)) }, (_, i) => ({ day: firstDay + i, ...(series.get(firstDay + i) ?? { orders: 0, revenue: 0 }) })),
   };
 }
