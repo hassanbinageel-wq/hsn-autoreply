@@ -88,7 +88,7 @@ export async function cloudflareUsage(env: Env, now = Date.now(), force = false,
     }),
     run("r2_storage", async () => {
       const a = await gql(f, env, `query($a: string!, $s: Time!, $e: Time!) { viewer { accounts(filter: { accountTag: $a }) {
-        r2StorageAdaptiveGroups(limit: 100, filter: { datetime_geq: $s, datetime_lt: $e }, orderBy: [datetime_DESC]) { max { payloadSize metadataSize objectCount } } } } }`, { a: acct, s: new Date(now - 2 * 86_400_000).toISOString(), e: nowIso });
+        r2StorageAdaptiveGroups(limit: 1, filter: { datetime_geq: $s, datetime_lt: $e }, orderBy: [datetime_DESC]) { max { payloadSize metadataSize objectCount } dimensions { datetime } } } } }`, { a: acct, s: new Date(now - 2 * 86_400_000).toISOString(), e: nowIso });
       const g = a.r2StorageAdaptiveGroups?.[0];
       if (g) {
         out.r2_bytes = (g.max?.payloadSize ?? 0) + (g.max?.metadataSize ?? 0);

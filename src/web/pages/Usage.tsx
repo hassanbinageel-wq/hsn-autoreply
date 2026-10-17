@@ -34,7 +34,12 @@ export function UsagePage() {
             <Alert tone="good">كل شي بعيد عن الحدود المجانية.</Alert>
           )}
           {data.cf_connected ? (
-            data.cf_errors?.length ? <Alert tone="warn">بعض الأرقام من Cloudflare ما وصلت ({data.cf_errors.length})، فظهرت تقديرية بدلها.</Alert> : <p className="muted text-xs">✅ الأرقام مأخوذة من إحصاءات Cloudflare الرسمية (تتحدث كل 10 دقائق).</p>
+            data.cf_errors?.length ? (
+              <Alert tone="warn">
+                بعض الأرقام من Cloudflare ما وصلت ({data.cf_errors.length})، فظهرت تقديرية بدلها:
+                <ul className="mt-1 list-disc pr-5 text-xs" dir="ltr" style={{ textAlign: "left" }}>{data.cf_errors.map((e: string) => <li key={e}>{e}</li>)}</ul>
+              </Alert>
+            ) : <p className="muted text-xs">✅ الأرقام مأخوذة من إحصاءات Cloudflare الرسمية (تتحدث كل 10 دقائق).</p>
           ) : (
             <Alert tone="info">الأرقام اليومية تقديرية. لأرقام دقيقة من Cloudflare: أضف توكن قراءة الإحصاءات في GitHub Secrets باسم <span dir="ltr">CF_ANALYTICS_TOKEN</span> (الخطوات في المحادثة / docs/DEPLOY.md).</Alert>
           )}
@@ -90,7 +95,7 @@ function DomainCard({ d }: { d: any }) {
             <div className="muted text-xs">ينتهي {fmtDate(d.expires_at)}</div>
           </div>
         ) : (
-          <span className="muted text-xs">{d.error ?? "التاريخ غير متاح"}</span>
+          <span className="muted max-w-full text-xs">{d.error ?? "التاريخ غير متاح"}</span>
         )}
       </div>
     </Card>

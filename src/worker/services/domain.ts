@@ -40,20 +40,36 @@ export async function domainInfo(env: Env, now = Date.now(), force = false): Pro
   if (!name) return null;
   const cached = await getSetting<DomainInfo | null>(env.DB, OWNER_TENANT, "domain_info", null);
   if (!force && cached && cached.name === name && now - cached.checked_at < 86_400_000) return cached;
-  const tld = name.split(".").pop();
-  // The registry's RDAP server for the TLD, with rdap.org (a public redirector) as the fallback.
-  const urls = [...(tld === "online" ? [`https://rdap.centralnic.com/online/domain/${name}`] : []), `https://rdap.org/domain/${name}`];
+  const tld = name.split(".").pop()!;
+  const headers = { Accept: "application/rdap+json, application/json", "User-Agent": "HSN-AutoReply/1.0 (+https://hsnreply.online)" };
+  // The registry's RDAP server from IANA's official bootstrap file, then known fallbacks.
+  const bases: string[] = [];
+  try {
+    const boot = (await (await fetch("https://data.iana.org/rdap/dns.json", { headers })).json()) as { services?: Array<[string[], string[]]> };
+    for (const [tlds, urls] of boot.services ?? []) if (tlds.includes(tld)) bases.push(...urls);
+  } catch {
+    /* fallbacks below */
+  }
+  if (tld === "online") bases.push("https://rdap.centralnic.com/online/");
+  bases.push("https://rdap.org/");
   let info: DomainInfo = { name, registered_at: null, expires_at: null, registrar: null, checked_at: now, error: "تعذّر قراءة سجل الدومين" };
-  for (const u of urls) {
+  const tried: string[] = [];
+  for (const base of [...new Set(bases)]) {
+    const u = `${base.replace(/\/$/, "")}/domain/${name}`;
     try {
-      const r = await fetch(u, { headers: { Accept: "application/rdap+json" }, redirect: "follow" });
-      if (!r.ok) continue;
+      const r = await fetch(u, { headers, redirect: "follow" });
+      if (!r.ok) {
+        tried.push(`${new URL(u).hostname}: HTTP ${r.status}`);
+        continue;
+      }
       info = parseRdap(name, await r.json(), now);
       if (info.expires_at) break;
-    } catch {
-      /* next */
+      tried.push(`${new URL(u).hostname}: بدون تاريخ انتهاء`);
+    } catch (e) {
+      tried.push(`${new URL(u).hostname}: ${(e as Error).message.slice(0, 60)}`);
     }
   }
+  if (!info.expires_at) info.error = `تعذّر قراءة سجل الدومين (${tried.join("، ") || "بدون رد"})`;
   await setSetting(env.DB, OWNER_TENANT, "domain_info", info, now);
   return info;
 }
