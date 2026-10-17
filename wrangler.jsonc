@@ -27,6 +27,9 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Media for scheduled publishing (private bucket; files are served to Meta through short-lived signed links
+  // on /m/* and deleted after the post is published).
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "hsn-media" }],
   "triggers": {
     // every minute: durable job queue; daily 03:17 UTC: token refresh + retention cleanup
     "crons": ["* * * * *", "17 3 * * *"]

@@ -1,6 +1,8 @@
 export interface Env {
   DB: D1Database;
   ASSETS?: Fetcher;
+  /** R2 bucket for scheduled-publishing media (optional until the owner enables R2). */
+  MEDIA?: R2Bucket;
 
   // ---- vars (wrangler.jsonc) ----
   INSTAGRAM_APP_ID: string;
