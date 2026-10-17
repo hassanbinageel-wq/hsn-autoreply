@@ -149,6 +149,12 @@ export function ConnectionPage() {
               <span><code className="text-sm" dir="ltr">{s}</code><br /><span className="muted text-sm">{SCOPE_AR[s]}</span></span>
             </li>
           ))}
+          {connected && a.scopes.includes("instagram_business_manage_insights") && (
+            <li className="flex items-start gap-2">
+              <span>✅</span>
+              <span><code className="text-sm" dir="ltr">instagram_business_manage_insights</code> <span className="chip surface-2 muted text-[10px]">اختيارية</span><br /><span className="muted text-sm">أرقام إنستقرام في صفحة التحليلات (مشاهدات، وصول، جمهور)</span></span>
+            </li>
+          )}
         </ul>
         {missing.length > 0 && <div className="mt-3"><Alert tone="warn">صلاحيات ناقصة: {missing.join(", ")} — أعد الربط ووافق عليها.</Alert></div>}
       </Card>

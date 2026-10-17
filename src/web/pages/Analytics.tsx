@@ -353,6 +353,7 @@ function InstagramMetricsCard({ ig, onChanged, periodLabel }: { ig: any; onChang
         {st?.at ? <>آخر قراءة: {fmtTime(st.at)}. </> : "ما صارت قراءة بعد — أول قراءة خلال ساعة أو اضغط «تحديث». "}
         أرقام Meta ممكن تتأخر لين 48 ساعة. «—» = غير متاحة من Meta، مو صفر. المنشورات اللي نُشرت في الفترة: {fmt(t?.posts ?? 0)}.
       </p>
+      {!t?.posts && <div className="mb-3"><Alert tone="info">ما فيه منشورات نُشرت داخل هذي الفترة، فالمربعات فاضية. اختر «آخر 30 يومًا» أو فترة أطول لتشوف منشوراتك.</Alert></div>}
       {st && !st.ok && st.reason && <Alert tone="warn">{STOP_REASON[st.reason] ?? st.message}</Alert>}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {tiles.map(([label, k, info]) => (
