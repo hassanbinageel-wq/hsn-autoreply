@@ -1744,7 +1744,7 @@ export function createApp() {
     if (blocked) return blocked;
     const f = await analyticsFilter(c);
     if (!f) return apiError(c, 422, "validation", "فترة غير صحيحة");
-    return c.json({ generated_at: Date.now(), ...(await postSales(c.env.DB, T(c), f)) });
+    return c.json({ generated_at: Date.now(), ...(await postSales(c.env.DB, T(c), f, { storeOnly: c.req.query("store_only") === "1" })) });
   });
   api.get("/growth/best-times", async (c) => {
     const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Aden");

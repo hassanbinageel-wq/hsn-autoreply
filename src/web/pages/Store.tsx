@@ -413,10 +413,16 @@ const KIND_AR: Record<string, string> = { reel: "ريل", carousel: "ألبوم"
 
 /** Posts ranked by the orders they brought: order (code) → campaign → post, exact only for one-post campaigns. */
 function PostsBySales({ range, cur }: { range: { from: number; to: number }; cur: string }) {
-  const { data } = useAsync(() => api<any>(`/api/growth/posts?from=${range.from}&to=${range.to}`).catch(() => null), [range.from, range.to]);
-  if (!data || (!data.posts.length && !data.groups.length)) return null;
+  const { data } = useAsync(() => api<any>(`/api/growth/posts?from=${range.from}&to=${range.to}&store_only=1`).catch(() => null), [range.from, range.to]);
+  if (!data) return null;
+  if (!data.posts.length && !data.groups.length)
+    return (
+      <Card title="المنشورات حسب المبيعات">
+        <p className="muted text-sm">ما فيه منشورات عليها حملة مربوطة بالمتجر. اربط حملة المنشور بكود خصم أو رابط منتج من متجرك عشان يظهر هنا وتنحسب طلباته.</p>
+      </Card>
+    );
   return (
-    <Card title={<span className="flex items-center gap-1.5">المنشورات حسب المبيعات <InfoDot text="أي منشور أو ريل جاب طلبات فعلية: الطلب استخدم كود حملة، والحملة شغّالة على هذا المنشور. الطلبات تنحسب للمنشور بدقة لما تكون حملته على منشور واحد بس؛ الحملة اللي على أكثر من منشور تنعرض تحت كمجموعة لأننا ما نقدر نعرف أي منشور منها باع. التفاعل والضغطات لكل منشور دقيقة دائمًا." /></span>}>
+    <Card title={<span className="flex items-center gap-1.5">المنشورات حسب المبيعات <InfoDot text="المنشورات اللي عليها حملة مربوطة بالمتجر (فيها كود خصم أو رابط منتج من متجرك). الطلب ينحسب للمنشور لما يستخدم كود حملته. الطلبات تنحسب للمنشور بدقة لما تكون حملته على منشور واحد بس؛ الحملة اللي على أكثر من منشور تنعرض تحت كمجموعة لأننا ما نقدر نعرف أي منشور منها باع. التفاعل والضغطات لكل منشور دقيقة دائمًا." /></span>}>
       <div className="-mx-4 overflow-x-auto sm:-mx-5">
         <table className="w-full min-w-[640px] text-sm">
           <thead><tr className="muted bg-[var(--surface-2)] text-right text-xs">

@@ -1,6 +1,6 @@
 import { all, first } from "../lib/db";
 import { analyticsHeatmap, type AnalyticsFilter } from "./analytics";
-import { NOT_COUNTED, storeAnalytics, summarize, type OrderRow, type Product } from "./store";
+import { normalizeUrl, NOT_COUNTED, storeAnalytics, summarize, type OrderRow, type Product } from "./store";
 
 /**
  * Growth views built only from data this system already keeps (no new permissions):
@@ -19,16 +19,16 @@ const isCounted = (o: { status: string | null }) => !NOT_COUNTED.includes((o.sta
 
 // ---- posts by sales ----------------------------------------------------------------------------------------------
 
-export async function postSales(db: D1Database, t: number, f: { from: number; to: number }) {
+export async function postSales(db: D1Database, t: number, f: { from: number; to: number }, opts: { storeOnly?: boolean } = {}) {
   const store = await first<{ id: number; default_cost_pct: number | null }>(
     db,
     "SELECT id, default_cost_pct FROM stores WHERE tenant_id = ? AND platform = 'salla' AND status != 'disconnected' ORDER BY id DESC LIMIT 1",
     t,
   );
   // Campaigns with a code and the posts they run on.
-  const camps = await all<{ id: number; name: string; store_coupon: string | null }>(
+  const camps = await all<{ id: number; name: string; store_coupon: string | null; final_url: string | null }>(
     db,
-    "SELECT id, name, store_coupon FROM campaigns WHERE tenant_id = ? AND deleted_at IS NULL",
+    "SELECT id, name, store_coupon, final_url FROM campaigns WHERE tenant_id = ? AND deleted_at IS NULL",
     t,
   );
   const links = await all<{ campaign_id: number; media_id: string }>(
@@ -88,7 +88,16 @@ export async function postSales(db: D1Database, t: number, f: { from: number; to
       groups.push({ campaign: { id: c.id, name: c.name }, posts: posts.length, orders: money.orders, revenue: money.revenue });
     }
   }
-  const ids = [...new Set([...perPost.keys(), ...activity.map((a) => a.media_id)])];
+  // Store-linked posts: run a campaign that has a discount code or links to one of the store's products.
+  const productUrls = new Set([...productById.values()].map((p) => normalizeUrl(p.url)).filter(Boolean));
+  const linkedPosts = new Map<string, Array<{ id: number; name: string }>>();
+  for (const c of camps) {
+    if (!c.store_coupon?.trim() && !(c.final_url && productUrls.has(normalizeUrl(c.final_url)))) continue;
+    for (const m of postsOf.get(c.id) ?? []) linkedPosts.set(m, [...(linkedPosts.get(m) ?? []), { id: c.id, name: c.name }]);
+  }
+  const ids = opts.storeOnly
+    ? [...linkedPosts.keys()]
+    : [...new Set([...perPost.keys(), ...activity.map((a) => a.media_id)])];
   if (!ids.length) return { store: !!store, posts: [], groups };
   const q = ids.map(() => "?").join(",");
   const media = await all<{ media_id: string; caption: string | null; thumbnail_url: string | null; permalink: string | null; media_type: string | null; media_product_type: string | null; posted_at: number | null }>(
@@ -126,7 +135,7 @@ export async function postSales(db: D1Database, t: number, f: { from: number; to
         orders: s ? s.orders : null,
         revenue: s ? s.revenue : null,
         profit: s?.profit ?? null,
-        campaigns: s?.campaigns ?? [],
+        campaigns: s?.campaigns ?? linkedPosts.get(id) ?? [],
       };
     })
     .sort((a, b) => (b.revenue ?? -1) - (a.revenue ?? -1) || b.clickers - a.clickers || b.people - a.people)

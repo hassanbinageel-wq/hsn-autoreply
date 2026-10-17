@@ -1,7 +1,10 @@
 import { api } from "../api";
 import { Link } from "../App";
 import { Icon } from "../components/Icon";
-import { Alert, Card, InfoDot, PageHeader, Spinner, fmtDate, useAsync } from "../components/ui";
+import { Alert, Card, InfoDot, PageHeader, Spinner, Toggle, fmtDate, toast, useAsync } from "../components/ui";
+import { useState } from "react";
+import { isNative } from "../platform";
+import { saveFile } from "../lib/save";
 
 /** The weekly report: last 7 days against the 7 before. Printable (the browser's "Save as PDF") and shareable. */
 const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
@@ -33,6 +36,21 @@ function Metric({ label, now, prev, f = fmt }: { label: string; now: number | nu
 
 export function ReportPage() {
   const { data, error } = useAsync(() => api<any>("/api/growth/weekly"), []);
+  const [busy, setBusy] = useState(false);
+  const download = async () => {
+    const el = document.getElementById("print-root");
+    if (!el || !data) return;
+    setBusy(true);
+    try {
+      const { elementToPdf } = await import("../lib/elementPdf");
+      const day = new Date(data.to).toISOString().slice(0, 10);
+      await saveFile(await elementToPdf(el), `HSN-weekly-report-${day}.pdf`, "التقرير الأسبوعي");
+    } catch (e: any) {
+      toast(e?.message || "تعذر إنشاء ملف PDF", "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
   const a = data?.activity;
   const s = data?.store;
   const cur = s?.currency ?? "SAR";
@@ -41,7 +59,12 @@ export function ReportPage() {
       <PageHeader
         title="التقرير الأسبوعي"
         subtitle={data ? `${fmtDate(data.from)} — ${fmtDate(data.to)} · مقارنة بالأسبوع اللي قبله` : "آخر 7 أيام مقارنة بالأسبوع اللي قبله"}
-        actions={<button className="btn btn-ghost no-print" onClick={() => window.print()}><Icon name="download" size={17} />حفظ PDF / طباعة</button>}
+        actions={
+          <div className="no-print flex flex-wrap gap-2">
+            <button className="btn btn-primary" disabled={busy || !data} onClick={download}><Icon name="download" size={17} />{busy ? "جاري التجهيز…" : "تحميل PDF"}</button>
+            {!isNative && <button className="btn btn-ghost" disabled={!data} onClick={() => window.print()}>🖨️ طباعة</button>}
+          </div>
+        }
       />
       {error ? <Alert tone="bad">{error}</Alert> : !data ? <Spinner /> : (
         <>
@@ -96,8 +119,43 @@ export function ReportPage() {
               ) : <p className="muted text-sm">ما فيه تفاعل على المنشورات هذا الأسبوع.</p>}
             </Card>
           </div>
-          <p className="muted no-print text-xs">يوصلك هذا التقرير كل سبت على تيليجرام إذا فعّلت الإشعارات من <Link to="/settings" className="font-semibold text-[var(--primary)]">الإعدادات</Link>.</p>
+          <WeeklyTelegram />
         </>
+      )}
+    </div>
+  );
+}
+
+/** On/off for the Saturday Telegram copy of this report, right here (same setting as in Settings › Notifications). */
+function WeeklyTelegram() {
+  const { data, reload } = useAsync(() => api<any>("/api/notifications").catch(() => null), []);
+  const [busy, setBusy] = useState(false);
+  if (!data) return null;
+  const s = data.settings;
+  const ready = !!s?.enabled && !!s?.chat_id;
+  return (
+    <div className="card no-print p-4">
+      {ready ? (
+        <Toggle
+          checked={s.weekly_report !== false}
+          disabled={busy}
+          onChange={async (v) => {
+            setBusy(true);
+            try {
+              await api("/api/notifications", { method: "PUT", body: { weekly_report: v } });
+              toast(v ? "بيوصلك التقرير كل سبت على تيليجرام" : "تم إيقاف إرسال التقرير الأسبوعي");
+              reload();
+            } catch (e: any) {
+              toast(e.message, "bad");
+            } finally {
+              setBusy(false);
+            }
+          }}
+          label="إرسال هذا التقرير كل سبت على تيليجرام"
+          description={`يوصلك الساعة ${String(s.report_hour).padStart(2, "0")}:00 مع رابط التقرير الكامل.`}
+        />
+      ) : (
+        <p className="muted text-sm">تبغى يوصلك هذا التقرير كل سبت على تيليجرام؟ فعّل إشعارات تيليجرام من <Link to="/settings" className="font-semibold text-[var(--primary)]">الإعدادات</Link>.</p>
       )}
     </div>
   );

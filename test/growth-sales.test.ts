@@ -48,6 +48,10 @@ describe("growth: posts by sales, best time to post, weekly report", () => {
     expect(r.posts[0]).toMatchObject({ media_id: "reel1", orders: 2, revenue: 150, kind: "reel", caption: "منشور reel1" });
     expect(r.posts.find((p) => p.media_id === "img2")).toBeUndefined(); // no single-post campaign, no activity
     expect(r.groups).toEqual([{ campaign: expect.objectContaining({ name: "صور العبايات" }), posts: 2, orders: 1, revenue: 300 }]);
+    // store page: only posts whose campaign has a code or links a store product
+    const linked = await postSales(DB, 1, { from: now - 7 * DAY, to: now + 60_000 }, { storeOnly: true });
+    expect(linked.posts.map((p) => p.media_id).sort()).toEqual(["img2", "img3", "reel1"]);
+    expect(linked.posts.find((p) => p.media_id === "img2")).toMatchObject({ orders: null, campaigns: [expect.objectContaining({ name: "صور العبايات" })] });
     expect(await postSales(DB, 999, { from: now - 7 * DAY, to: now + 60_000 })).toMatchObject({ store: false, posts: [], groups: [] });
   });
 
