@@ -4,6 +4,7 @@ import type { SVGProps } from "react";
 const PATHS: Record<string, string> = {
   calendar: `<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 3v3M16 3v3M7.5 13.5h2M11 13.5h2M14.5 13.5h2M7.5 17h2M11 17h2"/>`,
   chart: `<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>`,
+  bag: `<path d="M5 8h14l-1 12H6L5 8z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>`,
   grip: `<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>`,
   scan: `<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/>`,
   fingerprint: `<path d="M12 11v3a8 8 0 0 1-1.2 4.2M8.5 8.6A4 4 0 0 1 16 11v2a12 12 0 0 1-.6 3.8M4.5 15.5A12 12 0 0 0 5 11a7 7 0 0 1 11.6-5.3M19 11a16 16 0 0 1-.5 4M8 11v1a10 10 0 0 1-1.5 5.3"/>`,

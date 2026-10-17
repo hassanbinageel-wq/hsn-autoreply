@@ -5,7 +5,7 @@ import { navigate } from "../App";
 import { renderTemplate, claimsDelivery, claimsFollowRequired, contentLinkButton, publicReplyVariants, pickVariant, SAFE_PUBLIC_REPLIES, MAX_PUBLIC_VARIANTS, TEMPLATE_VARIABLES } from "../../shared/template";
 import { evaluateMatch } from "../../shared/match";
 import { AR_LABELS } from "../../shared/states";
-import { Alert, Card, Field, Spinner, Toggle, currentTz, toast, fmtTime } from "../components/ui";
+import { Alert, Card, Field, InfoDot, Spinner, Toggle, currentTz, toast, fmtTime } from "../components/ui";
 import { PhonePreview, type ChatMsg, type CommentMsg } from "../components/PhonePreview";
 import { Icon } from "../components/Icon";
 
@@ -42,6 +42,7 @@ type Form = {
   verify_cooldown_seconds: number;
   process_old_events: boolean;
   track_clicks: boolean;
+  store_coupon: string;
   follow_reminder_minutes: number;
   auto_new_media: boolean;
   auto_new_reels_only: boolean;
@@ -67,6 +68,7 @@ const EMPTY: Form = {
   verify_error_text: "ما قدرنا نتحقق من المتابعة الآن ⏳ جرّب تكتب «تحقق» بعد شوي.",
   final_text: "تفضل 🎁 {{content_url}}",
   final_url: "",
+  store_coupon: "",
   public_reply_enabled: false,
   public_reply_text: SAFE_PUBLIC_REPLIES.join("\n"),
   public_reply_on_dm_fail: "none",
@@ -251,6 +253,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
     return n > 0 ? { id: n } : null;
   });
   const [sim, setSim] = useState<any>(null);
+  const [storeItems, setStoreItems] = useState<any[]>([]);
 
   useEffect(() => {
     if (id) {
@@ -283,6 +286,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
     api("/api/media?kind=media").then((r) => setMedia(r.items)).catch(() => undefined);
     api("/api/media?kind=story").then((r) => setStories(r.items)).catch(() => undefined);
     api("/api/templates").then(setTemplates).catch(() => undefined);
+    api("/api/store/products").then((r) => setStoreItems(r.items ?? [])).catch(() => undefined);
     api("/api/account").then((r) => setAccount(r.account)).catch(() => undefined);
   }, [id]);
 
@@ -299,6 +303,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
     ...form,
     name: form.name.trim() || autoName,
     final_url: form.final_url.trim() || null,
+    store_coupon: form.store_coupon.trim() || null,
     opening_text: form.opening_text || null,
     public_reply_fallback_text: form.public_reply_fallback_text || null,
     media_ids: form.scope === "selected" ? form.media_ids : [],
@@ -595,7 +600,21 @@ export function CampaignWizard({ id }: { id: number | null }) {
             </Field>
             <Field label="رابط المحتوى (https)">
               <input className="input" dir="ltr" value={form.final_url} onChange={(e) => set("final_url", e.target.value)} placeholder="https://..." />
+              {storeItems.length > 0 && (
+                <select className="input mt-2" value="" onChange={(e) => e.target.value && set("final_url", e.target.value)} aria-label="اختيار منتج من متجرك">
+                  <option value="">🛍️ أو اختر منتج من متجرك…</option>
+                  {storeItems.filter((p) => p.url).map((p) => <option key={p.product_id} value={p.url}>{p.name}</option>)}
+                </select>
+              )}
             </Field>
+            {storeItems.length > 0 && (
+              <Field
+                label={<span className="inline-flex items-center gap-1">كود خصم الحملة في متجرك (اختياري) <InfoDot text="أنشئ كود خصم في متجرك (سلة) خاص بهذي الحملة واكتبه هنا، وحطه في نص الرسالة. أي طلب يستخدم الكود ينحسب لهذي الحملة في «تحليل المتجر» — وهذي أدق طريقة تعرف فيها كم طلب ومبيعات جابت الحملة." /></span>}
+                hint="مثال: REEL18 — حروف إنجليزية وأرقام."
+              >
+                <input className="input" dir="ltr" value={form.store_coupon} onChange={(e) => set("store_coupon", e.target.value.replace(/[^A-Za-z0-9_-]/g, "").toUpperCase())} placeholder="REEL18" maxLength={60} />
+              </Field>
+            )}
             <Toggle
               checked={form.track_clicks}
               onChange={(v) => set("track_clicks", v)}

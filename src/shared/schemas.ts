@@ -66,6 +66,8 @@ export const campaignInputSchema = z
     auto_new_since: z.number().int().nullable().optional(),
     /** A campaign made for a scheduled post: it gets the post's id once the post is published. */
     for_scheduled_post: z.number().int().positive().optional(),
+    /** Discount code in the customer's store: orders using it count for this campaign. */
+    store_coupon: z.string().trim().max(60).regex(/^[A-Za-z0-9_-]*$/, "كود الخصم: حروف إنجليزية وأرقام فقط").nullable().optional(),
   })
   .superRefine((c, ctx) => {
     if (!c.match_all && !c.keywords.some((k) => k.kind === "include") && c.type !== "story_mention") {

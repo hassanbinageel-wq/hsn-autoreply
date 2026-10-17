@@ -3,6 +3,7 @@ import { askConfirm, askChoice } from "../components/Confirm";
 import { useState } from "react";
 import { api } from "../api";
 import { isNative, openOAuth } from "../platform";
+import { StoreConnect } from "../components/StoreConnect";
 import { AccountAvatar } from "../components/UserAvatar";
 import { Toggle, Alert, Badge, Card, PageHeader, Spinner, fmtTime, toast, useAsync } from "../components/ui";
 
@@ -140,6 +141,8 @@ export function ConnectionPage() {
           </ul>
         </Card>
       )}
+
+      <StoreConnect />
 
       <Card title="الصلاحيات">
         <ul className="space-y-2">

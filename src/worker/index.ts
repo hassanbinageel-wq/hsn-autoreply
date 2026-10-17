@@ -2,6 +2,7 @@ import { createApp } from "./app";
 import { runFollowRecheck } from "./services/retention";
 import { runInsights } from "./services/insights";
 import { cleanupScheduledFiles, runPublisher } from "./services/publish";
+import { refreshStoreTokens } from "./services/salla";
 import type { Env } from "./env";
 import { all, getSetting, OWNER_TENANT, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
@@ -91,6 +92,7 @@ export default {
           await refreshExpiringTokens(env).catch((e) => console.error("token refresh", sanitize(String(e))));
           await refreshAccountProfiles(env).catch((e) => console.error("profile refresh", sanitize(String(e))));
           await cleanup(env.DB).catch((e) => console.error("cleanup", sanitize(String(e))));
+          await refreshStoreTokens(env).catch((e) => console.error("store tokens", sanitize(String(e))));
           await cleanupScheduledFiles(env).catch((e) => console.error("schedule files", sanitize(String(e))));
           await remindExpiringSubscriptions(env).catch((e) => console.error("expiry reminders", sanitize(String(e))));
         })(),

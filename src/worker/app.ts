@@ -61,6 +61,8 @@ import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegra
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
+import { completeSallaOAuth, handleSallaWebhook, sallaAuthorizeUrl, sallaConfigured, syncProducts, verifySallaWebhook } from "./services/salla";
+import { storeAnalytics, storeProducts } from "./services/store";
 import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
 import { auditCampaignComments } from "./services/audit";
@@ -305,6 +307,47 @@ export function createApp() {
       return c.text(challenge, 200);
     }
     return c.text("forbidden", 403);
+  });
+
+
+  // ---- Salla store connection (official OAuth "Custom mode") and webhooks
+  app.get("/oauth/salla/callback", async (c) => {
+    const state = c.req.query("state") ?? "";
+    const code = c.req.query("code") ?? "";
+    const now = Date.now();
+    c.header("Content-Security-Policy", PAGE_CSP);
+    c.header("Cache-Control", "no-store");
+    const st = state
+      ? await first<{ tenant_id: number; client: "web" | "app" }>(
+          c.env.DB,
+          "UPDATE store_oauth_states SET used_at = ? WHERE state_hash = ? AND used_at IS NULL AND expires_at > ? AND platform = 'salla' RETURNING tenant_id, client",
+          now,
+          await sha256Hex(state),
+          now,
+        )
+      : null;
+    if (!st) return c.html(oauthResultPage(false, "رابط ربط المتجر غير صالح أو منتهي. ابدأ الربط من صفحة الربط في التطبيق (الربط من متجر تطبيقات سلة مباشرة يحتاج تبدأه من حسابك في HSN).", "web", c.env.APP_DEEP_LINK), 400);
+    if (c.req.query("error") || !code) return c.html(oauthResultPage(false, "تم إلغاء ربط المتجر أو رفض الصلاحيات.", st.client, c.env.APP_DEEP_LINK), 400);
+    const r = await completeSallaOAuth(c.env, code, st.tenant_id);
+    if (!r.ok) {
+      await audit(c.env.DB, st.tenant_id, "system", "store.connect_failed", undefined, { detail: sanitize(r.error ?? "") });
+      return c.html(oauthResultPage(false, `تعذر ربط متجر سلة: ${sanitize(r.error ?? "")}`, st.client, c.env.APP_DEEP_LINK), 502);
+    }
+    c.executionCtx.waitUntil(syncProducts(c.env, r.storeId!).catch((e) => console.error("salla sync", sanitize(String(e)))));
+    return c.html(oauthResultPage(true, `تم ربط متجر «${r.name ?? "سلة"}» بنجاح. المنتجات تنجلب الحين، والطلبات الجديدة توصل تلقائيًا.`, st.client, c.env.APP_DEEP_LINK));
+  });
+  app.post("/webhooks/salla", async (c) => {
+    const raw = new Uint8Array(await c.req.arrayBuffer());
+    if (raw.byteLength > 1_000_000) return c.json({ ok: false }, 413);
+    if (!(await verifySallaWebhook(c.env, raw, c.req.header("X-Salla-Signature") ?? null, c.req.header("Authorization") ?? null))) return c.json({ ok: false }, 401);
+    let body: any;
+    try {
+      body = JSON.parse(new TextDecoder().decode(raw));
+    } catch {
+      return c.json({ ok: false }, 400);
+    }
+    const out = await handleSallaWebhook(c.env, body).catch((e) => (console.error("salla webhook", sanitize(String(e))), "error"));
+    return c.json({ ok: out !== "error", result: out }, out === "error" ? 500 : 200);
   });
 
   app.post("/webhooks/instagram", async (c) => {
@@ -1613,6 +1656,59 @@ export function createApp() {
     return c.json({ ok: true });
   });
 
+
+  // ---- Online store (Salla): connect, products, store analytics
+  const publicStore = (s: any) => s && { id: s.id, platform: s.platform, name: s.name, domain: s.domain, avatar_url: s.avatar_url, status: s.status, last_error: s.last_error, products_synced_at: s.products_synced_at, connected_at: s.connected_at };
+  api.get("/stores", async (c) => {
+    const rows = await all(c.env.DB, "SELECT * FROM stores WHERE tenant_id = ? AND status != 'disconnected' ORDER BY id DESC", T(c));
+    const e = await ENT(c);
+    return c.json({ stores: rows.map(publicStore), salla_configured: sallaConfigured(c.env), plan: !!e.active && !!e.limits.store });
+  });
+  api.post("/stores/salla/connect", async (c) => {
+    const blocked = await planBlock(c, "store");
+    if (blocked) return blocked;
+    if (!sallaConfigured(c.env)) return apiError(c, 503, "not_configured", "ربط سلة غير مفعّل على الخادم بعد");
+    const p = await parseBody(c, z.object({ client: z.enum(["web", "app"]).default("web") }));
+    if (!p.ok) return p.res;
+    const state = randomToken(32);
+    const now = Date.now();
+    await run(c.env.DB, "DELETE FROM store_oauth_states WHERE expires_at < ?", now);
+    await run(
+      c.env.DB,
+      "INSERT INTO store_oauth_states (state_hash, tenant_id, user_id, platform, client, created_at, expires_at) VALUES (?, ?, ?, 'salla', ?, ?, ?)",
+      await sha256Hex(state),
+      T(c),
+      c.get("session").user_id,
+      p.data.client,
+      now,
+      now + 15 * 60_000,
+    );
+    return c.json({ url: sallaAuthorizeUrl(c.env, state) });
+  });
+  api.post("/stores/:id/sync", async (c) => {
+    const id = idParam(c);
+    const s = id && (await first<{ id: number }>(c.env.DB, "SELECT id FROM stores WHERE id = ? AND tenant_id = ? AND status = 'active'", id, T(c)));
+    if (!s) return apiError(c, 404, "not_found", "المتجر غير موجود");
+    if (!(await rateLimit(c.env.DB, `store_sync:${T(c)}`, 6, 3_600_000))) return apiError(c, 429, "rate_limited", "حدّثت كثير — جرّب بعد شوي");
+    return c.json({ ok: true, products: await syncProducts(c.env, s.id) });
+  });
+  api.delete("/stores/:id", async (c) => {
+    const id = idParam(c);
+    const s = id && (await first<{ id: number; merchant_id: string }>(c.env.DB, "SELECT id, merchant_id FROM stores WHERE id = ? AND tenant_id = ?", id, T(c)));
+    if (!s) return apiError(c, 404, "not_found", "المتجر غير موجود");
+    await run(c.env.DB, "UPDATE stores SET status = 'disconnected', token_ciphertext = NULL, token_iv = NULL, refresh_ciphertext = NULL, refresh_iv = NULL, updated_at = ? WHERE id = ?", Date.now(), s.id);
+    await audit(c.env.DB, T(c), c.get("session").username, "store.disconnected", s.merchant_id);
+    return c.json({ ok: true });
+  });
+  api.get("/store/products", async (c) => c.json({ items: await storeProducts(c.env.DB, T(c)) }));
+  api.get("/store/analytics", async (c) => {
+    const blocked = await planBlock(c, "store");
+    if (blocked) return blocked;
+    const f = await analyticsFilter(c);
+    if (!f) return apiError(c, 422, "validation", "فترة غير صحيحة");
+    return c.json({ generated_at: Date.now(), filter: { from: f.from, to: f.to, tz_offset_min: f.tzOffsetMin }, ...(await storeAnalytics(c.env.DB, T(c), f)) });
+  });
+
   api.get("/campaigns/:id/people", async (c) => {
     const blocked = await planBlock(c, "campaign_stats");
     if (blocked) return blocked;
@@ -1710,6 +1806,7 @@ export function createApp() {
       max_verify_attempts: d.max_verify_attempts, verify_cooldown_seconds: d.verify_cooldown_seconds, process_old_events: d.process_old_events ? 1 : 0,
       track_clicks: d.track_clicks ? 1 : 0, follow_reminder_minutes: d.follow_reminder_minutes,
       auto_new_media: d.auto_new_media && d.type === "comment" ? 1 : 0, auto_new_reels_only: d.auto_new_reels_only ? 1 : 0,
+      store_coupon: d.store_coupon ? d.store_coupon.toUpperCase() : null,
       // "New posts from now on": the starting point is kept once set (or taken from the request), else it is now.
       auto_new_since: d.auto_new_media && d.type === "comment"
         ? d.auto_new_since ?? (id !== null ? (await first<{ v: number | null }>(c.env.DB, "SELECT auto_new_since AS v FROM campaigns WHERE id = ? AND tenant_id = ?", id, T(c)))?.v : null) ?? now

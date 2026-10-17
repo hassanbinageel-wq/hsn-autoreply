@@ -18,6 +18,8 @@ export interface PlanLimits {
   undo: boolean;
   /** Scheduled publishing of posts / reels / stories (needs the content-publishing permission). */
   scheduling?: boolean;
+  /** Store connection (Salla) and store analytics: orders and revenue per campaign / product. */
+  store?: boolean;
 }
 
 /** The owner's own workspace: everything, no expiry. */
@@ -38,6 +40,7 @@ export const OWNER_LIMITS: PlanLimits = {
   campaign_stats: true,
   undo: true,
   scheduling: true,
+  store: true,
 };
 
 export const FEATURE_LABELS: Record<string, string> = {
@@ -53,6 +56,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   campaign_stats: "إحصائيات مفصلة لكل حملة",
   undo: "التراجع عن آخر العمليات",
   scheduling: "جدولة نشر المنشورات والريلز والستوري",
+  store: "ربط المتجر (سلة) وتحليل الطلبات والمبيعات",
 };
 
 /** The four limit rows shown before the on/off features, by key. */
@@ -89,6 +93,7 @@ export const FEATURE_HINTS: Record<string, string> = {
   campaign_stats: "لكل حملة: عدد التعليقات والأشخاص، من استلم الرسالة، من ضغط الرابط، من تابع، وأداء كل منشور.",
   undo: "رجوع عن آخر 10 عمليات (حذف حملة، تعديل، إيقاف...) من صفحة السجل.",
   scheduling: "ترفع الصورة أو الفيديو وتحدد الوقت، والنظام ينشره على حسابك تلقائيًا عبر واجهة Meta الرسمية، ويقدر يشغّل حملة على المنشور أول ما يُنشر.",
+  store: "تربط متجرك في سلة وتشوف كم طلب ومبيعات جابت كل حملة (بكود الخصم) ولكل منتج: تعليقات ← ضغطات ← طلبات.",
 };
 
 export const LIMIT_HINTS: Record<string, string> = {

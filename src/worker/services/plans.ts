@@ -44,6 +44,7 @@ const NONE: PlanLimits = {
   campaign_stats: false,
   undo: false,
   scheduling: false,
+  store: false,
 };
 
 export function parseLimits(raw: string): PlanLimits {
@@ -188,6 +189,8 @@ export async function deleteTenantData(db: D1Database, tenantId: number): Promis
     db.prepare("DELETE FROM oauth_states WHERE user_id IN (SELECT id FROM admin_users WHERE tenant_id = ?)").bind(t),
     db.prepare("DELETE FROM admin_users WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM instagram_accounts WHERE tenant_id = ?").bind(t),
+    db.prepare("DELETE FROM store_oauth_states WHERE tenant_id = ?").bind(t),
+    db.prepare("DELETE FROM stores WHERE tenant_id = ?").bind(t),
     db.prepare("UPDATE activation_codes SET used_by_tenant = NULL WHERE used_by_tenant = ?").bind(t),
     db.prepare("DELETE FROM tenants WHERE id = ?").bind(t),
   ]);

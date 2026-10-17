@@ -40,6 +40,7 @@ const LogsPage = lazyPage(() => import("./pages/Logs"), "LogsPage");
 const SimulatorPage = lazyPage(() => import("./pages/Simulator"), "SimulatorPage");
 const OwnerPage = lazyPage(() => import("./pages/Owner"), "OwnerPage");
 const UsagePage = lazyPage(() => import("./pages/Usage"), "UsagePage");
+const StorePage = lazyPage(() => import("./pages/Store"), "StorePage");
 const SubscriptionPage = lazyPage(() => import("./pages/Subscription"), "SubscriptionPage");
 const SettingsPage = lazyPage(() => import("./pages/Settings"), "SettingsPage");
 const DownloadPage = lazyPage(() => import("./pages/Download"), "DownloadPage");
@@ -104,6 +105,7 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ to: string; label: strin
     { to: "/campaigns", label: "الحملات", icon: "target" },
     { to: "/schedule", label: "الجدولة", icon: "calendar" },
     { to: "/analytics", label: "التحليلات", icon: "chart" },
+    { to: "/store", label: "تحليل المتجر", icon: "bag" },
     { to: "/inbox", label: "الرسائل", icon: "inbox" },
     { to: "/draws", label: "السحوبات", icon: "gift" },
   ] },
@@ -271,6 +273,7 @@ export function App() {
       case "/download": page = <DownloadPage />; break;
       case "/owner": page = isOwner ? <OwnerPage /> : <DashboardPage />; break;
       case "/usage": page = isOwner ? <UsagePage /> : <DashboardPage />; break;
+      case "/store": page = <StorePage />; break;
       case "/subscription": page = <SubscriptionPage />; break;
       case "/analytics": page = <AnalyticsPage />; break;
       case "/schedule": page = <SchedulePage />; break;
@@ -299,6 +302,7 @@ export function App() {
     if (isOwner || !limits) return null;
     if (to === "/draws" && limits.draws_per_month === 0) return "السحوبات";
     if (to === "/simulator" && !limits.simulator) return FEATURE_LABELS.simulator;
+    if (to === "/store" && !limits.store) return FEATURE_LABELS.store;
     if (to === "/analytics" && !limits.campaign_stats) return "التحليلات";
     return null;
   };

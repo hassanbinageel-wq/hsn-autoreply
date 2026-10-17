@@ -25,6 +25,10 @@ export interface Env {
   /** Optional: read-only Cloudflare analytics token (Account Analytics: Read) for exact usage figures. */
   CF_ANALYTICS_TOKEN?: string;
   CF_ACCOUNT_ID?: string;
+  /** Salla partner app (optional until the owner creates it). */
+  SALLA_CLIENT_ID?: string;
+  SALLA_CLIENT_SECRET?: string;
+  SALLA_WEBHOOK_SECRET?: string;
   /** The service's own domain (e.g. hsnreply.online), for its expiry date. */
   SERVICE_DOMAIN?: string;
 }
