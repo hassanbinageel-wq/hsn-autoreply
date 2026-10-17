@@ -4,7 +4,6 @@ import { Link } from "../App";
 import { AreaChart } from "../components/Charts";
 import { Icon } from "../components/Icon";
 import { Alert, Card, InfoDot, Modal, PageHeader, Spinner, fmtDate, toast, useAsync } from "../components/ui";
-import { toCsv } from "../../shared/csv";
 import { saveFile } from "../lib/save";
 
 /** Store analytics: orders and revenue joined to campaigns (by discount code) and to products (by link). */
@@ -46,7 +45,7 @@ export function StorePage() {
   const t = data?.totals;
   const cur = t?.currency ?? "SAR";
   const labels = (data?.series ?? []).map((d: any) => new Intl.DateTimeFormat("ar-SA-u-ca-gregory-nu-latn", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(d.day * DAY + 12 * 3_600_000)));
-  const csv = (name: string, headers: string[], rows: any[]) => saveFile(new Blob([toCsv(headers, rows)], { type: "text/csv;charset=utf-8" }), name).catch(() => undefined);
+  const period = `${data?.store?.name ?? "متجر سلة"} · ${fmtDate(range.from)} — ${fmtDate(range.to)}`;
 
   return (
     <div className="space-y-5">
@@ -87,8 +86,9 @@ export function StorePage() {
           </div>
 
           <Card
+            id="store-campaigns"
             title={<span className="flex items-center gap-1.5">الحملات المربوطة بالمتجر <InfoDot text="الحملات اللي لها كود خصم أو رابط منتج من متجرك. اضغط على أي حملة عشان تشوف مسار البيع: من التعليق لين الطلب." /></span>}
-            action={<button className="btn btn-ghost min-h-9 text-xs" disabled={!data.campaigns.length} onClick={() => csv("store-campaigns.csv", ["الحملة", "كود الخصم", "المنتج", "استلموا المحتوى", "ضغطات", "طلبات بالكود", "مبيعات بالكود", "ربح تقديري"], data.campaigns.map((c: any) => ({ "الحملة": c.name, "كود الخصم": c.coupon ?? "", "المنتج": c.product?.name ?? "", "استلموا المحتوى": c.delivered, "ضغطات": c.clicks, "طلبات بالكود": c.orders ?? "", "مبيعات بالكود": c.revenue ?? "", "ربح تقديري": c.profit ?? "" })))}>⬇️ CSV</button>}
+            action={<PdfButton target="store-campaigns" title="الحملات المربوطة بالمتجر" subtitle={period} disabled={!data.campaigns.length} />}
           >
             {!data.campaigns.length ? (
               <p className="muted text-sm">ما فيه حملات مربوطة بالمتجر. في محرر الحملة ← خطوة «الرسالة»: اختر منتج من متجرك كرابط، وحط <b>كود خصم خاص بالحملة</b> عشان تنحسب طلباتها بدقة.</p>
@@ -105,7 +105,7 @@ export function StorePage() {
                           {c.product && <span className="truncate">🛍️ {c.product.name}</span>}
                         </div>
                       </div>
-                      <Icon name="chev" size={16} className="muted -rotate-90 transition group-hover:-translate-x-0.5" />
+                      <Icon name="chev" size={16} className="no-print muted -rotate-90 transition group-hover:-translate-x-0.5" />
                     </div>
                     <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                       <Mini label="طلبات" value={c.orders === null ? "—" : fmt(c.orders)} />
@@ -119,7 +119,7 @@ export function StorePage() {
               </div>
             )}
             {data.unlinked?.length > 0 && (
-              <details className="mt-3">
+              <details className="no-print mt-3">
                 <summary className="muted cursor-pointer text-xs">حملات غير مربوطة بالمتجر ({data.unlinked.length}) — ما نقدر نحسب لها مبيعات</summary>
                 <ul className="mt-2 divide-y divide-[var(--border)]">
                   {data.unlinked.map((c: any) => (
@@ -166,8 +166,9 @@ export function StorePage() {
           </div>
 
           <Card
+            id="store-products"
             title="المنتجات"
-            action={<div className="flex gap-2"><button className="btn btn-ghost min-h-9 text-xs" onClick={() => setCosts(true)}>💰 تكاليف المنتجات</button><button className="btn btn-ghost min-h-9 text-xs" disabled={!data.products.length} onClick={() => csv("store-products.csv", ["المنتج", "طلبات", "قطع", "مبيعات", "ربح تقديري", "حملات تروّج له", "ضغطات الحملات"], data.products.map((p: any) => ({ "المنتج": p.name ?? p.id, "طلبات": p.orders, "قطع": p.units, "مبيعات": p.revenue ?? "", "ربح تقديري": p.profit ?? "", "حملات تروّج له": p.campaigns.map((c: any) => c.name).join("، "), "ضغطات الحملات": p.clicks })))}>⬇️ CSV</button></div>}
+            action={<div className="flex gap-2"><button className="btn btn-ghost min-h-9 text-xs" onClick={() => setCosts(true)}>💰 تكاليف المنتجات</button><PdfButton target="store-products" title="المنتجات" subtitle={period} disabled={!data.products.length} /></div>}
           >
             {!data.products.length ? <p className="muted text-sm">ما فيه طلبات على منتجات في هذي الفترة. ({fmt(data.store.products)} منتج مجلوب من متجرك)</p> : (
               <div className="divide-y divide-[var(--border)]">
@@ -422,7 +423,7 @@ function PostsBySales({ range, cur }: { range: { from: number; to: number }; cur
       </Card>
     );
   return (
-    <Card title={<span className="flex items-center gap-1.5">المنشورات حسب المبيعات <InfoDot text="المنشورات اللي عليها حملة مربوطة بالمتجر (فيها كود خصم أو رابط منتج من متجرك). الطلب ينحسب للمنشور لما يستخدم كود حملته. الطلبات تنحسب للمنشور بدقة لما تكون حملته على منشور واحد بس؛ الحملة اللي على أكثر من منشور تنعرض تحت كمجموعة لأننا ما نقدر نعرف أي منشور منها باع. التفاعل والضغطات لكل منشور دقيقة دائمًا." /></span>}>
+    <Card id="store-posts" action={<PdfButton target="store-posts" title="المنشورات حسب المبيعات" subtitle={`${fmtDate(range.from)} — ${fmtDate(range.to)}`} />} title={<span className="flex items-center gap-1.5">المنشورات حسب المبيعات <InfoDot text="المنشورات اللي عليها حملة مربوطة بالمتجر (فيها كود خصم أو رابط منتج من متجرك). الطلب ينحسب للمنشور لما يستخدم كود حملته. الطلبات تنحسب للمنشور بدقة لما تكون حملته على منشور واحد بس؛ الحملة اللي على أكثر من منشور تنعرض تحت كمجموعة لأننا ما نقدر نعرف أي منشور منها باع. التفاعل والضغطات لكل منشور دقيقة دائمًا." /></span>}>
       <div className="-mx-4 overflow-x-auto sm:-mx-5">
         <table className="w-full min-w-[640px] text-sm">
           <thead><tr className="muted bg-[var(--surface-2)] text-right text-xs">
@@ -466,5 +467,31 @@ function PostsBySales({ range, cur }: { range: { from: number; to: number }; cur
         </div>
       )}
     </Card>
+  );
+}
+
+/** Downloads one section of the page as a tidy PDF (title + period on top), in place of a CSV sheet. */
+function PdfButton({ target, title, subtitle, disabled }: { target: string; title: string; subtitle: string; disabled?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="btn btn-ghost no-print min-h-9 text-xs"
+      disabled={disabled || busy}
+      onClick={async () => {
+        const el = document.getElementById(target);
+        if (!el) return;
+        setBusy(true);
+        try {
+          const { elementToPdf } = await import("../lib/elementPdf");
+          await saveFile(await elementToPdf(el, { title, subtitle }), `HSN-${target}-${new Date().toISOString().slice(0, 10)}.pdf`, title);
+        } catch (e: any) {
+          toast(e?.message || "تعذر إنشاء ملف PDF", "bad");
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <Icon name="download" size={14} />{busy ? "…" : "PDF"}
+    </button>
   );
 }

@@ -201,7 +201,8 @@ export async function storeAnalytics(db: D1Database, t: number, f: { from: numbe
         revenue: fromCode?.revenue ?? null,
       };
     })
-    .filter((c) => c.coupon || c.product || c.clicks > 0);
+    // Linked to the store = has a discount code or links to one of the store's products (clicks alone do not count).
+    .filter((c) => c.coupon || c.product);
   const linkedIds = new Set(campaignRows.map((c) => c.id));
   const unlinked = campaigns.filter((c) => !linkedIds.has(c.id) && ["active", "paused"].includes(c.status)).slice(0, 20).map((c) => ({ id: c.id, name: c.name, status: c.status }));
   const attributedCodes = new Set(campaignRows.map((c) => c.coupon).filter(Boolean));

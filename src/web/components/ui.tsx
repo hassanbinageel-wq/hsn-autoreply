@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AR_LABELS } from "../../shared/states";
 
-export function Card({ children, className = "", title, action }: { children: ReactNode; className?: string; title?: ReactNode; action?: ReactNode }) {
+export function Card({ children, className = "", title, action, id }: { children: ReactNode; className?: string; title?: ReactNode; action?: ReactNode; id?: string }) {
   return (
-    <section className={`card ${title || action ? "" : "p-4 sm:p-5"} ${className}`}>
+    <section id={id} className={`card ${title || action ? "" : "p-4 sm:p-5"} ${className}`}>
       {(title || action) && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3.5 sm:px-5">
           {title && <h2 className="text-[15.5px] font-bold">{title}</h2>}

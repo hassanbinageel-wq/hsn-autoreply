@@ -5,10 +5,36 @@ import { canvasesToPdf } from "./pdf";
  * text, fonts and colours come out as on screen; images from other sites (e.g. Instagram thumbnails) are left
  * out because the page is not allowed to read them. Elements marked `no-print` are skipped.
  */
-export async function elementToPdf(el: HTMLElement): Promise<Blob> {
+export async function elementToPdf(source: HTMLElement, opts: { title?: string; subtitle?: string } = {}): Promise<Blob> {
   const { toCanvas } = await import("html-to-image");
+  // With a title: a copy of the section under a heading, drawn off screen at the section's width.
+  let el = source;
+  let holder: HTMLElement | null = null;
+  if (opts.title) {
+    holder = document.createElement("div");
+    holder.dir = "rtl";
+    holder.style.cssText = `position:fixed;top:0;left:-20000px;width:${source.getBoundingClientRect().width}px;padding:8px;background:${getComputedStyle(document.body).backgroundColor || "#fff"}`;
+    const h = document.createElement("div");
+    h.style.cssText = "margin:0 4px 14px";
+    h.innerHTML = `<div style="font:800 22px Cairo, sans-serif">${esc(opts.title)}</div>${opts.subtitle ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(opts.subtitle)}</div>` : ""}`;
+    holder.append(h, source.cloneNode(true));
+    document.body.append(holder);
+    el = holder;
+  }
+  try {
+    // The off-screen copy is drawn as if it sat at the page origin.
+    return await draw(el, toCanvas, holder ? { position: "static", left: "0", top: "0" } : undefined);
+  } finally {
+    holder?.remove();
+  }
+}
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+async function draw(el: HTMLElement, toCanvas: typeof import("html-to-image").toCanvas, style?: Partial<CSSStyleDeclaration>): Promise<Blob> {
   const bg = getComputedStyle(document.body).backgroundColor || "#ffffff";
   const src = await toCanvas(el, {
+    style,
     fontEmbedCSS: await appFontsCss(),
     pixelRatio: 2,
     backgroundColor: bg,
