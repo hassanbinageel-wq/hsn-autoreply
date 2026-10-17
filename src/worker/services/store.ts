@@ -9,7 +9,7 @@ import { all, first } from "../lib/db";
  * Cancelled / refunded / deleted orders are excluded from revenue. Everything is scoped to the customer.
  */
 
-const NOT_COUNTED = ["canceled", "cancelled", "refunded", "restored", "deleted"];
+export const NOT_COUNTED = ["canceled", "cancelled", "refunded", "restored", "deleted"];
 const DAY = 86_400_000;
 
 export function normalizeUrl(u: string | null | undefined): string | null {
@@ -22,7 +22,7 @@ export function normalizeUrl(u: string | null | undefined): string | null {
   }
 }
 
-type OrderRow = {
+export type OrderRow = {
   order_id: string;
   status: string | null;
   total: number | null;
@@ -38,7 +38,7 @@ type OrderRow = {
   city: string | null;
 };
 type Item = { product_id: string; name: string | null; qty: number; amount: number };
-type Product = { product_id: string; name: string | null; url: string | null; image_url: string | null; price: number | null; status: string | null; cost: number | null; cost_manual: number | null };
+export type Product = { product_id: string; name: string | null; url: string | null; image_url: string | null; price: number | null; status: string | null; cost: number | null; cost_manual: number | null };
 
 const parseItems = (raw: string): Item[] => {
   try {
@@ -61,7 +61,7 @@ function unitCost(p: Product | undefined, unitPrice: number, defaultPct: number 
  * Money for a set of counted orders. Net sales = order total − tax − shipping (shipping passes to the carrier, tax to
  * the state). Profit = net sales − product cost, only over orders whose every item has a known cost.
  */
-function summarize(orders: OrderRow[], productById: Map<string, Product>, defaultPct: number | null) {
+export function summarize(orders: OrderRow[], productById: Map<string, Product>, defaultPct: number | null) {
   let revenue = 0, net = 0, discount = 0, shipping = 0, tax = 0, units = 0;
   let costed = 0, costedNet = 0, cogs = 0;
   for (const o of orders) {

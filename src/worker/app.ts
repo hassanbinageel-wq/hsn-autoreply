@@ -62,6 +62,7 @@ import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
 import { claimStore, completeSallaOAuth, handleSallaWebhook, sallaAuthorizeUrl, sallaConfigured, syncProducts, verifySallaWebhook } from "./services/salla";
+import { bestTimes, postSales, weeklyReport } from "./services/growth";
 import { storeAnalytics, storeCampaignDetail, storeProductCosts, storeProducts } from "./services/store";
 import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
@@ -1736,6 +1737,24 @@ export function createApp() {
     return c.json({ ok: true });
   });
   api.get("/store/products", async (c) => c.json({ items: await storeProducts(c.env.DB, T(c)) }));
+  // ---- Growth: posts by sales, best time to post, weekly report
+  api.get("/growth/posts", async (c) => {
+    const blocked = await planBlock(c, "campaign_stats");
+    if (blocked) return blocked;
+    const f = await analyticsFilter(c);
+    if (!f) return apiError(c, 422, "validation", "فترة غير صحيحة");
+    return c.json({ generated_at: Date.now(), ...(await postSales(c.env.DB, T(c), f)) });
+  });
+  api.get("/growth/best-times", async (c) => {
+    const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Aden");
+    return c.json(await bestTimes(c.env.DB, T(c), tzOffsetMinutes(tz || "Asia/Aden")));
+  });
+  api.get("/growth/weekly", async (c) => {
+    const blocked = await planBlock(c, "campaign_stats");
+    if (blocked) return blocked;
+    const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Aden");
+    return c.json({ generated_at: Date.now(), timezone: tz, ...(await weeklyReport(c.env.DB, T(c), tzOffsetMinutes(tz || "Asia/Aden"))) });
+  });
   api.get("/store/campaigns/:id", async (c) => {
     const blocked = await planBlock(c, "store");
     if (blocked) return blocked;
@@ -2544,6 +2563,7 @@ export function createApp() {
         enabled: z.boolean().optional(),
         chat_id: z.string().regex(/^-?\d{1,20}$/).nullable().optional(),
         daily_report: z.boolean().optional(),
+        weekly_report: z.boolean().optional(),
         report_hour: z.number().int().min(0).max(23).optional(),
         timezone: z.string().max(64).optional(),
         alert_reauth: z.boolean().optional(),

@@ -7,6 +7,9 @@ import { estimateUsage, platformUsage } from "./usage";
 import { cloudflareUsage } from "./cfusage";
 import { domainInfo } from "./domain";
 import { getEntitlement } from "./plans";
+import { weeklyReport, weeklyText } from "./growth";
+import { tzOffsetMinutes } from "./analytics";
+import { serviceDomain } from "./domain";
 
 /**
  * Owner notifications through a Telegram bot the owner creates (free, no extra account needed).
@@ -16,6 +19,7 @@ export interface NotifySettings {
   enabled: boolean;
   chat_id: string | null;
   daily_report: boolean;
+  weekly_report: boolean;
   report_hour: number; // 0-23, in `timezone`
   timezone: string;
   alert_reauth: boolean;
@@ -31,6 +35,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   enabled: false,
   chat_id: null,
   daily_report: true,
+  weekly_report: true,
   report_hour: 21,
   timezone: "Asia/Aden",
   alert_reauth: true,
@@ -153,14 +158,15 @@ export async function notify(env: Env, tenantId: number, kind: NotifyKind, text:
   }
 }
 
-function localParts(ms: number, tz: string): { date: string; hour: number } {
+function localParts(ms: number, tz: string): { date: string; hour: number; weekday: number } {
   try {
-    const f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hour12: false });
+    const f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hour12: false, weekday: "short" });
     const p = Object.fromEntries(f.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
-    return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) % 24 };
+    const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday);
+    return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) % 24, weekday };
   } catch {
     const d = new Date(ms);
-    return { date: d.toISOString().slice(0, 10), hour: d.getUTCHours() };
+    return { date: d.toISOString().slice(0, 10), hour: d.getUTCHours(), weekday: d.getUTCDay() };
   }
 }
 
@@ -257,6 +263,17 @@ async function runTenantNotifications(env: Env, tenantId: number, now: number): 
     if (last !== local.date) {
       await setSetting(env.DB, tenantId, "notify_last_report_date", local.date);
       await sendTelegram(env, tenantId, await buildDailyReport(env.DB, tenantId, now), s);
+    }
+  }
+  // Weekly report: Saturday (the end of the Saudi week) at the same local hour as the daily report.
+  if (s.weekly_report && local.hour === s.report_hour && local.weekday === 6) {
+    const last = await getSetting<string>(env.DB, tenantId, "notify_last_weekly_date", "");
+    if (last !== local.date) {
+      await setSetting(env.DB, tenantId, "notify_last_weekly_date", local.date);
+      const tz = await getSetting<string>(env.DB, tenantId, "timezone", s.timezone);
+      const domain = serviceDomain(env);
+      const r = await weeklyReport(env.DB, tenantId, tzOffsetMinutes(tz || "Asia/Aden", now), now);
+      await sendTelegram(env, tenantId, weeklyText(r, domain ? `https://${domain}/#/report` : undefined), s);
     }
   }
   // Failure/spike checks every 10 minutes (not every cron minute) to stay far below the free D1 read quota.

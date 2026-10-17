@@ -235,3 +235,11 @@ textarea.input {
 .size-range { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; background: var(--border); outline: none; }
 .size-range::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 999px; background: var(--grad); border: 2px solid #fff; box-shadow: 0 2px 6px rgb(124 58 237 / .4); cursor: pointer; }
 .size-range::-moz-range-thumb { width: 18px; height: 18px; border-radius: 999px; background: #7c3aed; border: 2px solid #fff; cursor: pointer; }
+
+/* Printing a report page (e.g. "Save as PDF"): only the report, no app shell or buttons. */
+@media print {
+  body * { visibility: hidden; }
+  #print-root, #print-root * { visibility: visible; }
+  #print-root { position: absolute; inset: 0 auto auto 0; width: 100%; padding: 16px; }
+  .no-print { display: none !important; }
+}

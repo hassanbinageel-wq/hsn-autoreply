@@ -41,6 +41,7 @@ const SimulatorPage = lazyPage(() => import("./pages/Simulator"), "SimulatorPage
 const OwnerPage = lazyPage(() => import("./pages/Owner"), "OwnerPage");
 const UsagePage = lazyPage(() => import("./pages/Usage"), "UsagePage");
 const StorePage = lazyPage(() => import("./pages/Store"), "StorePage");
+const ReportPage = lazyPage(() => import("./pages/Report"), "ReportPage");
 const SubscriptionPage = lazyPage(() => import("./pages/Subscription"), "SubscriptionPage");
 const SettingsPage = lazyPage(() => import("./pages/Settings"), "SettingsPage");
 const DownloadPage = lazyPage(() => import("./pages/Download"), "DownloadPage");
@@ -274,6 +275,7 @@ export function App() {
       case "/owner": page = isOwner ? <OwnerPage /> : <DashboardPage />; break;
       case "/usage": page = isOwner ? <UsagePage /> : <DashboardPage />; break;
       case "/store": page = <StorePage />; break;
+      case "/report": page = <ReportPage />; break;
       case "/subscription": page = <SubscriptionPage />; break;
       case "/analytics": page = <AnalyticsPage />; break;
       case "/schedule": page = <SchedulePage />; break;

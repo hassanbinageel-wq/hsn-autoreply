@@ -493,6 +493,7 @@ function PostEditor({ id, presetAt, off, limits, onClose, onSaved }: { id?: numb
 
             <Field label={<span className="inline-flex items-center gap-1">وقت النشر <InfoDot text="بتوقيت حسابك (من الإعدادات). Meta ما فيها جدولة، فالنظام ينشر بنفسه في هذا الوقت — عادةً خلال دقيقة إلى دقيقتين، والفيديو ياخذ وقت أطول عشان Meta تعالجه. إذا فات الوقت بأكثر من 6 ساعات بدون ما ينتشر، يوقف ويبلغك." /></span>} hint="بتوقيت حسابك.">
               <DateTimeField value={when} onChange={(v) => v && setWhen(v)} label="وقت النشر" clearable={false} />
+              <BestTimeChips off={off} onPick={setWhen} />
             </Field>
 
             {kind !== "STORY" && (
@@ -710,5 +711,43 @@ function ScheduledCampaigns() {
         </div>
       )}
     </Card>
+  );
+}
+
+const WD_AR = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+const hourAr = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "ص" : "م"}`;
+
+/** Suggested posting times from the customer's own data; a tap sets the next such time. */
+function BestTimeChips({ off, onPick }: { off: number; onPick: (local: string) => void }) {
+  const { data } = useAsync(() => api<any>("/api/growth/best-times").catch(() => null), []);
+  if (!data) return null;
+  if (data.source === "none")
+    return <p className="muted mt-1.5 text-[11px]">⏰ «أفضل وقت للنشر» يظهر هنا لما تتجمع بيانات كافية (30 تعليق أو 8 منشورات بإحصاءات).</p>;
+  const next = (wd: number, h: number) => {
+    const nowLocal = Date.now() + off * 60_000;
+    const day = Math.floor(nowLocal / 86_400_000) * 86_400_000;
+    for (let i = 0; i < 8; i++) {
+      const t = day + i * 86_400_000 + h * 3_600_000;
+      if (new Date(t).getUTCDay() === wd && t > nowLocal + 15 * 60_000) return new Date(t).toISOString().slice(0, 16);
+    }
+    return null;
+  };
+  return (
+    <div className="mt-2">
+      <div className="muted mb-1 flex items-center gap-1 text-[11px]">
+        ⏰ أفضل أوقاتك للنشر
+        <InfoDot text={data.source === "posts" ? `من إحصاءات منشوراتك السابقة (${data.posts_with_insights} منشور): الأوقات اللي جابت تفاعل أعلى من متوسطك.` : `من أوقات تعليقات جمهورك في آخر 60 يوم (${data.comments} تعليق): ننصحك تنشر قبل وقت الذروة بساعة.`} />
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {data.slots.map((s: any) => {
+          const v = next(s.wd, s.h);
+          return v && (
+            <button key={`${s.wd}-${s.h}`} type="button" className="chip surface-2 hover:ring-1 hover:ring-violet-500" title={s.note} onClick={() => onPick(v)}>
+              {WD_AR[s.wd]} {hourAr(s.h)}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }

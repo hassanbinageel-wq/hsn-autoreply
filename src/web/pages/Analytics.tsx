@@ -66,7 +66,7 @@ export function AnalyticsPage() {
       <PageHeader
         title="التحليلات"
         subtitle="أداء حملاتك ومنشوراتك من البيانات اللي سجّلها النظام فعليًا. إحصاءات إنستقرام نفسها (المشاهدات والوصول والإعجابات) تحتاج صلاحية إضافية."
-        actions={<button className="btn btn-ghost" onClick={reload} disabled={loading}><Icon name="refresh" size={17} />{loading ? "…" : "تحديث"}</button>}
+        actions={<div className="flex gap-2"><Link to="/report" className="btn btn-ghost"><Icon name="cal" size={17} />التقرير الأسبوعي</Link><button className="btn btn-ghost" onClick={reload} disabled={loading}><Icon name="refresh" size={17} />{loading ? "…" : "تحديث"}</button></div>}
       />
 
       {/* Filters */}

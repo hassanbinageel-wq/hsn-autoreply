@@ -133,6 +133,8 @@ export function StorePage() {
             )}
           </Card>
 
+          <PostsBySales range={range} cur={cur} />
+
           {data.costs.products > 0 && data.costs.with_cost === 0 && data.costs.default_pct === null && (
             <Alert tone="info">عشان نحسب <b>الربح</b>: أدخل تكلفة كل منتج أو نسبة تكلفة تقريبية من زر «تكاليف المنتجات». إذا كنت مدخل «سعر التكلفة» في منتجات سلة نجيبه تلقائيًا مع تحديث المنتجات.</Alert>
           )}
@@ -404,5 +406,59 @@ function CampaignStore({ id, range, onClose }: { id: number; range: { from: numb
         </div>
       )}
     </Modal>
+  );
+}
+
+const KIND_AR: Record<string, string> = { reel: "ريل", carousel: "ألبوم", video: "فيديو", image: "صورة" };
+
+/** Posts ranked by the orders they brought: order (code) → campaign → post, exact only for one-post campaigns. */
+function PostsBySales({ range, cur }: { range: { from: number; to: number }; cur: string }) {
+  const { data } = useAsync(() => api<any>(`/api/growth/posts?from=${range.from}&to=${range.to}`).catch(() => null), [range.from, range.to]);
+  if (!data || (!data.posts.length && !data.groups.length)) return null;
+  return (
+    <Card title={<span className="flex items-center gap-1.5">المنشورات حسب المبيعات <InfoDot text="أي منشور أو ريل جاب طلبات فعلية: الطلب استخدم كود حملة، والحملة شغّالة على هذا المنشور. الطلبات تنحسب للمنشور بدقة لما تكون حملته على منشور واحد بس؛ الحملة اللي على أكثر من منشور تنعرض تحت كمجموعة لأننا ما نقدر نعرف أي منشور منها باع. التفاعل والضغطات لكل منشور دقيقة دائمًا." /></span>}>
+      <div className="-mx-4 overflow-x-auto sm:-mx-5">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead><tr className="muted bg-[var(--surface-2)] text-right text-xs">
+            <th className="px-4 py-2 font-semibold">المنشور</th><th className="px-2 py-2 font-semibold">مشاهدات</th><th className="px-2 py-2 font-semibold">تفاعلوا</th>
+            <th className="px-2 py-2 font-semibold">ضغطوا</th><th className="px-2 py-2 font-semibold">طلبات</th><th className="px-2 py-2 font-semibold">مبيعات</th><th className="px-2 py-2 font-semibold">ربح</th>
+          </tr></thead>
+          <tbody>
+            {data.posts.map((p: any, i: number) => (
+              <tr key={p.media_id} className="border-t border-[var(--border)]">
+                <td className="px-4 py-2">
+                  <div className="flex items-center gap-2.5">
+                    <span className="muted w-4 text-xs tabular-nums">{i + 1}</span>
+                    {p.thumbnail_url ? <img src={p.thumbnail_url} alt="" className="size-11 shrink-0 rounded-lg object-cover" loading="lazy" /> : <span className="surface-2 grid size-11 shrink-0 place-items-center rounded-lg">🖼️</span>}
+                    <div className="min-w-0 max-w-[16rem]">
+                      <div className="truncate text-xs">{p.caption ?? "بدون وصف"}</div>
+                      <div className="muted text-[11px]">{KIND_AR[p.kind] ?? ""}{p.campaigns.length ? ` · ${p.campaigns.map((c: any) => c.name).join("، ")}` : ""}</div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-2 py-2 tabular-nums">{p.views != null ? fmt(p.views) : <span className="muted">—</span>}</td>
+                <td className="px-2 py-2 tabular-nums">{fmt(p.people)}</td>
+                <td className="px-2 py-2 tabular-nums">{fmt(p.clickers)}</td>
+                <td className="px-2 py-2 font-semibold tabular-nums">{p.orders ?? <span className="muted" title="ما فيه حملة بكود على هذا المنشور لوحده">—</span>}</td>
+                <td className="px-2 py-2 tabular-nums">{p.revenue != null ? money(p.revenue, cur) : "—"}</td>
+                <td className={`px-2 py-2 tabular-nums ${p.profit != null ? (p.profit < 0 ? "text-rose-600" : "text-emerald-600") : ""}`}>{p.profit != null ? money(p.profit, cur) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {data.groups.length > 0 && (
+        <div className="mt-3 space-y-1">
+          <div className="muted text-xs">حملات على أكثر من منشور (ما نقدر نقسّم طلباتها على المنشورات):</div>
+          {data.groups.map((g: any) => (
+            <div key={g.campaign.id} className="surface-2 flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-sm">
+              <span className="truncate">{g.campaign.name} <span className="muted text-xs">· {g.posts} منشورات</span></span>
+              <span className="tabular-nums"><b>{fmt(g.orders)}</b> طلب · {money(g.revenue, cur)}</span>
+            </div>
+          ))}
+          <p className="muted text-[11px]">💡 تبغى تعرف أي منشور باع أكثر؟ خلّ لكل منشور حملة بكود خاص فيه.</p>
+        </div>
+      )}
+    </Card>
   );
 }
