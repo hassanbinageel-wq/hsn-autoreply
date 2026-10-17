@@ -492,6 +492,14 @@ export async function applyStockChange(env: Env, store: { id: number; tenant_id:
     const r = await run(env.DB, "UPDATE restock_waitlist SET ready_at = ? WHERE campaign_id = ? AND status = 'waiting' AND ready_at IS NULL", now, c.id);
     waiting += r.meta.changes ?? 0;
   }
+  // Requests whose 24-hour window already closed cannot get a message: those people are told by a story.
+  const closed = await first<{ n: number }>(
+    env.DB,
+    `SELECT COUNT(*) AS n FROM restock_waitlist w JOIN participants p ON p.id = w.participant_id
+      WHERE w.campaign_id IN (${camps.map(() => "?").join(",")}) AND w.status = 'waiting' AND COALESCE(p.last_user_message_at, 0) < ?`,
+    ...camps.map((c) => c.id),
+    now - 86_400_000,
+  );
   await audit(env.DB, store.tenant_id, "system", "store.back_in_stock", productId, { campaigns: camps.map((c) => c.id), waiting });
   const resumed = camps.filter((c) => c.stock_paused).map((c) => c.name);
   await notify(
@@ -499,5 +507,11 @@ export async function applyStockChange(env: Env, store: { id: number; tenant_id:
     store.tenant_id,
     "stock",
     `✅ رجع للمخزون: ${name}${resumed.length ? `\n▶️ رجّعنا تشغيل: ${resumed.join("، ")}` : ""}${waiting ? `\n🔔 ${waiting} طلبوا التنبيه — نرسل لمن نافذة الـ24 ساعة عنده مفتوحة` : ""}`,
+  );
+  await notify(
+    env,
+    store.tenant_id,
+    "story",
+    `📣 حان وقت ستوري: «${name}» رجع متوفر\n${closed?.n ? `${closed.n} شخص طلبوا التنبيه وفاتت 24 ساعة على رسالتهم، فما نقدر نراسلهم — ستوري «رجع المنتج» يوصل لهم ولكل متابعينك.` : "ستوري «رجع المنتج» مع الرابط يذكّر متابعينك قبل لا يخلص مرة ثانية."}`,
   );
 }

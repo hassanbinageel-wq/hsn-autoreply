@@ -41,6 +41,16 @@ beforeEach(async () => {
 });
 
 describe("customers (tenants) are isolated", () => {
+  it("in-app notifications stay with their customer", async () => {
+    await DB.prepare("INSERT INTO app_notifications (tenant_id, kind, title, link, created_at) VALUES (1, 'stock', 'نفد المنتج', '/store', ?)").bind(Date.now()).run();
+    expect((await call("/api/app-notifications/unread", OWNER)).body.unread).toBe(1);
+    expect((await call("/api/app-notifications", B)).body).toEqual({ items: [], unread: 0 });
+    await call("/api/app-notifications/read", B, "POST", {});
+    expect((await call("/api/app-notifications/unread", OWNER)).body.unread).toBe(1);
+    await call("/api/app-notifications/read", OWNER, "POST", {});
+    expect((await call("/api/app-notifications/unread", OWNER)).body.unread).toBe(0);
+  });
+
   it("saved replies and conversation labels stay with their customer", async () => {
     const r = await call("/api/saved-replies", OWNER, "POST", { title: "السعر", body: "السعر 99 ريال يا {{username}}" });
     expect(r.status).toBe(200);

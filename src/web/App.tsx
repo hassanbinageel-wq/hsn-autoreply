@@ -5,6 +5,7 @@ import { Alert, Modal, Spinner, ToastHost, setTz, toast } from "./components/ui"
 import { FEATURE_LABELS, type PlanLimits } from "../shared/plans";
 import { enableBio, takeBioOffer } from "./lib/biometric";
 import { Icon } from "./components/Icon";
+import { NotificationBell } from "./components/NotificationBell";
 import { AccountAvatar } from "./components/UserAvatar";
 import { LoginPage } from "./pages/Login";
 import { DashboardPage } from "./pages/Dashboard";
@@ -386,10 +387,7 @@ export function App() {
             <button className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)]" title="المظهر" aria-label="تبديل المظهر" onClick={() => setTheme(nextTheme)}>
               <Icon name={themeIcon} size={18} />
             </button>
-            <Link to="/inbox" className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)]" aria-label="الرسائل">
-              <Icon name="bell" size={18} />
-              {shell.unread > 0 && <span className="absolute left-2 top-2 h-2 w-2 rounded-full border-2 border-[var(--surface)] bg-pink-600" />}
-            </Link>
+            <NotificationBell route={route} />
             <button className="hidden items-center gap-2 rounded-xl px-1.5 py-1 hover:bg-[var(--surface-2)] sm:flex" onClick={logout} title="تسجيل الخروج">
               <span className="grad font-display flex h-9 w-9 items-center justify-center rounded-xl font-extrabold text-white">{(username || "?")[0]?.toUpperCase()}</span>
               <span className="text-right leading-tight"><b className="block text-[13px]">{username}</b><span className="muted flex items-center gap-1 text-[11px]"><Icon name="logout" size={12} />خروج</span></span>

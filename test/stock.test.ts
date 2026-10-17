@@ -49,6 +49,13 @@ describe("stock: alerts, pause, waitlist", () => {
     expect((await DB.prepare("SELECT stock_status FROM store_products WHERE product_id = '555'").first<any>()).stock_status).toBe("out");
     await handleSallaWebhook(TEST_ENV, product(4));
     expect(await camp(c.id)).toMatchObject({ status: "active", stock_paused: 0, stock_out_at: null });
+    // the in-app bell got the important notifications (no Telegram set up): out, back, and the story suggestion
+    const notes = (await DB.prepare("SELECT kind, title, link FROM app_notifications WHERE tenant_id = 1 ORDER BY id").all<any>()).results;
+    expect(notes.map((n: any) => n.kind)).toEqual(["stock", "stock", "story"]);
+    expect(notes[0]).toMatchObject({ link: "/store" });
+    expect(notes[0].title).toContain("نفد من المخزون: جاكيت");
+    expect(notes[2]).toMatchObject({ link: "/schedule" });
+    expect(notes[2].title).toContain("حان وقت ستوري");
     // a campaign the merchant paused by hand is never resumed by stock
     await DB.prepare("UPDATE campaigns SET status = 'paused' WHERE id = ?").bind(c.id).run();
     await handleSallaWebhook(TEST_ENV, product(0));

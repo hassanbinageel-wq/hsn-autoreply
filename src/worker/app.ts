@@ -2689,6 +2689,20 @@ export function createApp() {
     return c.json(rows);
   });
 
+  // ---- Important notifications (the bell)
+  api.get("/app-notifications", async (c) => {
+    const [items, unread] = await Promise.all([
+      all(c.env.DB, "SELECT id, kind, title, body, link, read_at, created_at FROM app_notifications WHERE tenant_id = ? ORDER BY id DESC LIMIT 50", T(c)),
+      first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM app_notifications WHERE tenant_id = ? AND read_at IS NULL", T(c)),
+    ]);
+    return c.json({ items, unread: unread?.n ?? 0 });
+  });
+  api.get("/app-notifications/unread", async (c) => c.json({ unread: (await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM app_notifications WHERE tenant_id = ? AND read_at IS NULL", T(c)))?.n ?? 0 }));
+  api.post("/app-notifications/read", async (c) => {
+    await run(c.env.DB, "UPDATE app_notifications SET read_at = ? WHERE tenant_id = ? AND read_at IS NULL", Date.now(), T(c));
+    return c.json({ ok: true });
+  });
+
   // ---- Saved replies (quick replies in the inbox)
   const replySchema = z.object({ title: z.string().trim().min(1).max(60), body: z.string().trim().min(1).max(1000) });
   api.get("/saved-replies", async (c) => c.json(await all(c.env.DB, "SELECT id, title, body, uses FROM saved_replies WHERE tenant_id = ? ORDER BY uses DESC, id DESC LIMIT 100", T(c))));

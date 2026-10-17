@@ -128,9 +128,43 @@ export async function detectChat(env: Env, tenantId: number, token?: string | nu
   return { ok: true, chat_id: String(last.chat.id), name: [last.chat.first_name, last.chat.last_name].filter(Boolean).join(" ") || last.chat.username };
 }
 
-/** Sends an owner notification if that kind is enabled (and not throttled). Never throws. */
+/** Kinds that also go to the in-app bell, and where a tap leads. Frequent ones (followers, deliveries) stay out. */
+const IN_APP: Partial<Record<NotifyKind, string>> = {
+  stock: "/store",
+  story: "/schedule",
+  reauth: "/connection",
+  failures: "/logs",
+  spike: "/analytics",
+  expiry: "/subscription",
+  usage: "/usage",
+  domain: "/usage",
+};
+
+/** Saves an important notification for the in-app bell (first line = title, the rest = body). */
+export async function addAppNotification(db: D1Database, tenantId: number, kind: NotifyKind, text: string, now = Date.now()): Promise<void> {
+  const link = IN_APP[kind];
+  if (link === undefined) return;
+  const [title, ...rest] = text.split("\n");
+  await db
+    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(tenantId, kind, title.slice(0, 200), rest.join("\n").trim().slice(0, 1000) || null, link, now)
+    .run();
+}
+
+/**
+ * An owner/customer notification: the in-app bell (important kinds) and Telegram (when set up and that kind is on).
+ * Throttled per kind so a bad hour never floods either. Never throws.
+ */
 export async function notify(env: Env, tenantId: number, kind: NotifyKind, text: string, onRequest?: () => void): Promise<void> {
   try {
+    const throttle = THROTTLE_MS[kind];
+    if (throttle) {
+      const key = `notify_last_${kind}`;
+      const last = await getSetting<number>(env.DB, tenantId, key, 0);
+      if (Date.now() - last < throttle) return;
+      await setSetting(env.DB, tenantId, key, Date.now());
+    }
+    await addAppNotification(env.DB, tenantId, kind, text).catch((e) => console.error("app notification failed", sanitize(String(e))));
     const s = await getNotifySettings(env.DB, tenantId);
     if (!s.enabled || !s.chat_id) return;
     const on: Record<NotifyKind, boolean> = {
@@ -145,15 +179,9 @@ export async function notify(env: Env, tenantId: number, kind: NotifyKind, text:
       expiry: true,
       domain: true,
       stock: s.alert_stock !== false,
+      story: s.alert_stock !== false,
     };
     if (!on[kind]) return;
-    const throttle = THROTTLE_MS[kind];
-    if (throttle) {
-      const key = `notify_last_${kind}`;
-      const last = await getSetting<number>(env.DB, tenantId, key, 0);
-      if (Date.now() - last < throttle) return;
-      await setSetting(env.DB, tenantId, key, Date.now());
-    }
     onRequest?.(); // counts against the same per-invocation subrequest budget as the Meta calls
     await sendTelegram(env, tenantId, text, s);
   } catch (e) {

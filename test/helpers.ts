@@ -150,6 +150,7 @@ const TABLES = [
   "store_products",
   "store_oauth_states",
   "saved_replies",
+  "app_notifications",
   "stores",
   "publish_log",
   "scheduled_media",
