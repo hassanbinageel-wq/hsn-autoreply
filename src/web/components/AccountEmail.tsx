@@ -74,6 +74,7 @@ export function AccountEmailCard() {
                 </Field>
                 <button className="btn btn-primary" disabled={busy || !data.enabled || !/^\S+@\S+\.\S+$/.test(email)} onClick={() => send(email)}>{busy ? "…" : "إرسال رمز التأكيد"}</button>
                 {editing && <button className="btn btn-ghost" onClick={() => setEditing(false)}>إلغاء</button>}
+                {email.trim() && !/^\S+@\S+\.\S+$/.test(email) && <p className="w-full text-xs text-red-600">الإيميل ناقص — تأكد من «@» ومن النقطة، مثل: name@gmail.com</p>}
               </div>
             )}
           </>
