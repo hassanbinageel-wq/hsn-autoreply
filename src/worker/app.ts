@@ -727,6 +727,7 @@ export function createApp() {
       await all(
         c.env.DB,
         `SELECT m.id, m.tenant_id, n.name AS tenant_name, m.kind, m.title, m.body, m.link, m.keep_days, m.reminders, m.reminded_at, m.created_at,
+                (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = m.tenant_id) AS tenant_usernames,
                 (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id) AS copies,
                 (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id AND a.read_at IS NOT NULL) AS read,
                 (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id AND a.clicked_at IS NOT NULL) AS clicked
@@ -734,6 +735,27 @@ export function createApp() {
       ),
     ),
   );
+  // One sent message: who got it, who read it, who opened its link.
+  owner.get("/messages/:id", async (c) =>
+    c.json(
+      await all(
+        c.env.DB,
+        `SELECT a.tenant_id, n.name AS tenant_name, (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = a.tenant_id) AS tenant_usernames,
+                a.read_at, a.clicked_at, a.created_at
+           FROM app_notifications a JOIN tenants n ON n.id = a.tenant_id WHERE a.owner_message_id = ? ORDER BY (a.clicked_at IS NULL), (a.read_at IS NULL), n.name LIMIT 1000`,
+        idParam(c),
+      ),
+    ),
+  );
+  // Deletes every sent message (and their copies on the customers' bell).
+  owner.delete("/messages", async (c) => {
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM app_notifications WHERE owner_message_id IS NOT NULL"),
+      c.env.DB.prepare("DELETE FROM owner_messages"),
+    ]);
+    await audit(c.env.DB, T(c), c.get("session").username, "owner.messages_cleared", "all");
+    return c.json({ ok: true });
+  });
   owner.post("/messages/:id/remind", async (c) => {
     if (!(await rateLimit(c.env.DB, "owner_remind", 30, 3_600_000))) return apiError(c, 429, "rate_limited", "تذكيرات كثيرة — جرّب بعد شوي");
     const n = await remindOwnerMessage(c.env, idParam(c)!);

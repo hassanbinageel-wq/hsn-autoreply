@@ -1288,10 +1288,13 @@ function CouponsTab() {
   );
 }
 
-/** Messages and notices already sent: who read them, remind (rings and flashes again), delete. */
+const LINK_LABEL = Object.fromEntries(MESSAGE_LINKS.map((l) => [l.to, l.label]));
+
+/** Messages and notices already sent: who read them, opened the link; remind (rings again), delete. */
 function SentMessages() {
   const { data, reload, loading } = useAsync(() => api<any[]>("/api/owner/messages"), []);
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<number | null>(null);
   // While the list is open it refreshes itself every 30 seconds (read / opened the link).
   useEffect(() => {
     if (!open) return;
@@ -1300,30 +1303,85 @@ function SentMessages() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   if (!data || !data.length) return null;
+  const clearAll = async () => {
+    if (!(await askConfirm({ title: "حذف كل الرسائل المرسلة؟", message: `تنحذف ${data.length} رسالة من سجلك ومن إشعارات كل العملاء. ما يمكن التراجع.`, confirmLabel: "حذف الكل", danger: true }))) return;
+    await api("/api/owner/messages", { method: "DELETE" }).then(() => toast("تم حذف كل الرسائل")).catch((e) => toast(e.message, "bad"));
+    reload();
+  };
   return (
-    <Card title={`📨 الرسائل المرسلة (${data.length})`} action={<div className="flex gap-2"><button className="btn btn-ghost min-h-9 text-xs" disabled={loading} onClick={reload}><Icon name="refresh" size={14} />{loading ? "…" : "تحديث"}</button><button className="btn btn-ghost min-h-9 text-xs" onClick={() => setOpen(!open)}>{open ? "إخفاء" : "عرض"}</button></div>}>
-      {open && <p className="muted mb-2 text-[11px]">🟠 ما قرأها · 🟢 قرأها · 🔵 فتح الرابط — تتحدث تلقائيًا كل 30 ثانية.</p>}
+    <Card
+      title={`📨 الرسائل المرسلة (${data.length})`}
+      action={
+        <div className="flex flex-wrap gap-2">
+          <button className="btn btn-ghost min-h-9 text-xs" disabled={loading} onClick={reload}><Icon name="refresh" size={14} />{loading ? "…" : "تحديث"}</button>
+          {open && <button className="btn btn-ghost min-h-9 text-xs text-red-600" onClick={clearAll}>حذف الكل</button>}
+          <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setOpen(!open)}>{open ? "إخفاء" : "عرض"}</button>
+        </div>
+      }
+    >
+      {open && <p className="muted mb-2 text-[11px]">🟠 ما قرأها · 🟢 قرأها · 🔵 فتح الرابط — اضغط على أي رسالة لتفاصيلها. تتحدث تلقائيًا كل 30 ثانية.</p>}
       {!open ? <p className="muted text-sm">رسائلك السابقة للعملاء: تقدر تذكّرهم فيها مرة ثانية (يوصلهم صوت ووميض) أو تحذفها من عندهم.</p> : (
         <div className="divide-y divide-[var(--border)]">
           {data.map((m) => (
-            <div key={m.id} className="flex flex-wrap items-start gap-3 py-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold">{m.title}</div>
-                <div className="muted text-xs">
-                  {m.tenant_id ? `إلى: ${m.tenant_name ?? "عميل محذوف"}` : "إلى: كل العملاء"} · {fmtTime(m.created_at)} · تبقى {m.keep_days} يوم
-                  {m.reminders ? ` · ذكّرت ${m.reminders} مرة` : ""}
-                </div>
+            <div key={m.id} className="py-3">
+              <div className="flex flex-wrap items-start gap-3">
+                <button type="button" className="min-w-0 flex-1 text-right" onClick={() => setExpanded(expanded === m.id ? null : m.id)} aria-expanded={expanded === m.id}>
+                  <div className="text-sm font-semibold">{expanded === m.id ? "▾" : "◂"} {m.title}</div>
+                  <div className="muted text-xs">
+                    {m.tenant_id ? (
+                      <>إلى: <b className="text-[var(--text)]">{m.tenant_name ?? "عميل محذوف"}</b>{m.tenant_usernames ? <> · اسم المتجر: <b className="text-[var(--text)]" dir="ltr">{m.tenant_usernames}</b></> : null}</>
+                    ) : "إلى: كل العملاء"}
+                    {" · "}{fmtTime(m.created_at)}
+                    {m.reminders ? ` · ذكّرت ${m.reminders} مرة` : ""}
+                  </div>
+                </button>
+                <ReadBox copies={m.copies} read={m.read} clicked={m.clicked} single={!!m.tenant_id} />
               </div>
-              <ReadBox copies={m.copies} read={m.read} clicked={m.clicked} single={!!m.tenant_id} />
-              <div className="flex gap-2">
-                <button className="btn btn-ghost min-h-8 text-xs" onClick={async () => { try { const r = await api<{ sent: number }>(`/api/owner/messages/${m.id}/remind`, { body: {} }); toast(`وصل التذكير لـ ${r.sent}`); reload(); } catch (e: any) { toast(e.message, "bad"); } }}>🔔 تذكير</button>
-                <button className="btn btn-ghost min-h-8 text-xs text-red-600" onClick={async () => { if (await askConfirm({ title: "حذف الرسالة؟", message: "تنحذف من سجلك ومن إشعارات العملاء.", confirmLabel: "حذف", danger: true })) { await api(`/api/owner/messages/${m.id}`, { method: "DELETE" }); reload(); } }}>حذف</button>
-              </div>
+              {expanded === m.id && <MessageDetail m={m} onChange={() => { setExpanded(null); reload(); }} />}
             </div>
           ))}
         </div>
       )}
     </Card>
+  );
+}
+
+/** The full message, where it leads, who got it (per customer for a notice), and its actions. */
+function MessageDetail({ m, onChange }: { m: any; onChange: () => void }) {
+  const { data: who } = useAsync(() => api<any[]>(`/api/owner/messages/${m.id}`), [m.id]);
+  return (
+    <div className="surface-2 mt-2 space-y-3 rounded-2xl p-3 text-sm">
+      <div>
+        <div className="muted text-xs">الموضوع</div>
+        <div className="font-semibold">{m.title}</div>
+      </div>
+      <div>
+        <div className="muted text-xs">نص الرسالة</div>
+        <p className="whitespace-pre-wrap">{m.body || <span className="muted">بدون نص</span>}</p>
+      </div>
+      <div className="muted grid gap-1 text-xs sm:grid-cols-3">
+        <div>يفتح على: <b className="text-[var(--text)]">{LINK_LABEL[m.link ?? "/"] ?? m.link}</b></div>
+        <div>تبقى عنده: <b className="text-[var(--text)]">{m.keep_days} يوم</b></div>
+        <div>أُرسلت: <b className="text-[var(--text)]">{fmtTime(m.created_at)}</b>{m.reminded_at ? ` · آخر تذكير ${fmtTime(m.reminded_at)}` : ""}</div>
+      </div>
+      {!m.tenant_id && who && who.length > 0 && (
+        <div>
+          <div className="muted mb-1 text-xs">العملاء ({who.length})</div>
+          <div className="max-h-48 divide-y divide-[var(--border)] overflow-y-auto rounded-xl bg-[var(--surface)] px-3">
+            {who.map((w) => (
+              <div key={w.tenant_id} className="flex items-center justify-between gap-2 py-1.5 text-xs">
+                <span className="truncate"><b>{w.tenant_name}</b>{w.tenant_usernames ? <span className="muted" dir="ltr"> · {w.tenant_usernames}</span> : null}</span>
+                <ReadBox copies={1} read={w.read_at ? 1 : 0} clicked={w.clicked_at ? 1 : 0} single />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <button className="btn btn-ghost min-h-9 text-xs" onClick={async () => { try { const r = await api<{ sent: number }>(`/api/owner/messages/${m.id}/remind`, { body: {} }); toast(`وصل التذكير لـ ${r.sent}`); onChange(); } catch (e: any) { toast(e.message, "bad"); } }}>🔔 تذكير</button>
+        <button className="btn btn-ghost min-h-9 text-xs text-red-600" onClick={async () => { if (await askConfirm({ title: "حذف الرسالة؟", message: "تنحذف من سجلك ومن إشعارات العملاء.", confirmLabel: "حذف", danger: true })) { await api(`/api/owner/messages/${m.id}`, { method: "DELETE" }); onChange(); } }}>حذف</button>
+      </div>
+    </div>
   );
 }
 

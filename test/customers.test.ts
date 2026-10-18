@@ -138,7 +138,11 @@ describe("owner tools: support, coupons, referrals, health; UTM", () => {
     expect((await call("/api/owner/messages", OWNER)).body[0].clicked).toBe(0);
     await call(`/api/app-notifications/${items[0].id}/click`, a.h, "POST", {});
     sent = (await call("/api/owner/messages", OWNER)).body;
-    expect(sent[0].clicked).toBe(1);
+    expect(sent[0]).toMatchObject({ clicked: 1, tenant_usernames: "shop_a" });
+    const who = (await call(`/api/owner/messages/${sent[0].id}`, OWNER)).body;
+    expect(who).toHaveLength(1);
+    expect(who[0]).toMatchObject({ tenant_id: a.tid, tenant_usernames: "shop_a" });
+    expect(who[0].clicked_at).toBeGreaterThan(0);
     await call(`/api/owner/messages/${sent[0].id}/remind`, OWNER, "POST", {});
     const u = (await call("/api/app-notifications/unread", a.h)).body;
     expect(u.unread).toBe(1);
@@ -153,6 +157,11 @@ describe("owner tools: support, coupons, referrals, health; UTM", () => {
     await call(`/api/owner/messages/${id}`, OWNER, "DELETE");
     expect((await call("/api/app-notifications", a.h)).body.items.filter((n: any) => n.kind === "message")).toEqual([]);
     expect((await call("/api/owner/messages", a.h)).status).toBe(403);
+    // delete all
+    await call(`/api/owner/tenants/${a.tid}/message`, OWNER, "POST", { title: "ثالثة" });
+    await call("/api/owner/messages", OWNER, "DELETE");
+    expect((await call("/api/owner/messages", OWNER)).body).toEqual([]);
+    expect((await call("/api/app-notifications", a.h)).body.items.filter((n: any) => n.kind === "message")).toEqual([]);
   });
 
   it("UTM tags: added to shop links, not to chat links, existing tags kept", () => {
