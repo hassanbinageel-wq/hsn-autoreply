@@ -42,7 +42,7 @@ export function SupportInbox({ mode }: { mode: "customer" | "owner" }) {
                   {!!t.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-pink-600" aria-label="جديد" />}
                   <span className={`chip shrink-0 !py-0 text-[10px] ${t.status === "open" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "surface-2 muted"}`}>{t.status === "open" ? "مفتوحة" : "مغلقة"}</span>
                 </div>
-                {mode === "owner" && <span className="text-xs font-semibold text-[var(--primary)]">{t.tenant_name}</span>}
+                {mode === "owner" && <Who t={t} />}
                 <span className="muted truncate text-xs">{t.last_from === "owner" ? "↩ " : ""}{t.last_body}</span>
                 <span className="muted text-[10.5px]">{fmtTime(t.updated_at)}</span>
               </button>
@@ -130,7 +130,7 @@ function Thread({ id, base, mode, onBack, onChange }: { id: number; base: string
         <button className="btn btn-ghost h-9 w-9 p-0 lg:hidden" aria-label="رجوع" onClick={onBack}>→</button>
         <div className="min-w-0 flex-1">
           <b className="block truncate">{data.thread.subject}</b>
-          {mode === "owner" && <span className="text-xs font-semibold text-[var(--primary)]">{data.thread.tenant_name}</span>}
+          {mode === "owner" && <Who t={data.thread} />}
         </div>
         {mode === "owner" && (
           <button className="btn btn-ghost min-h-9 text-xs" onClick={async () => { await api(`${base}/${id}/status`, { body: { status: data.thread.status === "open" ? "closed" : "open" } }); await load(); onChange(); }}>
@@ -167,5 +167,19 @@ export function OwnerSupportTab() {
     <Card title="رسائل الدعم من العملاء">
       <SupportInbox mode="owner" />
     </Card>
+  );
+}
+
+/** Who wrote: the customer's name, login username(s), Instagram account and store. */
+function Who({ t }: { t: any }) {
+  return (
+    <span className="text-xs">
+      <b className="text-[var(--primary)]">{t.tenant_name}</b>
+      <span className="muted">
+        {t.tenant_usernames ? ` · المستخدم: ${t.tenant_usernames}` : ""}
+        {t.ig_username ? ` · @${t.ig_username}` : ""}
+        {t.store_name ? ` · 🛍️ ${t.store_name}` : ""}
+      </span>
+    </span>
   );
 }

@@ -104,7 +104,10 @@ export function NotificationBell({ route, onAlert }: { route: string; onAlert?: 
         <div className="card fixed inset-x-3 top-16 z-50 max-h-[70vh] overflow-hidden p-0 shadow-xl sm:absolute sm:inset-x-auto sm:left-0 sm:top-12 sm:w-96" role="dialog" aria-label="الإشعارات المهمة">
           <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
             <b className="text-sm">الإشعارات المهمة</b>
-            <Link to="/settings" className="muted text-xs hover:underline">تيليجرام والإعدادات</Link>
+            <div className="flex items-center gap-3">
+              {!!items?.length && <button type="button" className="muted text-xs hover:underline" onClick={async () => { await api("/api/app-notifications", { method: "DELETE" }).catch(() => undefined); setItems([]); }}>مسح الكل</button>}
+              <Link to="/settings" className="muted text-xs hover:underline">الإعدادات</Link>
+            </div>
           </div>
           <div className="max-h-[calc(70vh-3rem)] divide-y divide-[var(--border)] overflow-y-auto">
             {!items ? (
@@ -118,9 +121,22 @@ export function NotificationBell({ route, onAlert }: { route: string; onAlert?: 
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold">{n.title.replace(/^\p{Extended_Pictographic}️?\s*/u, "")}</div>
                     {n.body && <p className="muted mt-0.5 whitespace-pre-line text-xs leading-relaxed">{n.body}</p>}
-                    <div className="muted mt-1 text-[10.5px]">{fmtTime(n.created_at)}</div>
+                    <div className="muted mt-1 text-[10.5px]">{fmtTime(n.created_at)}{n.expires_at ? ` · يختفي بعد ${Math.max(1, Math.ceil((n.expires_at - Date.now()) / 86_400_000))} يوم` : ""}</div>
                   </div>
                   {!n.read_at && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-pink-600" aria-label="جديد" />}
+                  <button
+                    type="button"
+                    className="muted -m-1 h-7 w-7 shrink-0 rounded-lg text-sm hover:bg-[var(--surface)]"
+                    aria-label="حذف الإشعار"
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      await api(`/api/app-notifications/${n.id}`, { method: "DELETE" }).catch(() => undefined);
+                      setItems((l) => (l ?? []).filter((x) => x.id !== n.id));
+                    }}
+                  >
+                    ×
+                  </button>
                 </Link>
               ))
             )}

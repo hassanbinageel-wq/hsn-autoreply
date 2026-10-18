@@ -104,8 +104,16 @@ export const templateInputSchema = z.object({
   body: text(900).min(1),
 });
 
+/**
+ * Usernames: English or Arabic letters, digits, _ . - (3–64). Invisible direction marks that RTL keyboards add,
+ * Arabic diacritics and tatweel are removed, so what the person sees is what is stored and compared.
+ */
+export const normUsername = (v: string) => v.normalize("NFC").replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u064B-\u0652\u0640]/g, "").trim();
+const USERNAME_RE = /^[A-Za-z0-9_.\-\u0621-\u063A\u0641-\u064A\u0660-\u0669]{3,64}$/;
+const username = () => z.string().max(200).transform(normUsername).pipe(z.string().regex(USERNAME_RE, "اسم المستخدم: 3 أحرف على الأقل (عربي أو إنجليزي) وأرقام، بدون مسافات"));
+
 export const loginSchema = z.object({
-  username: text(64).min(1),
+  username: z.string().max(200).transform(normUsername).pipe(z.string().min(1).max(64)),
   password: z.string().min(1).max(256),
   client: z.enum(["web", "app"]).default("web"),
   device_label: optText(80),
@@ -113,20 +121,20 @@ export const loginSchema = z.object({
 
 export const setupSchema = z.object({
   setup_token: z.string().min(16).max(256),
-  username: text(64).regex(/^[A-Za-z0-9_.-]{3,64}$/, "اسم المستخدم: أحرف إنجليزية وأرقام فقط"),
+  username: username(),
   password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
 });
 
 export const tenantCreateSchema = z.object({
   name: text(80).min(2, "اكتب اسم العميل"),
-  username: text(64).regex(/^[A-Za-z0-9_.-]{3,64}$/, "اسم المستخدم: أحرف إنجليزية وأرقام فقط"),
+  username: username(),
   password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
   notes: text(500).optional(),
 });
 
 export const registerSchema = z.object({
   name: text(80).min(2, "اكتب اسمك أو اسم متجرك"),
-  username: text(64).regex(/^[A-Za-z0-9_.-]{3,64}$/, "اسم المستخدم: أحرف إنجليزية وأرقام فقط"),
+  username: username(),
   password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
   code: z.string().trim().min(4, "أدخل كود التفعيل").max(40),
   ref: z.string().trim().max(20).optional(),

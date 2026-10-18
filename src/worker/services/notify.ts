@@ -152,8 +152,8 @@ export async function addAppNotification(db: D1Database, tenantId: number, kind:
   if (link === undefined) return;
   const [title, ...rest] = text.split("\n");
   await db
-    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(tenantId, kind, title.slice(0, 200), rest.join("\n").trim().slice(0, 1000) || null, link, now)
+    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(tenantId, kind, title.slice(0, 200), rest.join("\n").trim().slice(0, 1000) || null, link, now + NOTIFICATION_KEEP_DAYS * 86_400_000, now)
     .run();
 }
 
@@ -304,11 +304,72 @@ export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number>
   return sent;
 }
 
-/** The owner's notice to every active customer (maintenance, an interruption, service back) — in the app only. */
+/** How long bell notifications stay: system ones 30 days; owner messages as the owner chose. */
+export const NOTIFICATION_KEEP_DAYS = 30;
+export const OWNER_MESSAGE_DAYS = [3, 7, 30, 90] as const;
+
+/**
+ * A message from the owner — to one customer (tenantId) or every active customer (null, a notice). Kept as a
+ * history entry so it can be reminded or deleted later; on the customer's bell until it expires.
+ */
+export async function sendOwnerMessage(env: Env, o: { tenantId: number | null; title: string; body: string | null; link: string; days: number }, now = Date.now()): Promise<{ id: number; sent: number }> {
+  const kind = o.tenantId === null ? "service" : "message";
+  const m = await first<{ id: number }>(
+    env.DB,
+    "INSERT INTO owner_messages (tenant_id, kind, title, body, link, keep_days, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    o.tenantId,
+    kind,
+    o.title.slice(0, 200),
+    o.body?.slice(0, 1000) || null,
+    o.link,
+    o.days,
+    now,
+  );
+  const sent = await deliverOwnerMessage(env, m!.id, null, now);
+  return { id: m!.id, sent };
+}
+
+/** Puts an owner message (again) on the bell of its customer(s), unread — a reminder rings and flashes again. */
+async function deliverOwnerMessage(env: Env, id: number, prefix: string | null, now: number): Promise<number> {
+  const m = await first<{ id: number; tenant_id: number | null; kind: string; title: string; body: string | null; link: string | null; keep_days: number }>(env.DB, "SELECT * FROM owner_messages WHERE id = ?", id);
+  if (!m) return 0;
+  const title = `${prefix ?? ""}${m.kind === "message" ? "✉️ " : ""}${m.title}`.slice(0, 220);
+  const expires = now + m.keep_days * 86_400_000;
+  if (m.tenant_id === null) {
+    const r = await env.DB
+      .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, expires_at, owner_message_id, created_at) SELECT id, 'service', ?, ?, ?, ?, ?, ? FROM tenants WHERE status = 'active' AND is_owner = 0")
+      .bind(title, m.body, m.link ?? "/", expires, m.id, now)
+      .run();
+    return r.meta.changes ?? 0;
+  }
+  await env.DB
+    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, expires_at, owner_message_id, created_at) VALUES (?, 'message', ?, ?, ?, ?, ?, ?)")
+    .bind(m.tenant_id, title, m.body, m.link ?? "/", expires, m.id, now)
+    .run();
+  // A private message also goes to the customer's Telegram when they set it up.
+  const s = await getNotifySettings(env.DB, m.tenant_id);
+  if (s.enabled && s.chat_id) await sendTelegram(env, m.tenant_id, `${title}${m.body ? `\n${m.body}` : ""}`, s).catch(() => undefined);
+  return 1;
+}
+
+/** A reminder: the earlier copies leave the bell and one fresh, unread copy arrives (ring + flash). */
+export async function remindOwnerMessage(env: Env, id: number, now = Date.now()): Promise<number> {
+  await env.DB.prepare("DELETE FROM app_notifications WHERE owner_message_id = ?").bind(id).run();
+  const n = await deliverOwnerMessage(env, id, "🔔 تذكير: ", now);
+  if (n) await env.DB.prepare("UPDATE owner_messages SET reminders = reminders + 1, reminded_at = ? WHERE id = ?").bind(now, id).run();
+  return n;
+}
+
+/** Deletes an owner message from the history and from every customer's bell. */
+export async function deleteOwnerMessage(db: D1Database, id: number): Promise<void> {
+  await db.batch([db.prepare("DELETE FROM app_notifications WHERE owner_message_id = ?").bind(id), db.prepare("DELETE FROM owner_messages WHERE id = ?").bind(id)]);
+}
+
+/** The owner's notice to every active customer — kept for tests and older callers. */
 export async function broadcastNotice(db: D1Database, title: string, body: string | null, now = Date.now(), link = "/"): Promise<number> {
   const r = await db
-    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, created_at) SELECT id, 'service', ?, ?, ?, ? FROM tenants WHERE status = 'active' AND is_owner = 0")
-    .bind(title.slice(0, 200), body?.slice(0, 1000) || null, link, now)
+    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, expires_at, created_at) SELECT id, 'service', ?, ?, ?, ?, ? FROM tenants WHERE status = 'active' AND is_owner = 0")
+    .bind(title.slice(0, 200), body?.slice(0, 1000) || null, link, now + NOTIFICATION_KEEP_DAYS * 86_400_000, now)
     .run();
   return r.meta.changes ?? 0;
 }

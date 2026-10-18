@@ -11,9 +11,12 @@ const DAY = 86_400_000;
 // ---- health ----------------------------------------------------------------------------------------------------
 
 export async function customerHealth(db: D1Database, now = Date.now()) {
-  const rows = await all<{ id: number; name: string; status: string; plan_id: string | null; plan_expires_at: number | null; created_at: number; last_seen: number | null; ig_status: string | null; active_campaigns: number; people_7d: number; open_support: number }>(
+  const rows = await all<{ id: number; name: string; status: string; plan_id: string | null; plan_expires_at: number | null; created_at: number; last_seen: number | null; ig_status: string | null; active_campaigns: number; people_7d: number; open_support: number; usernames: string | null; ig_username: string | null; store_name: string | null }>(
     db,
     `SELECT t.id, t.name, t.status, t.plan_id, t.plan_expires_at, t.created_at,
+            (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.id) AS usernames,
+            (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.id ORDER BY a.id DESC LIMIT 1) AS ig_username,
+            (SELECT st.name FROM stores st WHERE st.tenant_id = t.id AND st.status != 'disconnected' ORDER BY st.id DESC LIMIT 1) AS store_name,
             (SELECT MAX(s.last_seen_at) FROM sessions s JOIN admin_users u ON u.id = s.user_id WHERE u.tenant_id = t.id) AS last_seen,
             (SELECT a.status FROM instagram_accounts a WHERE a.tenant_id = t.id ORDER BY a.id DESC LIMIT 1) AS ig_status,
             (SELECT COUNT(*) FROM campaigns c WHERE c.tenant_id = t.id AND c.status = 'active' AND c.deleted_at IS NULL) AS active_campaigns,
@@ -46,6 +49,9 @@ export async function customerHealth(db: D1Database, now = Date.now()) {
     out.push({
       id: r.id,
       name: r.name,
+      usernames: r.usernames,
+      ig_username: r.ig_username,
+      store_name: r.store_name,
       status: r.status,
       plan: ent.plan?.name ?? r.plan_id,
       days_left: daysLeft,

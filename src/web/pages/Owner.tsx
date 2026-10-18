@@ -53,7 +53,7 @@ function NewCustomer({ onClose, onDone }: { onClose: () => void; onDone: () => v
     <Modal open onClose={onClose} title="عميل جديد">
       <div className="space-y-3">
         <Field label="اسم العميل (المتجر أو الشخص)"><input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} /></Field>
-        <Field label="اسم المستخدم للدخول" hint="أحرف إنجليزية وأرقام فقط، مثل: shop_noor">
+        <Field label="اسم المستخدم للدخول" hint="حروف عربية أو إنجليزية وأرقام بدون مسافات، مثل: shop_noor أو متجر_نور">
           <input className="input" dir="ltr" value={username} onChange={(e) => setUsername(e.target.value.replace(/\s/g, ""))} maxLength={64} />
         </Field>
         <Field label="كلمة المرور المؤقتة" hint="12 حرفًا على الأقل. أنشأنا لك واحدة قوية.">
@@ -513,7 +513,7 @@ export function OwnerPage() {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <><BroadcastCard /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <PaymentsTab /> : <BrandingTab />}
+      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <PaymentsTab /> : <BrandingTab />}
     </div>
   );
 }
@@ -1051,6 +1051,7 @@ const NOTICE_TEMPLATES: Array<{ label: string; title: string; body: string }> = 
 function BroadcastCard() {
   const [open, setOpen] = useState(false);
   const [link, setLink] = useState("/");
+  const [days, setDays] = useState(7);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1058,7 +1059,7 @@ function BroadcastCard() {
     if (!(await askConfirm({ title: "إرسال لكل العملاء؟", message: `يوصل الإشعار في جرس «الإشعارات المهمة» عند كل العملاء النشطين:\n\n${title}`, confirmLabel: "أرسل" }))) return;
     setBusy(true);
     try {
-      const r = await api<{ sent: number }>("/api/owner/broadcast", { body: { title, body: body || undefined, link } });
+      const r = await api<{ sent: number }>("/api/owner/broadcast", { body: { title, body: body || undefined, link, days } });
       toast(`وصل لـ ${r.sent} عميل`);
       setOpen(false);
       setTitle("");
@@ -1080,7 +1081,7 @@ function BroadcastCard() {
           </div>
           <input className="input" placeholder="العنوان" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
           <textarea className="input min-h-[6rem]" placeholder="التفاصيل (اختياري)" maxLength={1000} value={body} onChange={(e) => setBody(e.target.value)} />
-          <LinkSelect value={link} onChange={setLink} />
+          <div className="grid gap-3 sm:grid-cols-2"><LinkSelect value={link} onChange={setLink} /><DaysSelect value={days} onChange={setDays} /></div>
           <div className="flex gap-2">
             <button className="btn btn-primary" disabled={busy || title.trim().length < 3} onClick={send}>{busy ? "…" : "إرسال للعملاء"}</button>
             <button className="btn btn-ghost" onClick={() => setOpen(false)}>إلغاء</button>
@@ -1092,6 +1093,17 @@ function BroadcastCard() {
 }
 
 /** A private message from the owner to one customer: their bell, and their Telegram when they set it up. */
+function DaysSelect({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <label className="block">
+      <span className="muted text-xs">تبقى في إشعارات العميل لمدة:</span>
+      <select className="input mt-1" value={value} onChange={(e) => onChange(Number(e.target.value))}>
+        {[3, 7, 30, 90].map((d) => <option key={d} value={d}>{d === 3 ? "3 أيام" : d === 7 ? "أسبوع" : d === 30 ? "شهر" : "3 شهور"}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function LinkSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <label className="block">
@@ -1105,13 +1117,14 @@ function LinkSelect({ value, onChange }: { value: string; onChange: (v: string) 
 
 function MessageModal({ tenant, onClose }: { tenant: any; onClose: () => void }) {
   const [link, setLink] = useState("/");
+  const [days, setDays] = useState(30);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const send = async () => {
     setBusy(true);
     try {
-      const r = await api<{ telegram: boolean }>(`/api/owner/tenants/${tenant.id}/message`, { body: { title, body: body || undefined, link } });
+      const r = await api<{ telegram: boolean }>(`/api/owner/tenants/${tenant.id}/message`, { body: { title, body: body || undefined, link, days } });
       toast(r.telegram ? "وصلت الرسالة (في التطبيق وتيليجرام)" : "وصلت الرسالة في التطبيق");
       onClose();
     } catch (e: any) {
@@ -1126,7 +1139,7 @@ function MessageModal({ tenant, onClose }: { tenant: any; onClose: () => void })
         <p className="muted text-xs">توصل في جرس «الإشعارات المهمة» عنده مع صوت تنبيه ووميض بسيط في الشريط العلوي، وعلى تيليجرام إذا مفعّله. هو بس اللي يشوفها.</p>
         <input className="input" placeholder="العنوان (مثل: تجديد اشتراكك، ميزة جديدة لك…)" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
         <textarea className="input min-h-[8rem]" placeholder="نص الرسالة" maxLength={1000} value={body} onChange={(e) => setBody(e.target.value)} />
-        <LinkSelect value={link} onChange={setLink} />
+        <div className="grid gap-3 sm:grid-cols-2"><LinkSelect value={link} onChange={setLink} /><DaysSelect value={days} onChange={setDays} /></div>
         <div className="flex justify-end gap-2">
           <button className="btn btn-ghost" onClick={onClose}>إلغاء</button>
           <button className="btn btn-primary" disabled={busy || title.trim().length < 3} onClick={send}>{busy ? "…" : "إرسال"}</button>
@@ -1165,6 +1178,11 @@ function HealthTab() {
         <div className="grid gap-3 md:grid-cols-2">
           {list.map((c: any) => (
             <Card key={c.id} title={<span className="flex items-center gap-2">{c.name}<span className={`chip !py-0 text-[10.5px] ${RISK[c.risk].cls}`}>{RISK[c.risk].label}</span></span>} action={<button className="btn btn-ghost min-h-9 text-xs" onClick={() => setMessageFor(c)}><Icon name="send" size={14} />رسالة</button>}>
+              <div className="muted mb-2 text-xs">
+                المستخدم: <b className="text-[var(--text)]">{c.usernames ?? "—"}</b>
+                {c.ig_username ? <> · إنستقرام: <b className="text-[var(--text)]" dir="ltr">@{c.ig_username}</b></> : null}
+                {c.store_name ? <> · المتجر: <b className="text-[var(--text)]">🛍️ {c.store_name}</b></> : null}
+              </div>
               {c.reasons.length > 0 && (
                 <ul className="mb-3 space-y-1 text-sm">
                   {c.reasons.map((r: string) => <li key={r}>• {r}</li>)}
@@ -1266,5 +1284,36 @@ function CouponsTab() {
         )}
       </Card>
     </div>
+  );
+}
+
+/** Messages and notices already sent: who read them, remind (rings and flashes again), delete. */
+function SentMessages() {
+  const { data, reload } = useAsync(() => api<any[]>("/api/owner/messages"), []);
+  const [open, setOpen] = useState(false);
+  if (!data || !data.length) return null;
+  return (
+    <Card title={`📨 الرسائل المرسلة (${data.length})`} action={<button className="btn btn-ghost min-h-9 text-xs" onClick={() => setOpen(!open)}>{open ? "إخفاء" : "عرض"}</button>}>
+      {!open ? <p className="muted text-sm">رسائلك السابقة للعملاء: تقدر تذكّرهم فيها مرة ثانية (يوصلهم صوت ووميض) أو تحذفها من عندهم.</p> : (
+        <div className="divide-y divide-[var(--border)]">
+          {data.map((m) => (
+            <div key={m.id} className="flex flex-wrap items-start gap-3 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">{m.title}</div>
+                <div className="muted text-xs">
+                  {m.tenant_id ? `إلى: ${m.tenant_name ?? "عميل محذوف"}` : "إلى: كل العملاء"} · {fmtTime(m.created_at)} · تبقى {m.keep_days} يوم
+                  {m.copies > 0 ? ` · قرأها ${m.read} من ${m.copies}` : " · انحذفت من عندهم"}
+                  {m.reminders ? ` · ذكّرت ${m.reminders} مرة` : ""}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button className="btn btn-ghost min-h-8 text-xs" onClick={async () => { try { const r = await api<{ sent: number }>(`/api/owner/messages/${m.id}/remind`, { body: {} }); toast(`وصل التذكير لـ ${r.sent}`); reload(); } catch (e: any) { toast(e.message, "bad"); } }}>🔔 تذكير</button>
+                <button className="btn btn-ghost min-h-8 text-xs text-red-600" onClick={async () => { if (await askConfirm({ title: "حذف الرسالة؟", message: "تنحذف من سجلك ومن إشعارات العملاء.", confirmLabel: "حذف", danger: true })) { await api(`/api/owner/messages/${m.id}`, { method: "DELETE" }); reload(); } }}>حذف</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }

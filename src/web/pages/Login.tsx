@@ -156,7 +156,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               </Field>
             </>
           )}
-          <Field label="اسم المستخدم" hint={register && !status?.needs_setup ? "أحرف إنجليزية وأرقام فقط" : undefined}>
+          <Field label="اسم المستخدم" hint={register && !status?.needs_setup ? "حروف عربية أو إنجليزية وأرقام، بدون مسافات" : undefined}>
             <input className="input" dir="ltr" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
           </Field>
           <Field label="كلمة المرور" hint={status?.needs_setup || register ? "12 حرفًا على الأقل" : undefined}>

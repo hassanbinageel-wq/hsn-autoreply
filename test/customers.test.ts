@@ -104,6 +104,48 @@ describe("owner tools: support, coupons, referrals, health; UTM", () => {
     expect((await call("/api/owner/health", a.h)).status).toBe(403);
   });
 
+  it("usernames: Arabic allowed, invisible direction marks removed (sign-up and login)", async () => {
+    const c = await code();
+    expect((await call("/api/auth/register", {}, "POST", { name: "متجر نور", username: "\u200Fمتجر_نور", password: "another-strong-password", code: c })).status).toBe(200);
+    expect((await call("/api/auth/login", {}, "POST", { username: "متجر_نور\u200E", password: "another-strong-password", client: "app" })).body.token).toBeTruthy();
+    expect((await call("/api/auth/register", {}, "POST", { name: "x", username: "a b", password: "another-strong-password", code: await code() })).status).toBe(422);
+  });
+
+  it("a discount code typed in the activation box says where it goes", async () => {
+    const a = await register("shop_a");
+    await call("/api/owner/coupons", OWNER, "POST", { code: "RAMADAN", percent: 20 });
+    const r = await call("/api/subscription/redeem", a.h, "POST", { code: "ramadan" });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatchObject({ code: "is_coupon" });
+    expect(r.body.error.message).toContain("عندك كود خصم");
+  });
+
+  it("owner messages: expiry, reminder (fresh unread copy), delete everywhere; customers delete their own", async () => {
+    const a = await register("shop_a");
+    await call(`/api/owner/tenants/${a.tid}/message`, OWNER, "POST", { title: "عرض التجديد", link: "/subscription", days: 7 });
+    let items = (await call("/api/app-notifications", a.h)).body.items.filter((n: any) => n.kind === "message");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ title: "✉️ عرض التجديد", link: "/subscription" });
+    expect(items[0].expires_at - Date.now()).toBeGreaterThan(6.9 * DAY);
+    await call("/api/app-notifications/read", a.h, "POST", {});
+    const sent = (await call("/api/owner/messages", OWNER)).body;
+    expect(sent[0]).toMatchObject({ tenant_id: a.tid, copies: 1, read: 1 });
+    await call(`/api/owner/messages/${sent[0].id}/remind`, OWNER, "POST", {});
+    const u = (await call("/api/app-notifications/unread", a.h)).body;
+    expect(u.unread).toBe(1);
+    expect(u.latest).toMatchObject({ kind: "message" });
+    items = (await call("/api/app-notifications", a.h)).body.items.filter((n: any) => n.kind === "message");
+    expect(items.map((n: any) => n.title)).toEqual(["🔔 تذكير: ✉️ عرض التجديد"]);
+    // the customer deletes it; then the owner deletes the message
+    await call(`/api/app-notifications/${items[0].id}`, a.h, "DELETE");
+    expect((await call("/api/app-notifications", a.h)).body.items.filter((n: any) => n.kind === "message")).toEqual([]);
+    await call(`/api/owner/tenants/${a.tid}/message`, OWNER, "POST", { title: "رسالة ثانية" });
+    const id = (await call("/api/owner/messages", OWNER)).body[0].id;
+    await call(`/api/owner/messages/${id}`, OWNER, "DELETE");
+    expect((await call("/api/app-notifications", a.h)).body.items.filter((n: any) => n.kind === "message")).toEqual([]);
+    expect((await call("/api/owner/messages", a.h)).status).toBe(403);
+  });
+
   it("UTM tags: added to shop links, not to chat links, existing tags kept", () => {
     expect(withUtm("https://demo.salla.sa/p1", "ريل الجاكيت")).toBe(`https://demo.salla.sa/p1?utm_source=instagram&utm_medium=hsn&utm_campaign=${encodeURIComponent("ريل-الجاكيت")}`);
     expect(withUtm("https://wa.me/966500000000", "x")).toBe("https://wa.me/966500000000");

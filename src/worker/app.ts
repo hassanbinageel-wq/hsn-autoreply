@@ -57,7 +57,7 @@ import {
 import { claimsDelivery, claimsFollowRequired, publicReplyVariants } from "../shared/template";
 import { cacheMediaStmt } from "./services/media";
 import { INBOX_LABELS, markRead, recordMessage, refreshAvatars, type InboxLabel } from "./services/inbox";
-import { broadcastNotice, buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, notify, saveBotToken, sendTelegram } from "./services/notify";
+import { buildDailyReport, deleteOwnerMessage, detectChat, getNotifySettings, hasBotToken, isTelegramToken, notify, remindOwnerMessage, saveBotToken, sendOwnerMessage, sendTelegram } from "./services/notify";
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
@@ -689,6 +689,11 @@ export function createApp() {
     const p = await parseBody(c, z.object({ code: z.string().trim().min(4).max(40) }));
     if (!p.ok) return p.res;
     if (c.get("session").is_owner) return apiError(c, 409, "owner", "حساب المالك لا يحتاج اشتراكًا");
+    // A discount code typed in the activation box: say where it goes.
+    if (!/^HSN-/i.test(p.data.code.trim())) {
+      const cp = await findCoupon(c.env.DB, p.data.code);
+      if (cp) return apiError(c, 422, "is_coupon", `«${cp.code}» كود خصم ${cp.percent}% وليس كود تفعيل — استخدمه تحت في «الباقات وطرق الدفع» ← «عندك كود خصم؟» عشان يطلع لك السعر بعد الخصم.`);
+    }
     try {
       const r = await redeemCode(c.env.DB, T(c), p.data.code);
       await audit(c.env.DB, T(c), c.get("session").username, "subscription.redeemed", r.plan_id, { expires_at: r.expires_at });
@@ -707,12 +712,34 @@ export function createApp() {
   });
   // A notice to every active customer's bell (maintenance, an interruption, service back).
   owner.post("/broadcast", async (c) => {
-    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional(), link: z.enum(MESSAGE_LINK_PATHS).optional() }));
+    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional(), link: z.enum(MESSAGE_LINK_PATHS).optional(), days: z.number().int().min(1).max(365).optional() }));
     if (!p.ok) return p.res;
     if (!(await rateLimit(c.env.DB, "owner_broadcast", 10, 3_600_000))) return apiError(c, 429, "rate_limited", "أرسلت إشعارات كثيرة — جرّب بعد شوي");
-    const n = await broadcastNotice(c.env.DB, p.data.title, p.data.body ?? null, Date.now(), p.data.link ?? "/");
-    await audit(c.env.DB, T(c), c.get("session").username, "owner.broadcast", String(n), { title: p.data.title });
+    const r = await sendOwnerMessage(c.env, { tenantId: null, title: p.data.title, body: p.data.body ?? null, link: p.data.link ?? "/", days: p.data.days ?? 7 });
+    await audit(c.env.DB, T(c), c.get("session").username, "owner.broadcast", String(r.sent), { title: p.data.title });
+    return c.json({ ok: true, sent: r.sent });
+  });
+  // Sent messages: remind (rings and flashes again) or delete (also from the customers' bell).
+  owner.get("/messages", async (c) =>
+    c.json(
+      await all(
+        c.env.DB,
+        `SELECT m.id, m.tenant_id, n.name AS tenant_name, m.kind, m.title, m.body, m.link, m.keep_days, m.reminders, m.reminded_at, m.created_at,
+                (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id) AS copies,
+                (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id AND a.read_at IS NOT NULL) AS read
+           FROM owner_messages m LEFT JOIN tenants n ON n.id = m.tenant_id ORDER BY m.id DESC LIMIT 50`,
+      ),
+    ),
+  );
+  owner.post("/messages/:id/remind", async (c) => {
+    if (!(await rateLimit(c.env.DB, "owner_remind", 30, 3_600_000))) return apiError(c, 429, "rate_limited", "تذكيرات كثيرة — جرّب بعد شوي");
+    const n = await remindOwnerMessage(c.env, idParam(c)!);
+    if (!n) return apiError(c, 404, "not_found", "الرسالة غير موجودة أو ما فيه عملاء نشطين");
     return c.json({ ok: true, sent: n });
+  });
+  owner.delete("/messages/:id", async (c) => {
+    await deleteOwnerMessage(c.env.DB, idParam(c)!);
+    return c.json({ ok: true });
   });
   // Customer health: who may be about to leave, and why.
   owner.get("/health", async (c) => c.json({ customers: await customerHealth(c.env.DB) }));
@@ -774,6 +801,9 @@ export function createApp() {
       await all(
         c.env.DB,
         `SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.status, t.last_from, t.updated_at,
+                (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.tenant_id) AS tenant_usernames,
+                (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.tenant_id ORDER BY a.id DESC LIMIT 1) AS ig_username,
+                (SELECT st.name FROM stores st WHERE st.tenant_id = t.tenant_id AND st.status != 'disconnected' ORDER BY st.id DESC LIMIT 1) AS store_name,
                 (t.last_from = 'customer' AND COALESCE(t.owner_read_at, 0) < t.updated_at) AS unread,
                 (SELECT body FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_body
            FROM support_threads t JOIN tenants n ON n.id = t.tenant_id ORDER BY (t.status = 'open') DESC, t.updated_at DESC LIMIT 200`,
@@ -782,7 +812,15 @@ export function createApp() {
   );
   owner.get("/support/:id", async (c) => {
     const id = idParam(c);
-    const t = await first(c.env.DB, "SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.status, t.created_at FROM support_threads t JOIN tenants n ON n.id = t.tenant_id WHERE t.id = ?", id);
+    const t = await first(
+      c.env.DB,
+      `SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.status, t.created_at,
+              (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.tenant_id) AS tenant_usernames,
+                (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.tenant_id ORDER BY a.id DESC LIMIT 1) AS ig_username,
+                (SELECT st.name FROM stores st WHERE st.tenant_id = t.tenant_id AND st.status != 'disconnected' ORDER BY st.id DESC LIMIT 1) AS store_name
+         FROM support_threads t JOIN tenants n ON n.id = t.tenant_id WHERE t.id = ?`,
+      id,
+    );
     if (!t) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
     await run(c.env.DB, "UPDATE support_threads SET owner_read_at = ? WHERE id = ?", Date.now(), id);
     return c.json({ thread: t, messages: await all(c.env.DB, "SELECT id, sender, body, created_at FROM support_messages WHERE thread_id = ? ORDER BY id LIMIT 500", id) });
@@ -808,13 +846,12 @@ export function createApp() {
   // A private message to one customer: their bell, and their Telegram when they set it up.
   owner.post("/tenants/:id/message", async (c) => {
     const id = idParam(c);
-    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional(), link: z.enum(MESSAGE_LINK_PATHS).optional() }));
+    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional(), link: z.enum(MESSAGE_LINK_PATHS).optional(), days: z.number().int().min(1).max(365).optional() }));
     if (!p.ok) return p.res;
     const t = id && (await first<{ id: number; is_owner: number }>(c.env.DB, "SELECT id, is_owner FROM tenants WHERE id = ?", id));
     if (!t || t.is_owner) return apiError(c, 404, "not_found", "العميل غير موجود");
     if (!(await rateLimit(c.env.DB, "owner_message", 60, 3_600_000))) return apiError(c, 429, "rate_limited", "أرسلت رسائل كثيرة — جرّب بعد شوي");
-    const text = `✉️ ${p.data.title}${p.data.body ? `\n${p.data.body}` : ""}`;
-    await notify(c.env, t.id, "message", text, undefined, { link: p.data.link ?? "/" });
+    await sendOwnerMessage(c.env, { tenantId: t.id, title: p.data.title, body: p.data.body ?? null, link: p.data.link ?? "/", days: p.data.days ?? 30 });
     const s = await getNotifySettings(c.env.DB, t.id);
     await audit(c.env.DB, T(c), c.get("session").username, "owner.message", String(t.id), { title: p.data.title });
     return c.json({ ok: true, telegram: !!s.enabled && !!s.chat_id });
@@ -2834,7 +2871,7 @@ export function createApp() {
   // ---- Important notifications (the bell)
   api.get("/app-notifications", async (c) => {
     const [items, unread] = await Promise.all([
-      all(c.env.DB, "SELECT id, kind, title, body, link, read_at, created_at FROM app_notifications WHERE tenant_id = ? ORDER BY id DESC LIMIT 50", T(c)),
+      all(c.env.DB, "SELECT id, kind, title, body, link, read_at, expires_at, owner_message_id, created_at FROM app_notifications WHERE tenant_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY id DESC LIMIT 50", T(c), Date.now()),
       first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM app_notifications WHERE tenant_id = ? AND read_at IS NULL", T(c)),
     ]);
     return c.json({ items, unread: unread?.n ?? 0 });
@@ -2846,6 +2883,15 @@ export function createApp() {
       first<{ id: number; kind: string; title: string }>(c.env.DB, "SELECT id, kind, title FROM app_notifications WHERE tenant_id = ? AND read_at IS NULL ORDER BY id DESC LIMIT 1", T(c)),
     ]);
     return c.json({ unread: n?.n ?? 0, latest: latest ?? null });
+  });
+  api.delete("/app-notifications/:id", async (c) => {
+    await run(c.env.DB, "DELETE FROM app_notifications WHERE id = ? AND tenant_id = ?", idParam(c), T(c));
+    return c.json({ ok: true });
+  });
+  // Clears every read notification of the bell.
+  api.delete("/app-notifications", async (c) => {
+    await run(c.env.DB, "DELETE FROM app_notifications WHERE tenant_id = ? AND read_at IS NOT NULL", T(c));
+    return c.json({ ok: true });
   });
   api.post("/app-notifications/read", async (c) => {
     await run(c.env.DB, "UPDATE app_notifications SET read_at = ? WHERE tenant_id = ? AND read_at IS NULL", Date.now(), T(c));

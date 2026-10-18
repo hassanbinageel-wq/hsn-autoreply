@@ -66,10 +66,10 @@ export function SubscriptionPage() {
           )}
         </Card>
         <Card title="تفعيل كود">
-          <p className="muted mb-3 text-sm">أدخل كود التفعيل اللي وصلك بعد الاشتراك. إذا كان اشتراكك ما زال فعّالًا، تُضاف المدة الجديدة بعد تاريخ انتهائه.</p>
+          <p className="muted mb-3 text-sm">أدخل <b>كود التفعيل</b> اللي وصلك بعد الدفع (يبدأ بـ HSN-). إذا كان اشتراكك ما زال فعّالًا، تُضاف المدة الجديدة بعد تاريخ انتهائه. <b>كود الخصم</b> مكانه تحت في الباقات ← «عندك كود خصم؟».</p>
           <div className="flex gap-2">
             <input className="input" dir="ltr" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="HSN-XXXX-XXXX-XXXX" aria-label="كود التفعيل" />
-            <button className="btn btn-primary shrink-0" disabled={busy || code.trim().length < 12} onClick={redeem}>{busy ? "…" : "تفعيل"}</button>
+            <button className="btn btn-primary shrink-0" disabled={busy || code.trim().length < 4} onClick={redeem}>{busy ? "…" : "تفعيل"}</button>
           </div>
           {data.sales_contact && (
             <a className="btn btn-ghost mt-4 w-full" href={data.sales_contact} target="_blank" rel="noopener"><Icon name="send" size={17} />تواصل معنا لشراء أو ترقية الباقة</a>
