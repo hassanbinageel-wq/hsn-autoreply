@@ -5,7 +5,7 @@ import { Icon } from "./Icon";
 import { fmtTime } from "./ui";
 
 /** Important notifications (stock, disconnected account, failures, subscription, story suggestions) behind the bell. */
-const KIND_ICON: Record<string, string> = { stock: "📦", story: "📣", reauth: "🔌", failures: "⚠️", spike: "🔥", expiry: "⏳", usage: "📊", domain: "🌐" };
+const KIND_ICON: Record<string, string> = { stock: "📦", story: "📣", reauth: "🔌", failures: "⚠️", spike: "🔥", expiry: "⏳", usage: "📊", domain: "🌐", plan: "📨", service: "🛠️" };
 
 export function NotificationBell({ route }: { route: string }) {
   const [unread, setUnread] = useState(0);

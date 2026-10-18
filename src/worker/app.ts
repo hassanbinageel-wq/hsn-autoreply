@@ -57,7 +57,7 @@ import {
 import { claimsDelivery, claimsFollowRequired, publicReplyVariants } from "../shared/template";
 import { cacheMediaStmt } from "./services/media";
 import { INBOX_LABELS, markRead, recordMessage, refreshAvatars, type InboxLabel } from "./services/inbox";
-import { buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
+import { broadcastNotice, buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
@@ -677,6 +677,15 @@ export function createApp() {
   owner.use("*", async (c, next) => {
     if (!c.get("session").is_owner) return apiError(c, 403, "owner_only", "هذه الصفحة لإدارة الخدمة فقط");
     await next();
+  });
+  // A notice to every active customer's bell (maintenance, an interruption, service back).
+  owner.post("/broadcast", async (c) => {
+    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional() }));
+    if (!p.ok) return p.res;
+    if (!(await rateLimit(c.env.DB, "owner_broadcast", 10, 3_600_000))) return apiError(c, 429, "rate_limited", "أرسلت إشعارات كثيرة — جرّب بعد شوي");
+    const n = await broadcastNotice(c.env.DB, p.data.title, p.data.body ?? null);
+    await audit(c.env.DB, T(c), c.get("session").username, "owner.broadcast", String(n), { title: p.data.title });
+    return c.json({ ok: true, sent: n });
   });
   owner.get("/tenants", async (c) => {
     const since = Date.now() - 30 * 86_400_000;

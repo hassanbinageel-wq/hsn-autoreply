@@ -6,7 +6,7 @@ import { sanitize } from "../meta/client";
 import { estimateUsage, platformUsage } from "./usage";
 import { cloudflareUsage } from "./cfusage";
 import { domainInfo } from "./domain";
-import { getEntitlement } from "./plans";
+import { drawsThisMonth, getEntitlement, monthlyMessages } from "./plans";
 import { weeklyReport, weeklyText } from "./growth";
 import { tzOffsetMinutes } from "./analytics";
 import { serviceDomain } from "./domain";
@@ -138,6 +138,8 @@ const IN_APP: Partial<Record<NotifyKind, string>> = {
   expiry: "/subscription",
   usage: "/usage",
   domain: "/usage",
+  plan: "/subscription",
+  service: "/",
 };
 
 /** Saves an important notification for the in-app bell (first line = title, the rest = body). */
@@ -180,6 +182,8 @@ export async function notify(env: Env, tenantId: number, kind: NotifyKind, text:
       domain: true,
       stock: s.alert_stock !== false,
       story: s.alert_stock !== false,
+      plan: true,
+      service: true,
     };
     if (!on[kind]) return;
     onRequest?.(); // counts against the same per-invocation subrequest budget as the Meta calls
@@ -251,6 +255,54 @@ export async function buildDailyReport(db: D1Database, tenantId: number, now = D
   }
   if ((failed?.n ?? 0) > 0) lines.push("", `⚠️ مهام فشلت أو غير مؤكدة: ${failed!.n} (راجع السجل)`);
   return lines.join("\n");
+}
+
+/**
+ * Every 10 minutes: each customer's own plan usage — monthly messages and draws — at 80% and when used up.
+ * Told once per threshold per month (in the app, and on Telegram when set up). The owner has no limits.
+ */
+export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number> {
+  if (Math.floor(now / 60_000) % 10 !== 3) return 0;
+  const month = new Date(now).toISOString().slice(0, 7);
+  const tenants = await all<{ id: number }>(env.DB, "SELECT id FROM tenants WHERE status = 'active' AND is_owner = 0 ORDER BY id");
+  let sent = 0;
+  for (const t of tenants) {
+    const ent = await getEntitlement(env.DB, t.id, now);
+    if (!ent.active) continue;
+    const checks: Array<{ key: string; used: number; limit: number | null; what: string; full: string }> = [
+      { key: "messages", used: await monthlyMessages(env.DB, t.id, now), limit: ent.limits.monthly_messages, what: "رسائل باقتك هذا الشهر", full: "الردود التلقائية متوقفة لين يبدأ الشهر الجديد أو ترقّي باقتك من «اشتراكي»." },
+      { key: "draws", used: ent.limits.draws_per_month ? await drawsThisMonth(env.DB, t.id, now) : 0, limit: ent.limits.draws_per_month || null, what: "سحوبات باقتك هذا الشهر", full: "ما تقدر تسوي سحب جديد لين يبدأ الشهر الجديد أو ترقّي باقتك من «اشتراكي»." },
+    ];
+    for (const c of checks) {
+      if (!c.limit) continue;
+      const pct = c.used / c.limit;
+      const level = pct >= 1 ? 100 : pct >= 0.8 ? 80 : 0;
+      if (!level) continue;
+      const key = `plan_alert_${c.key}_${month}`;
+      if ((await getSetting<number>(env.DB, t.id, key, 0)) >= level) continue;
+      await setSetting(env.DB, t.id, key, level);
+      const n = (x: number) => x.toLocaleString("en-US");
+      await notify(
+        env,
+        t.id,
+        "plan",
+        level === 100
+          ? `⛔ خلصت ${c.what} (${n(c.used)} من ${n(c.limit)})\n${c.full}`
+          : `📨 استخدمت ${Math.round(pct * 100)}% من ${c.what} (${n(c.used)} من ${n(c.limit)})\nإذا تتوقع تفاعل أكثر، رقّ باقتك من «اشتراكي» قبل لا يخلص.`,
+      );
+      sent++;
+    }
+  }
+  return sent;
+}
+
+/** The owner's notice to every active customer (maintenance, an interruption, service back) — in the app only. */
+export async function broadcastNotice(db: D1Database, title: string, body: string | null, now = Date.now()): Promise<number> {
+  const r = await db
+    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, created_at) SELECT id, 'service', ?, ?, '/', ? FROM tenants WHERE status = 'active' AND is_owner = 0")
+    .bind(title.slice(0, 200), body?.slice(0, 1000) || null, now)
+    .run();
+  return r.meta.changes ?? 0;
 }
 
 /** Called every minute by the cron: notifications of every active customer. */

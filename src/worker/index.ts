@@ -8,7 +8,7 @@ import { all, getSetting, OWNER_TENANT, run } from "./lib/db";
 import { runQueue } from "./engine/executor";
 import { engineContext, refreshAccountProfiles, refreshExpiringTokens } from "./services/account";
 import { sanitize } from "./meta/client";
-import { remindExpiringSubscriptions, runNotifications } from "./services/notify";
+import { remindExpiringSubscriptions, runNotifications, runPlanAlerts } from "./services/notify";
 import { autoRecover } from "./services/recover";
 import { runRestock } from "./services/restock";
 
@@ -125,6 +125,7 @@ export default {
     // "Back in stock" messages to people who asked (within Instagram's 24-hour window), with what the queue left.
     used += await runRestock(env, 44 - used).catch((e) => (console.error("restock", sanitize(String(e))), 0));
     await runNotifications(env).catch((e) => console.error("notifications", sanitize(String(e))));
+    await runPlanAlerts(env).catch((e) => console.error("plan alerts", sanitize(String(e))));
     await run(env.DB, "DELETE FROM rate_limits WHERE window_start < ?", Date.now() - 86_400_000).catch(() => undefined);
   },
 } satisfies ExportedHandler<Env>;

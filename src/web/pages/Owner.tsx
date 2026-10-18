@@ -499,7 +499,7 @@ export function OwnerPage() {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <CustomersTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <PaymentsTab /> : <BrandingTab />}
+      {tab === "customers" ? <><BroadcastCard /><CustomersTab /></> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <PaymentsTab /> : <BrandingTab />}
     </div>
   );
 }
@@ -1024,5 +1024,53 @@ function BrandingTab() {
         </div>
       </Card>
     </div>
+  );
+}
+
+/** A notice to every active customer's bell — in plain words, without technical details. */
+const NOTICE_TEMPLATES: Array<{ label: string; title: string; body: string }> = [
+  { label: "صيانة مجدولة", title: "🛠️ صيانة مجدولة للخدمة", body: "بنسوي تحسينات على الخدمة يوم … من الساعة … إلى …. ممكن تتأخر الردود التلقائية خلالها، والتعليقات اللي توصل وقتها بنرد عليها بعد ما نخلص." },
+  { label: "توقف مؤقت", title: "⏸️ الردود التلقائية متوقفة مؤقتًا", body: "الردود بترجع تلقائيًا الساعة 3 الفجر، والتعليقات الفائتة بنرد عليها أول ما ترجع. ما يحتاج تسوي أي شي." },
+  { label: "رجعت الخدمة", title: "✅ رجعت الخدمة تشتغل بشكل طبيعي", body: "الردود التلقائية رجعت، وجاري الرد على التعليقات اللي وصلت خلال التوقف." },
+];
+
+function BroadcastCard() {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    if (!(await askConfirm({ title: "إرسال لكل العملاء؟", message: `يوصل الإشعار في جرس «الإشعارات المهمة» عند كل العملاء النشطين:\n\n${title}`, confirmLabel: "أرسل" }))) return;
+    setBusy(true);
+    try {
+      const r = await api<{ sent: number }>("/api/owner/broadcast", { body: { title, body: body || undefined } });
+      toast(`وصل لـ ${r.sent} عميل`);
+      setOpen(false);
+      setTitle("");
+      setBody("");
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card title="📢 إشعار لكل العملاء" action={!open && <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setOpen(true)}>إشعار جديد</button>}>
+      {!open ? (
+        <p className="muted text-sm">لصيانة أو توقف مؤقت أو رجوع الخدمة — يوصل في جرس «الإشعارات المهمة» عند كل العملاء النشطين، بكلام بسيط بدون تفاصيل تقنية.</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {NOTICE_TEMPLATES.map((t) => <button key={t.label} type="button" className="chip surface-2" onClick={() => { setTitle(t.title); setBody(t.body); }}>{t.label}</button>)}
+          </div>
+          <input className="input" placeholder="العنوان" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
+          <textarea className="input min-h-[6rem]" placeholder="التفاصيل (اختياري)" maxLength={1000} value={body} onChange={(e) => setBody(e.target.value)} />
+          <div className="flex gap-2">
+            <button className="btn btn-primary" disabled={busy || title.trim().length < 3} onClick={send}>{busy ? "…" : "إرسال للعملاء"}</button>
+            <button className="btn btn-ghost" onClick={() => setOpen(false)}>إلغاء</button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
