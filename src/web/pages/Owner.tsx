@@ -73,6 +73,7 @@ function CustomersTab() {
   const { data, loading, error, reload } = useAsync(() => api<any[]>("/api/owner/tenants"), []);
   const { data: plans } = useAsync(() => api<any[]>("/api/owner/plans"), []);
   const [planFor, setPlanFor] = useState<any>(null);
+  const [messageFor, setMessageFor] = useState<any | null>(null);
   const [adding, setAdding] = useState(false);
   const act = async (fn: () => Promise<unknown>, msg: string) => {
     try {
@@ -87,6 +88,7 @@ function CustomersTab() {
   return (
     <div className="space-y-5">
       {adding && <NewCustomer onClose={() => setAdding(false)} onDone={reload} />}
+      {messageFor && <MessageModal tenant={messageFor} onClose={() => setMessageFor(null)} />}
       {planFor && <SetPlan t={planFor} plans={plans ?? []} onClose={() => setPlanFor(null)} onDone={() => { setPlanFor(null); reload(); }} />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="muted text-sm">{data ? `${customers.length} عميل · ${customers.filter((t) => t.status === "active" && t.plan_expires_at > Date.now()).length} باشتراك فعّال` : ""}</p>
@@ -130,6 +132,7 @@ function CustomersTab() {
               )}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setPlanFor(t)}><Icon name="zap" size={15} />الباقة</button>
+                {!t.is_owner && <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setMessageFor(t)}><Icon name="send" size={15} />رسالة</button>}
                 <button
                   className="btn btn-ghost min-h-9 text-xs"
                   onClick={async () => {
@@ -1072,5 +1075,37 @@ function BroadcastCard() {
         </div>
       )}
     </Card>
+  );
+}
+
+/** A private message from the owner to one customer: their bell, and their Telegram when they set it up. */
+function MessageModal({ tenant, onClose }: { tenant: any; onClose: () => void }) {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ telegram: boolean }>(`/api/owner/tenants/${tenant.id}/message`, { body: { title, body: body || undefined } });
+      toast(r.telegram ? "وصلت الرسالة (في التطبيق وتيليجرام)" : "وصلت الرسالة في التطبيق");
+      onClose();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title={`رسالة إلى «${tenant.name}»`} center>
+      <div className="space-y-3">
+        <p className="muted text-xs">توصل في جرس «الإشعارات المهمة» عنده، وعلى تيليجرام إذا مفعّله. هو بس اللي يشوفها.</p>
+        <input className="input" placeholder="العنوان (مثل: تجديد اشتراكك، ميزة جديدة لك…)" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
+        <textarea className="input min-h-[8rem]" placeholder="نص الرسالة" maxLength={1000} value={body} onChange={(e) => setBody(e.target.value)} />
+        <div className="flex justify-end gap-2">
+          <button className="btn btn-ghost" onClick={onClose}>إلغاء</button>
+          <button className="btn btn-primary" disabled={busy || title.trim().length < 3} onClick={send}>{busy ? "…" : "إرسال"}</button>
+        </div>
+      </div>
+    </Modal>
   );
 }

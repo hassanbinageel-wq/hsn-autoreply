@@ -41,6 +41,16 @@ beforeEach(async () => {
 });
 
 describe("customers (tenants) are isolated", () => {
+  it("the owner can send one customer a private message; customers cannot", async () => {
+    expect((await call(`/api/owner/tenants/${tenantB}/message`, OWNER, "POST", { title: "تجديد اشتراكك", body: "اشتراكك ينتهي قريب" })).body).toMatchObject({ ok: true });
+    const b = (await call("/api/app-notifications", B)).body;
+    expect(b.unread).toBe(1);
+    expect(b.items[0]).toMatchObject({ kind: "message", title: "✉️ تجديد اشتراكك", body: "اشتراكك ينتهي قريب" });
+    expect((await call("/api/app-notifications/unread", OWNER)).body.unread).toBe(0);
+    expect((await call(`/api/owner/tenants/${tenantB}/message`, B, "POST", { title: "hack" })).status).toBe(403);
+    expect((await call("/api/owner/tenants/1/message", OWNER, "POST", { title: "نفسي" })).status).toBe(404);
+  });
+
   it("in-app notifications stay with their customer", async () => {
     await DB.prepare("INSERT INTO app_notifications (tenant_id, kind, title, link, created_at) VALUES (1, 'stock', 'نفد المنتج', '/store', ?)").bind(Date.now()).run();
     expect((await call("/api/app-notifications/unread", OWNER)).body.unread).toBe(1);

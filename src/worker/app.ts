@@ -57,7 +57,7 @@ import {
 import { claimsDelivery, claimsFollowRequired, publicReplyVariants } from "../shared/template";
 import { cacheMediaStmt } from "./services/media";
 import { INBOX_LABELS, markRead, recordMessage, refreshAvatars, type InboxLabel } from "./services/inbox";
-import { broadcastNotice, buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, saveBotToken, sendTelegram } from "./services/notify";
+import { broadcastNotice, buildDailyReport, detectChat, getNotifySettings, hasBotToken, isTelegramToken, notify, saveBotToken, sendTelegram } from "./services/notify";
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
@@ -686,6 +686,20 @@ export function createApp() {
     const n = await broadcastNotice(c.env.DB, p.data.title, p.data.body ?? null);
     await audit(c.env.DB, T(c), c.get("session").username, "owner.broadcast", String(n), { title: p.data.title });
     return c.json({ ok: true, sent: n });
+  });
+  // A private message to one customer: their bell, and their Telegram when they set it up.
+  owner.post("/tenants/:id/message", async (c) => {
+    const id = idParam(c);
+    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional() }));
+    if (!p.ok) return p.res;
+    const t = id && (await first<{ id: number; is_owner: number }>(c.env.DB, "SELECT id, is_owner FROM tenants WHERE id = ?", id));
+    if (!t || t.is_owner) return apiError(c, 404, "not_found", "العميل غير موجود");
+    if (!(await rateLimit(c.env.DB, "owner_message", 60, 3_600_000))) return apiError(c, 429, "rate_limited", "أرسلت رسائل كثيرة — جرّب بعد شوي");
+    const text = `✉️ ${p.data.title}${p.data.body ? `\n${p.data.body}` : ""}`;
+    await notify(c.env, t.id, "message", text);
+    const s = await getNotifySettings(c.env.DB, t.id);
+    await audit(c.env.DB, T(c), c.get("session").username, "owner.message", String(t.id), { title: p.data.title });
+    return c.json({ ok: true, telegram: !!s.enabled && !!s.chat_id });
   });
   owner.get("/tenants", async (c) => {
     const since = Date.now() - 30 * 86_400_000;
