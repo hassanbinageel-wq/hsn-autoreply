@@ -129,6 +129,7 @@ export const registerSchema = z.object({
   username: text(64).regex(/^[A-Za-z0-9_.-]{3,64}$/, "اسم المستخدم: أحرف إنجليزية وأرقام فقط"),
   password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
   code: z.string().trim().min(4, "أدخل كود التفعيل").max(40),
+  ref: z.string().trim().max(20).optional(),
 });
 
 const limitNum = z.number().int().min(0).max(10_000_000).nullable();

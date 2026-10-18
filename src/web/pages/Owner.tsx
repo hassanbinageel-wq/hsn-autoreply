@@ -1,5 +1,6 @@
 import { MESSAGE_LINKS } from "../../shared/plans";
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { OwnerSupportTab } from "./Support";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DateTimeField } from "../components/DateTimeField";
 import { askConfirm, askText, showCopy } from "../components/Confirm";
 import { api } from "../api";
@@ -491,7 +492,16 @@ function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onS
 }
 
 export function OwnerPage() {
-  const [tab, setTab] = useState<"customers" | "plans" | "codes" | "payments" | "branding">("customers");
+  const [tab, setTab] = useState<"customers" | "health" | "support" | "plans" | "codes" | "coupons" | "payments" | "branding">(() => (new URLSearchParams(location.hash.split("?")[1] ?? "").get("tab") as any) || (location.hash.startsWith("#/support") ? "support" : "customers"));
+  // A link to a tab (e.g. a support notification → #/owner?tab=support) while the page is already open.
+  useEffect(() => {
+    const on = () => {
+      const t = new URLSearchParams(location.hash.split("?")[1] ?? "").get("tab");
+      if (t) setTab(t as any);
+    };
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
   return (
     <div className="space-y-5">
       <header>
@@ -499,11 +509,11 @@ export function OwnerPage() {
         <p className="muted mt-1 text-sm">العملاء، الباقات، وأكواد التفعيل — لإدارة الخدمة فقط.</p>
       </header>
       <div className="seg w-fit max-w-full overflow-x-auto" role="tablist">
-        {([["customers", "العملاء"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["payments", "الحسابات البنكية"], ["branding", "صفحة الدخول"]] as const).map(([k, l]) => (
+        {([["customers", "العملاء"], ["health", "صحة العملاء"], ["support", "الدعم"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["coupons", "الكوبونات والإحالة"], ["payments", "الحسابات البنكية"], ["branding", "صفحة الدخول"]] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <><BroadcastCard /><CustomersTab /></> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <PaymentsTab /> : <BrandingTab />}
+      {tab === "customers" ? <><BroadcastCard /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <PaymentsTab /> : <BrandingTab />}
     </div>
   );
 }
@@ -1123,5 +1133,138 @@ function MessageModal({ tenant, onClose }: { tenant: any; onClose: () => void })
         </div>
       </div>
     </Modal>
+  );
+}
+
+const RISK: Record<string, { label: string; cls: string }> = {
+  high: { label: "خطر — تابعه الحين", cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300" },
+  medium: { label: "يحتاج متابعة", cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" },
+  good: { label: "بخير", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" },
+  off: { label: "موقوف", cls: "surface-2 muted" },
+};
+
+/** Customer health: who may be about to leave, why, and a message button. */
+function HealthTab() {
+  const { data, reload } = useAsync(() => api<any>("/api/owner/health"), []);
+  const [messageFor, setMessageFor] = useState<any | null>(null);
+  const [filter, setFilter] = useState<"all" | "high" | "medium" | "good">("all");
+  if (!data) return <Spinner />;
+  const list = data.customers.filter((c: any) => filter === "all" || c.risk === filter);
+  const count = (r: string) => data.customers.filter((c: any) => c.risk === r).length;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-2">
+        {(["high", "medium", "good"] as const).map((r) => (
+          <button key={r} type="button" onClick={() => setFilter(filter === r ? "all" : r)} className={`card p-3 text-right ${filter === r ? "ring-2 ring-violet-500" : ""}`}>
+            <div className="muted text-xs">{RISK[r].label}</div>
+            <div className="font-display text-2xl font-extrabold">{count(r)}</div>
+          </button>
+        ))}
+      </div>
+      {!list.length ? <Empty title="ما فيه عملاء هنا" /> : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {list.map((c: any) => (
+            <Card key={c.id} title={<span className="flex items-center gap-2">{c.name}<span className={`chip !py-0 text-[10.5px] ${RISK[c.risk].cls}`}>{RISK[c.risk].label}</span></span>} action={<button className="btn btn-ghost min-h-9 text-xs" onClick={() => setMessageFor(c)}><Icon name="send" size={14} />رسالة</button>}>
+              {c.reasons.length > 0 && (
+                <ul className="mb-3 space-y-1 text-sm">
+                  {c.reasons.map((r: string) => <li key={r}>• {r}</li>)}
+                </ul>
+              )}
+              <dl className="muted grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                <div>الباقة: <b className="text-[var(--text)]">{c.plan ?? "—"}</b>{c.days_left !== null ? ` · باقي ${c.days_left} يوم` : ""}</div>
+                <div>آخر دخول: <b className="text-[var(--text)]">{c.last_seen ? fmtTime(c.last_seen) : "أبدًا"}</b></div>
+                <div>حملات شغّالة: <b className="text-[var(--text)]">{c.active_campaigns}</b></div>
+                <div>تفاعل آخر 7 أيام: <b className="text-[var(--text)]">{c.people_7d}</b></div>
+                <div>الرسائل: <b className="text-[var(--text)]">{c.messages.used.toLocaleString("en-US")}{c.messages.limit ? ` / ${c.messages.limit.toLocaleString("en-US")}` : ""}</b></div>
+                <div>إنستقرام: <b className="text-[var(--text)]">{c.ig_status === "active" ? "متصل" : c.ig_status ? "يحتاج إعادة ربط" : "غير مربوط"}</b></div>
+              </dl>
+            </Card>
+          ))}
+        </div>
+      )}
+      <button className="btn btn-ghost text-xs" onClick={reload}>تحديث</button>
+      {messageFor && <MessageModal tenant={messageFor} onClose={() => setMessageFor(null)} />}
+    </div>
+  );
+}
+
+/** Subscription discount codes and the referral reward. */
+function CouponsTab() {
+  const { data, reload } = useAsync(() => api<any>("/api/owner/coupons"), []);
+  const { data: plans } = useAsync(() => api<any>("/api/public/plans").then((r) => r.plans as any[]).catch(() => []), []);
+  const [f, setF] = useState({ code: "", percent: "20", plans: [] as string[], expires: "", max: "", note: "" });
+  const [days, setDays] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const create = async () => {
+    setBusy(true);
+    try {
+      await api("/api/owner/coupons", {
+        body: {
+          code: f.code,
+          percent: Number(f.percent),
+          plan_ids: f.plans.length ? f.plans : null,
+          expires_at: f.expires ? new Date(`${f.expires}T23:59:59`).getTime() : null,
+          max_uses: f.max ? Number(f.max) : null,
+          note: f.note || null,
+        },
+      });
+      toast("تم إنشاء الكوبون");
+      setF({ code: "", percent: "20", plans: [], expires: "", max: "", note: "" });
+      reload();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!data) return <Spinner />;
+  return (
+    <div className="space-y-4">
+      <Card title="🎁 مكافأة الإحالة">
+        <p className="muted mb-3 text-sm">كل عميل عنده رابط دعوة في صفحة «اشتراكي». إذا اشترك عميل جديد من رابطه (بكود تفعيل)، ينضاف للطرفين عدد الأيام هذا على اشتراكهم. 0 = إيقاف الإحالة.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input className="input !w-24" inputMode="numeric" value={days ?? String(data.referral_days)} onChange={(e) => setDays(e.target.value.replace(/\D/g, ""))} />
+          <span className="muted text-sm">يوم لكل طرف</span>
+          <button className="btn btn-primary min-h-10" disabled={days === null} onClick={async () => { await api("/api/owner/referral", { method: "PUT", body: { days: Number(days) } }).then(() => toast("تم الحفظ")).catch((e) => toast(e.message, "bad")); setDays(null); reload(); }}>حفظ</button>
+        </div>
+      </Card>
+      <Card title="كوبون خصم جديد">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="الكود"><input className="input" dir="ltr" placeholder="RAMADAN20" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, "") })} maxLength={30} /></Field>
+          <Field label="نسبة الخصم %"><input className="input" inputMode="numeric" value={f.percent} onChange={(e) => setF({ ...f, percent: e.target.value.replace(/\D/g, "") })} /></Field>
+          <Field label="ينتهي في (اختياري)"><input className="input" type="date" value={f.expires} onChange={(e) => setF({ ...f, expires: e.target.value })} /></Field>
+          <Field label="أقصى عدد استخدامات (اختياري)"><input className="input" inputMode="numeric" value={f.max} onChange={(e) => setF({ ...f, max: e.target.value.replace(/\D/g, "") })} /></Field>
+        </div>
+        <div className="mt-3">
+          <span className="muted text-xs">الباقات (بدون اختيار = كل الباقات):</span>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {(plans ?? []).map((p: any) => (
+              <button key={p.id} type="button" className={`chip ${f.plans.includes(p.id) ? "grad text-white" : "surface-2"}`} onClick={() => setF({ ...f, plans: f.plans.includes(p.id) ? f.plans.filter((x) => x !== p.id) : [...f.plans, p.id] })}>{p.name}</button>
+            ))}
+          </div>
+        </div>
+        <input className="input mt-3" placeholder="ملاحظة لك (اختياري): مثل حملة رمضان" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} maxLength={120} />
+        <button className="btn btn-primary mt-3" disabled={busy || f.code.length < 3 || !(Number(f.percent) >= 1 && Number(f.percent) <= 100)} onClick={create}>{busy ? "…" : "إنشاء الكوبون"}</button>
+        <p className="muted mt-2 text-xs">العميل يكتب الكود في صفحة الباقات فيشوف السعر بعد الخصم، والكود ينكتب في رسالة السند اللي يرسلها لك. «الاستخدامات» = كم مرة أُرسل سند بهذا الكود.</p>
+      </Card>
+      <Card title="الكوبونات">
+        {!data.coupons.length ? <p className="muted text-sm">ما فيه كوبونات بعد.</p> : (
+          <div className="divide-y divide-[var(--border)]">
+            {data.coupons.map((c: any) => (
+              <div key={c.id} className="flex flex-wrap items-center gap-3 py-2.5 text-sm">
+                <span className="chip surface-2 font-mono" dir="ltr">{c.code}</span>
+                <b>{c.percent}%</b>
+                <span className="muted min-w-0 flex-1 truncate text-xs">
+                  {c.plan_ids ? `باقات: ${JSON.parse(c.plan_ids).join("، ")}` : "كل الباقات"}
+                  {c.expires_at ? ` · ينتهي ${fmtDate(c.expires_at)}` : ""} · استُخدم {c.uses}{c.max_uses ? ` / ${c.max_uses}` : ""}{c.note ? ` · ${c.note}` : ""}
+                </span>
+                <Toggle checked={!!c.active} onChange={async (v) => { await api(`/api/owner/coupons/${c.id}`, { method: "PUT", body: { active: v } }); reload(); }} label={c.active ? "فعّال" : "موقوف"} />
+                <button className="btn btn-ghost min-h-8 text-xs text-red-600" onClick={async () => { if (await askConfirm({ title: `حذف ${c.code}؟`, message: "ما يقدر أحد يستخدمه بعدها.", confirmLabel: "حذف", danger: true })) { await api(`/api/owner/coupons/${c.id}`, { method: "DELETE" }); reload(); } }}>حذف</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
   );
 }

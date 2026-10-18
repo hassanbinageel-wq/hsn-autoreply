@@ -6,6 +6,14 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ConfirmHost, askConfirm } from "./components/Confirm";
 import { APP_TARGET } from "./platform";
 
+// A customer's invitation link (…#/register?ref=CODE): kept until sign-up.
+try {
+  const ref = new URLSearchParams(location.hash.split("?")[1] ?? "").get("ref");
+  if (ref && /^[A-Z0-9]{4,20}$/i.test(ref)) localStorage.setItem("hsn_ref", ref.toUpperCase());
+} catch {
+  /* private mode */
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary>

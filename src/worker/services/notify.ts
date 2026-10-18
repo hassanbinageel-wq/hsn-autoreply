@@ -141,6 +141,9 @@ const IN_APP: Partial<Record<NotifyKind, string>> = {
   plan: "/subscription",
   service: "/",
   message: "/",
+  support: "/owner?tab=support",
+  support_reply: "/support",
+  referral: "/subscription",
 };
 
 /** Saves an important notification for the in-app bell (first line = title, the rest = body). */
@@ -186,6 +189,9 @@ export async function notify(env: Env, tenantId: number, kind: NotifyKind, text:
       plan: true,
       service: true,
       message: true,
+      support: true,
+      support_reply: true,
+      referral: true,
     };
     if (!on[kind]) return;
     onRequest?.(); // counts against the same per-invocation subrequest budget as the Meta calls

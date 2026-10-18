@@ -63,6 +63,7 @@ import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
 import { claimStore, completeSallaOAuth, handleSallaWebhook, sallaAuthorizeUrl, sallaConfigured, syncProducts, verifySallaWebhook } from "./services/salla";
 import { bestTimes, postSales, weeklyReport } from "./services/growth";
+import { applyReferral, customerHealth, findCoupon, normCode, publicCoupon, referralDays, referralStats } from "./services/customers";
 import { storeAnalytics, storeCampaignDetail, storeProductCosts, storeProducts } from "./services/store";
 import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
@@ -480,6 +481,21 @@ export function createApp() {
 
   // Public: the plans and how to buy, shown on the sign-up screen before an account exists.
   app.get("/api/public/plans", async (c) => c.json(await publicCatalog(c)));
+  // Subscription discount codes: check a code (plans page), and count it when the receipt is sent.
+  app.get("/api/public/coupon", async (c) => {
+    if (!(await rateLimit(c.env.DB, `coupon_check:${clientIp(c)}`, 30, 3_600_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد شوي");
+    const cp = await findCoupon(c.env.DB, c.req.query("code") ?? "");
+    if (!cp) return apiError(c, 404, "invalid_coupon", "كود الخصم غير صحيح أو منتهي");
+    return c.json(publicCoupon(cp));
+  });
+  app.post("/api/public/coupon/use", async (c) => {
+    const p = await parseBody(c, z.object({ code: z.string().max(40) }));
+    if (!p.ok) return p.res;
+    if (!(await rateLimit(c.env.DB, `coupon_use:${clientIp(c)}`, 10, 3_600_000))) return c.json({ ok: true });
+    const cp = await findCoupon(c.env.DB, p.data.code);
+    if (cp) await run(c.env.DB, "UPDATE sub_coupons SET uses = uses + 1 WHERE id = ?", cp.id);
+    return c.json({ ok: true });
+  });
   // Login-page look chosen by the owner: banner images (computer / phone, cacheable per version), texts and logo.
   app.get("/api/public/branding", async (c) => {
     const db = c.env.DB;
@@ -592,6 +608,15 @@ export function createApp() {
     }
     await seedStarterTemplates(c.env.DB, tid, now);
     await audit(c.env.DB, tid, p.data.username, "tenant.registered", String(tid));
+    // Signed up through a customer's referral link: both get bonus days.
+    const referrer = await applyReferral(c.env.DB, tid, p.data.ref, now).catch(() => null);
+    if (referrer) {
+      const days = await referralDays(c.env.DB);
+      if (days > 0) {
+        await notify(c.env, referrer, "referral", `🎁 عميل جديد اشترك من رابط دعوتك!\nأضفنا ${days} أيام مجانية لاشتراكك. شكرًا لأنك نشرت الخدمة 💜`);
+        await notify(c.env, tid, "referral", `🎁 هدية ترحيب: ${days} أيام إضافية على اشتراكك لأنك جيت من دعوة عميل.`);
+      }
+    }
     return c.json({ ok: true });
   });
 
@@ -606,6 +631,7 @@ export function createApp() {
     "card-designs": "SELECT 1 FROM card_designs WHERE id = ? AND tenant_id = ?",
     templates: "SELECT 1 FROM templates WHERE id = ? AND tenant_id = ?",
     "saved-replies": "SELECT 1 FROM saved_replies WHERE id = ? AND tenant_id = ?",
+    support: "SELECT 1 FROM support_threads WHERE id = ? AND tenant_id = ?",
     undo: "SELECT 1 FROM undo_ops WHERE id = ? AND tenant_id = ?",
     inbox: `SELECT 1 FROM participants WHERE id = ? AND account_id IN ${TENANT_ACCOUNTS}`,
     flows: `SELECT 1 FROM conversation_flows WHERE id = ? AND account_id IN ${TENANT_ACCOUNTS}`,
@@ -687,6 +713,97 @@ export function createApp() {
     const n = await broadcastNotice(c.env.DB, p.data.title, p.data.body ?? null, Date.now(), p.data.link ?? "/");
     await audit(c.env.DB, T(c), c.get("session").username, "owner.broadcast", String(n), { title: p.data.title });
     return c.json({ ok: true, sent: n });
+  });
+  // Customer health: who may be about to leave, and why.
+  owner.get("/health", async (c) => c.json({ customers: await customerHealth(c.env.DB) }));
+
+  // Subscription coupons and referral reward.
+  owner.get("/coupons", async (c) =>
+    c.json({ coupons: await all(c.env.DB, "SELECT * FROM sub_coupons ORDER BY id DESC LIMIT 200"), referral_days: await referralDays(c.env.DB) }),
+  );
+  owner.post("/coupons", async (c) => {
+    const p = await parseBody(
+      c,
+      z.object({
+        code: z.string().trim().min(3).max(30),
+        percent: z.number().int().min(1).max(100),
+        plan_ids: z.array(z.string().max(40)).max(20).nullable().optional(),
+        expires_at: z.number().int().positive().nullable().optional(),
+        max_uses: z.number().int().min(1).max(1_000_000).nullable().optional(),
+        note: z.string().trim().max(120).nullable().optional(),
+      }),
+    );
+    if (!p.ok) return p.res;
+    const code = normCode(p.data.code);
+    if (code.length < 3) return apiError(c, 422, "validation", "الكود: 3 حروف إنجليزية أو أرقام على الأقل");
+    if (await first(c.env.DB, "SELECT 1 FROM sub_coupons WHERE code = ?", code)) return apiError(c, 409, "exists", "الكود موجود — اختر كود ثاني");
+    await run(
+      c.env.DB,
+      "INSERT INTO sub_coupons (code, percent, plan_ids, expires_at, max_uses, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      code,
+      p.data.percent,
+      p.data.plan_ids?.length ? JSON.stringify(p.data.plan_ids) : null,
+      p.data.expires_at ?? null,
+      p.data.max_uses ?? null,
+      p.data.note ?? null,
+      Date.now(),
+    );
+    await audit(c.env.DB, T(c), c.get("session").username, "owner.coupon_created", code, { percent: p.data.percent });
+    return c.json({ ok: true, code });
+  });
+  owner.put("/coupons/:id", async (c) => {
+    const p = await parseBody(c, z.object({ active: z.boolean() }));
+    if (!p.ok) return p.res;
+    await run(c.env.DB, "UPDATE sub_coupons SET active = ? WHERE id = ?", p.data.active ? 1 : 0, idParam(c));
+    return c.json({ ok: true });
+  });
+  owner.delete("/coupons/:id", async (c) => {
+    await run(c.env.DB, "DELETE FROM sub_coupons WHERE id = ?", idParam(c));
+    return c.json({ ok: true });
+  });
+  owner.put("/referral", async (c) => {
+    const p = await parseBody(c, z.object({ days: z.number().int().min(0).max(90) }));
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "referral_days", p.data.days);
+    return c.json({ ok: true });
+  });
+
+  // Support conversations of all customers.
+  owner.get("/support", async (c) =>
+    c.json(
+      await all(
+        c.env.DB,
+        `SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.status, t.last_from, t.updated_at,
+                (t.last_from = 'customer' AND COALESCE(t.owner_read_at, 0) < t.updated_at) AS unread,
+                (SELECT body FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_body
+           FROM support_threads t JOIN tenants n ON n.id = t.tenant_id ORDER BY (t.status = 'open') DESC, t.updated_at DESC LIMIT 200`,
+      ),
+    ),
+  );
+  owner.get("/support/:id", async (c) => {
+    const id = idParam(c);
+    const t = await first(c.env.DB, "SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.status, t.created_at FROM support_threads t JOIN tenants n ON n.id = t.tenant_id WHERE t.id = ?", id);
+    if (!t) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    await run(c.env.DB, "UPDATE support_threads SET owner_read_at = ? WHERE id = ?", Date.now(), id);
+    return c.json({ thread: t, messages: await all(c.env.DB, "SELECT id, sender, body, created_at FROM support_messages WHERE thread_id = ? ORDER BY id LIMIT 500", id) });
+  });
+  owner.post("/support/:id/reply", async (c) => {
+    const id = idParam(c);
+    const p = await parseBody(c, z.object({ body: z.string().trim().min(1).max(2000), close: z.boolean().optional() }));
+    if (!p.ok) return p.res;
+    const t = await first<{ id: number; tenant_id: number; subject: string }>(c.env.DB, "SELECT id, tenant_id, subject FROM support_threads WHERE id = ?", id);
+    if (!t) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    const now = Date.now();
+    await run(c.env.DB, "INSERT INTO support_messages (thread_id, sender, body, created_at) VALUES (?, 'owner', ?, ?)", id, p.data.body, now);
+    await run(c.env.DB, "UPDATE support_threads SET status = ?, last_from = 'owner', owner_read_at = ?, updated_at = ? WHERE id = ?", p.data.close ? "closed" : "open", now, now, id);
+    await notify(c.env, t.tenant_id, "support_reply", `🎧 رد الدعم على: ${t.subject}\n${p.data.body.slice(0, 300)}`, undefined, { link: `/support?thread=${t.id}` });
+    return c.json({ ok: true });
+  });
+  owner.post("/support/:id/status", async (c) => {
+    const p = await parseBody(c, z.object({ status: z.enum(["open", "closed"]) }));
+    if (!p.ok) return p.res;
+    await run(c.env.DB, "UPDATE support_threads SET status = ? WHERE id = ?", p.data.status, idParam(c));
+    return c.json({ ok: true });
   });
   // A private message to one customer: their bell, and their Telegram when they set it up.
   owner.post("/tenants/:id/message", async (c) => {
@@ -2732,6 +2849,58 @@ export function createApp() {
   });
   api.post("/app-notifications/read", async (c) => {
     await run(c.env.DB, "UPDATE app_notifications SET read_at = ? WHERE tenant_id = ? AND read_at IS NULL", Date.now(), T(c));
+    return c.json({ ok: true });
+  });
+
+  // ---- Referral: the customer's invitation link
+  api.get("/referral", async (c) => {
+    if (c.get("session").is_owner) return apiError(c, 409, "owner", "الإحالة للعملاء");
+    return c.json(await referralStats(c.env.DB, T(c)));
+  });
+
+  // ---- Support: the customer's conversations with the service owner
+  api.get("/support", async (c) =>
+    c.json(
+      await all(
+        c.env.DB,
+        `SELECT t.id, t.subject, t.status, t.last_from, t.updated_at, (t.last_from = 'owner' AND COALESCE(t.customer_read_at, 0) < t.updated_at) AS unread,
+                (SELECT body FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_body
+           FROM support_threads t WHERE t.tenant_id = ? ORDER BY t.updated_at DESC LIMIT 50`,
+        T(c),
+      ),
+    ),
+  );
+  api.post("/support", async (c) => {
+    const p = await parseBody(c, z.object({ subject: z.string().trim().min(3).max(120), body: z.string().trim().min(1).max(2000) }));
+    if (!p.ok) return p.res;
+    if (c.get("session").is_owner) return apiError(c, 409, "owner", "أنت صاحب الخدمة — الدعم للعملاء");
+    if (!(await rateLimit(c.env.DB, `support_new:${T(c)}`, 10, 86_400_000))) return apiError(c, 429, "rate_limited", "فتحت محادثات كثيرة اليوم — كمّل في محادثة موجودة");
+    const now = Date.now();
+    const t = await first<{ id: number }>(c.env.DB, "INSERT INTO support_threads (tenant_id, subject, last_from, customer_read_at, created_at, updated_at) VALUES (?, ?, 'customer', ?, ?, ?) RETURNING id", T(c), p.data.subject, now, now, now);
+    await run(c.env.DB, "INSERT INTO support_messages (thread_id, sender, body, created_at) VALUES (?, 'customer', ?, ?)", t!.id, p.data.body, now);
+    const name = (await first<{ name: string }>(c.env.DB, "SELECT name FROM tenants WHERE id = ?", T(c)))?.name ?? "عميل";
+    await notify(c.env, OWNER_TENANT, "support", `🎧 رسالة دعم جديدة من «${name}»: ${p.data.subject}\n${p.data.body.slice(0, 300)}`);
+    return c.json({ ok: true, id: t!.id });
+  });
+  api.get("/support/:id", async (c) => {
+    const id = idParam(c);
+    const t = await first(c.env.DB, "SELECT id, subject, status, created_at FROM support_threads WHERE id = ? AND tenant_id = ?", id, T(c));
+    if (!t) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    await run(c.env.DB, "UPDATE support_threads SET customer_read_at = ? WHERE id = ?", Date.now(), id);
+    return c.json({ thread: t, messages: await all(c.env.DB, "SELECT id, sender, body, created_at FROM support_messages WHERE thread_id = ? ORDER BY id LIMIT 500", id) });
+  });
+  api.post("/support/:id/reply", async (c) => {
+    const id = idParam(c);
+    const p = await parseBody(c, z.object({ body: z.string().trim().min(1).max(2000) }));
+    if (!p.ok) return p.res;
+    const t = await first<{ id: number; subject: string }>(c.env.DB, "SELECT id, subject FROM support_threads WHERE id = ? AND tenant_id = ?", id, T(c));
+    if (!t) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    if (!(await rateLimit(c.env.DB, `support_reply:${T(c)}`, 60, 3_600_000))) return apiError(c, 429, "rate_limited", "رسائل كثيرة — جرّب بعد شوي");
+    const now = Date.now();
+    await run(c.env.DB, "INSERT INTO support_messages (thread_id, sender, body, created_at) VALUES (?, 'customer', ?, ?)", id, p.data.body, now);
+    await run(c.env.DB, "UPDATE support_threads SET status = 'open', last_from = 'customer', customer_read_at = ?, updated_at = ? WHERE id = ?", now, now, id);
+    const name = (await first<{ name: string }>(c.env.DB, "SELECT name FROM tenants WHERE id = ?", T(c)))?.name ?? "عميل";
+    await notify(c.env, OWNER_TENANT, "support", `🎧 رد من «${name}» على: ${t.subject}\n${p.data.body.slice(0, 300)}`);
     return c.json({ ok: true });
   });
 

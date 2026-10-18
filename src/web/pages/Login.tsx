@@ -89,7 +89,18 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
       if (status?.needs_setup) {
         await api("/api/auth/setup", { body: { setup_token: setupToken, username, password } });
       } else if (register) {
-        await api("/api/auth/register", { body: { name: name.trim(), username: username.trim(), password, code } });
+        let ref: string | undefined;
+        try {
+          ref = localStorage.getItem("hsn_ref") || undefined;
+        } catch {
+          /* private mode */
+        }
+        await api("/api/auth/register", { body: { name: name.trim(), username: username.trim(), password, code, ref } });
+        try {
+          localStorage.removeItem("hsn_ref");
+        } catch {
+          /* private mode */
+        }
         location.hash = "#/";
       }
       await signIn(username, password);

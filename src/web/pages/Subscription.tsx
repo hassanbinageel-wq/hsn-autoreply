@@ -76,8 +76,38 @@ export function SubscriptionPage() {
           )}
         </Card>
       </div>
+      <ReferralCard />
       <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
       <PlansShowcase catalog={data} currentPlanId={data.plan?.id} />
     </div>
+  );
+}
+
+/** The customer's invitation link: a friend who signs up with it gives both of them bonus days. */
+function ReferralCard() {
+  const { data } = useAsync(() => api<any>("/api/referral").catch(() => null), []);
+  if (!data || !data.days_per_referral) return null;
+  const link = `${location.origin}/#/register?ref=${data.code}`;
+  const share = async () => {
+    const text = `أستخدم HSN AutoReply للرد التلقائي على تعليقات إنستقرام 🚀 اشترك من رابطي وتاخذ ${data.days_per_referral} أيام هدية:\n${link}`;
+    try {
+      if (navigator.share) await navigator.share({ text });
+      else {
+        await navigator.clipboard.writeText(text);
+        toast("نسخنا الرابط ✅");
+      }
+    } catch {
+      /* cancelled */
+    }
+  };
+  return (
+    <Card title="🎁 ادعُ صديق واكسب أيام مجانية">
+      <p className="muted text-sm">إذا اشترك أحد من رابطك، تاخذ أنت <b>{data.days_per_referral} أيام</b> إضافية على اشتراكك، وهو بعد ياخذ {data.days_per_referral} أيام هدية.</p>
+      <div className="mt-3 flex gap-2">
+        <input className="input text-xs" dir="ltr" readOnly value={link} onFocus={(e) => e.target.select()} aria-label="رابط الدعوة" />
+        <button className="btn btn-primary shrink-0" onClick={share}><Icon name="send" size={16} />مشاركة</button>
+      </div>
+      <p className="muted mt-2 text-xs">اشترك من رابطك: <b>{data.referred}</b> · كسبت: <b>{data.rewarded * data.days_per_referral}</b> يوم</p>
+    </Card>
   );
 }

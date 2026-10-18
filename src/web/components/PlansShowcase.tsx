@@ -1,3 +1,4 @@
+import { API_BASE } from "../platform";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { Field, Modal, Tip, toast } from "./ui";
@@ -64,14 +65,20 @@ function copy(text: string) {
   navigator.clipboard?.writeText(text).then(() => toast("تم النسخ ✅"), () => toast(text));
 }
 
-const priceText = (p: Catalog["plans"][number], cur: string, rates: ExchangeRates) => {
+export type Coupon = { code: string; percent: number; plans: string[] | null } | null;
+/** The coupon's discount for a plan (0 when it does not apply). */
+const off = (c: Coupon, planId: string) => (c && (!c.plans || c.plans.includes(planId)) ? c.percent : 0);
+const discounted = (v: number, pct: number) => (pct ? Math.round(v * (100 - pct)) / 100 : v);
+
+const priceText = (p: Catalog["plans"][number], cur: string, rates: ExchangeRates, coupon: Coupon = null) => {
   if (p.price_amount === null) return p.price_label || "حسب الاتفاق";
-  const v = convertPrice(p.price_amount, p.price_currency, cur, rates);
+  const raw = convertPrice(p.price_amount, p.price_currency, cur, rates);
+  const v = raw === null ? null : discounted(raw, off(coupon, p.id));
   return v === null ? p.price_label ?? "" : `${formatAmount(v, cur)} / ${PRICE_PERIODS[p.price_period] ?? PRICE_PERIODS.month}`;
 };
 
 /** "Send the receipt": pick the plan, fill name / Instagram / phone / location, then open WhatsApp with a ready message. */
-function ReceiptModal({ catalog, cur, onClose }: { catalog: Catalog; cur: string; onClose: () => void }) {
+function ReceiptModal({ catalog, cur, coupon, onClose }: { catalog: Catalog; cur: string; coupon: Coupon; onClose: () => void }) {
   const [plan, setPlan] = useState<Catalog["plans"][number] | null>(null);
   const [f, setF] = useState({ name: "", ig: "", phone: "", place: "" });
   const contact = catalog.sales_contact!;
@@ -82,7 +89,8 @@ function ReceiptModal({ catalog, cur, onClose }: { catalog: Catalog; cur: string
       "السلام عليكم 👋 حوّلت مبلغ الاشتراك في HSN AutoReply وهذا السند:",
       "",
       `الباقة: ${plan!.name}`,
-      `السعر: ${priceText(plan!, cur, catalog.rates)}`,
+      `السعر: ${priceText(plan!, cur, catalog.rates, coupon)}`,
+      ...(off(coupon, plan!.id) ? [`كود الخصم: ${coupon!.code} (−${coupon!.percent}%)`] : []),
       `الاسم: ${f.name.trim()}`,
       `حساب إنستقرام: @${ig}`,
       `رقم الجوال: ${f.phone.trim()}`,
@@ -90,6 +98,7 @@ function ReceiptModal({ catalog, cur, onClose }: { catalog: Catalog; cur: string
       "",
       "📎 (أرفقت صورة السند)",
     ].join("\n");
+    if (off(coupon, plan!.id)) void fetch(API_BASE + "/api/public/coupon/use", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: coupon!.code }) }).catch(() => undefined);
     const wa = contact.match(/wa\.me\/(\+?\d+)/i) ?? contact.match(/phone=(\+?\d+)/i);
     if (wa) {
       window.open(`https://wa.me/${wa[1].replace("+", "")}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
@@ -109,7 +118,7 @@ function ReceiptModal({ catalog, cur, onClose }: { catalog: Catalog; cur: string
           {catalog.plans.map((p) => (
             <button key={p.id} type="button" onClick={() => setPlan(p)} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--border)] px-4 py-3.5 text-right transition hover:border-violet-400 hover:bg-violet-500/5">
               <b className="font-display text-base">{p.name}</b>
-              <span className="font-display font-extrabold text-violet-600 dark:text-violet-300">{priceText(p, cur, catalog.rates)}</span>
+              <span className="font-display font-extrabold text-violet-600 dark:text-violet-300">{priceText(p, cur, catalog.rates, coupon)}</span>
             </button>
           ))}
           <p className="muted pt-1 text-center text-xs">السعر بالعملة المختارة في صفحة الباقات</p>
@@ -117,7 +126,7 @@ function ReceiptModal({ catalog, cur, onClose }: { catalog: Catalog; cur: string
       ) : (
         <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (ok) send(); }}>
           <div className="flex items-center justify-between rounded-2xl bg-violet-500/10 px-3.5 py-2.5 text-sm">
-            <span><b>{plan.name}</b> · {priceText(plan, cur, catalog.rates)}</span>
+            <span><b>{plan.name}</b> · {priceText(plan, cur, catalog.rates, coupon)}{off(coupon, plan.id) ? <span className="mr-1 text-xs text-emerald-600">(−{coupon!.percent}%)</span> : null}</span>
             <button type="button" className="text-xs font-bold text-violet-600 underline dark:text-violet-300" onClick={() => setPlan(null)}>تغيير</button>
           </div>
           <Field label="الاسم"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={80} required autoComplete="name" /></Field>
@@ -136,7 +145,7 @@ const KIND: Record<string, string> = { bank: "بنك", exchange: "صرافة", w
 /** Arabic-friendly match: ignores case, diacritics and alef / ya / ta-marbuta variants. */
 const norm = (v: string) => v.toLowerCase().replace(/[\u064B-\u0652\u0640]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").trim();
 
-export function PaymentMethods({ catalog, cur }: { catalog: Catalog; cur: string }) {
+export function PaymentMethods({ catalog, cur, coupon = null }: { catalog: Catalog; cur: string; coupon?: Coupon }) {
   const [receipt, setReceipt] = useState(false);
   const [q, setQ] = useState("");
   if (!catalog.payment_methods.length && !catalog.sales_contact) return null;
@@ -213,7 +222,7 @@ export function PaymentMethods({ catalog, cur }: { catalog: Catalog; cur: string
           <Icon name="arrowL" size={20} className="text-emerald-600" />
         </button>
       )}
-      {receipt && catalog.sales_contact && <ReceiptModal catalog={catalog} cur={cur} onClose={() => setReceipt(false)} />}
+      {receipt && catalog.sales_contact && <ReceiptModal catalog={catalog} cur={cur} coupon={coupon} onClose={() => setReceipt(false)} />}
     </section>
   );
 }
@@ -237,7 +246,7 @@ function CurrencySwitch({ cur, setCur }: { cur: string; setCur: (c: string) => v
  * Plan cards, prices converted with the owner's exchange rates. On phones they are a swipeable carousel
  * (first plan shown first, an arrow and dots to move to the next); from md up a three-column grid.
  */
-export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: Catalog; cur: string; currentPlanId?: string | null; onChoose?: () => void }) {
+export function PlanCards({ catalog, cur, currentPlanId, onChoose, coupon = null }: { catalog: Catalog; cur: string; currentPlanId?: string | null; onChoose?: () => void; coupon?: Coupon }) {
   const featured = catalog.featured ? catalog.featured.plan_id : catalog.plans.length >= 3 ? catalog.plans[1].id : null;
   const badge = catalog.featured?.label || "الأكثر طلبًا";
   const track = useRef<HTMLDivElement>(null);
@@ -259,7 +268,9 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: 
     <div className="relative">
       <div ref={track} className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-[8%] pb-2 pt-4 [scrollbar-width:none] sm:px-[18%] lg:mx-0 lg:grid lg:grid-cols-3 lg:items-stretch lg:gap-4 lg:overflow-visible lg:px-0 [&::-webkit-scrollbar]:hidden">
         {catalog.plans.map((p, i) => {
-          const price = p.price_amount !== null ? convertPrice(p.price_amount, p.price_currency, cur, catalog.rates) : null;
+          const before = p.price_amount !== null ? convertPrice(p.price_amount, p.price_currency, cur, catalog.rates) : null;
+          const pct = off(coupon, p.id);
+          const price = before === null ? null : discounted(before, pct);
           const isFeatured = p.id === featured;
           const isCurrent = p.id === currentPlanId;
           return (
@@ -275,6 +286,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: 
                   <div className="flex flex-wrap items-baseline gap-1.5">
                     <span className={`font-display font-extrabold text-violet-600 dark:text-violet-300 ${cur.startsWith("YER") ? "text-2xl" : "text-3xl"}`}>{formatAmount(price, cur)}</span>
                     <span className="muted text-sm">/ {PRICE_PERIODS[p.price_period] ?? PRICE_PERIODS.month}</span>
+                    {pct > 0 && before !== null && <span className="w-full text-xs"><s className="muted">{formatAmount(before, cur)}</s> <b className="text-emerald-600">خصم {pct}%</b></span>}
                   </div>
                 ) : (
                   <span className="font-display text-2xl font-extrabold text-violet-600 dark:text-violet-300">{p.price_label || "تواصل معنا"}</span>
@@ -311,6 +323,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose }: { catalog: 
 
 export function PlansShowcase({ catalog, currentPlanId }: { catalog: Catalog; currentPlanId?: string | null }) {
   const [cur, setCur] = useState(() => catalog.plans.find((p) => p.price_amount !== null)?.price_currency ?? "SAR");
+  const [coupon, setCoupon] = useState<Coupon>(null);
   const toPayment = () => document.getElementById("payment")?.scrollIntoView({ behavior: "smooth", block: "start" });
   const hasPayment = catalog.payment_methods.length > 0 || !!catalog.sales_contact;
   const anyPrice = catalog.plans.some((p) => p.price_amount !== null);
@@ -318,9 +331,44 @@ export function PlansShowcase({ catalog, currentPlanId }: { catalog: Catalog; cu
     <div className="space-y-10">
       <div className="space-y-4">
         {anyPrice && <CurrencySwitch cur={cur} setCur={setCur} />}
-        <PlanCards catalog={catalog} cur={cur} currentPlanId={currentPlanId} onChoose={hasPayment ? toPayment : undefined} />
+        {anyPrice && <CouponBox coupon={coupon} setCoupon={setCoupon} />}
+        <PlanCards catalog={catalog} cur={cur} currentPlanId={currentPlanId} onChoose={hasPayment ? toPayment : undefined} coupon={coupon} />
       </div>
-      <PaymentMethods catalog={catalog} cur={cur} />
+      <PaymentMethods catalog={catalog} cur={cur} coupon={coupon} />
+    </div>
+  );
+}
+
+/** «عندك كود خصم؟» — checks the code and shows the prices after the discount. */
+function CouponBox({ coupon, setCoupon }: { coupon: Coupon; setCoupon: (c: Coupon) => void }) {
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (coupon)
+    return (
+      <div className="mx-auto flex w-fit items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-700 dark:text-emerald-300">
+        ✅ كود <b dir="ltr">{coupon.code}</b>: خصم {coupon.percent}%{coupon.plans ? " على باقات محددة" : ""}
+        <button type="button" className="text-xs underline" onClick={() => setCoupon(null)}>إزالة</button>
+      </div>
+    );
+  if (!open) return <button type="button" className="mx-auto block text-sm font-semibold text-violet-700 underline dark:text-violet-300" onClick={() => setOpen(true)}>عندك كود خصم؟</button>;
+  const apply = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/public/coupon?code=${encodeURIComponent(code)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error?.message ?? "كود الخصم غير صحيح أو منتهي");
+      setCoupon({ code: j.code, percent: j.percent, plans: j.plans });
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mx-auto flex w-full max-w-sm gap-2">
+      <input className="input" dir="ltr" placeholder="كود الخصم" value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ""))} maxLength={30} onKeyDown={(e) => e.key === "Enter" && code.length >= 3 && apply()} />
+      <button type="button" className="btn btn-primary shrink-0" disabled={busy || code.length < 3} onClick={apply}>{busy ? "…" : "تطبيق"}</button>
     </div>
   );
 }
