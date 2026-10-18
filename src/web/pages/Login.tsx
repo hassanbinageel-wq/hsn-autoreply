@@ -10,6 +10,7 @@ const PlansShowcase = lazy(() => import("../components/PlansShowcase").then((m) 
 import { AppDownloadBox, DesktopBanner, MobileBanner, type Branding } from "../components/LoginBanner";
 import { bioCredentials, bioUser, disableBio, offerBioLater } from "../lib/biometric";
 import { Spinner } from "../components/ui";
+import { RecoveryPage } from "./Recovery";
 
 export function LoginPage({ onDone }: { onDone: () => void }) {
   const [status, setStatus] = useState<{ needs_setup: boolean; setup_enabled: boolean; missing_secrets: string[] } | null>(null);
@@ -25,16 +26,21 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   // Self sign-up with an activation code (#/register); public plans page (#/plans).
   const [register, setRegister] = useState(() => location.hash.startsWith("#/register"));
   const [plans, setPlans] = useState(() => location.hash.startsWith("#/plans"));
+  // Account recovery: «forgot password» and the emailed reset link.
+  const recoveryOf = () => (location.hash.startsWith("#/forgot") ? "forgot" : location.hash.startsWith("#/reset") ? "reset" : null);
+  const [recovery, setRecovery] = useState<"forgot" | "reset" | null>(recoveryOf);
   useEffect(() => {
     const on = () => {
       setPlans(location.hash.startsWith("#/plans"));
       setRegister(location.hash.startsWith("#/register"));
+      setRecovery(recoveryOf());
     };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
+  const [email, setEmail] = useState("");
   useEffect(() => {
     document.title = `${plans ? "الباقات" : register ? "إنشاء حساب" : "تسجيل الدخول"} · HSN AutoReply`;
   }, [plans, register]);
@@ -103,7 +109,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         } catch {
           /* private mode */
         }
-        await api("/api/auth/register", { body: { name: name.trim(), username: username.trim(), password, code, ref } });
+        await api("/api/auth/register", { body: { name: name.trim(), username: username.trim(), password, code, ref, email: email.trim() || undefined } });
         try {
           localStorage.removeItem("hsn_ref");
         } catch {
@@ -129,6 +135,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   };
 
   if (plans && !status?.needs_setup) return <PublicPlansPage />;
+  if (recovery && !status?.needs_setup) return <RecoveryPage mode={recovery} />;
   // Not shown inside the Android app itself (it is already installed).
   const download = !isNative && brand?.app_download_url ? { url: brand.app_download_url, icon: brand.app_icon ?? null } : null;
 
@@ -172,6 +179,11 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             <input className="input" dir="ltr" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={status?.needs_setup ? undefined : "hsn.store"} required />
           </Field>
           {register && !status?.needs_setup && (
+            <Field label="إيميلك" hint="لاسترجاع حسابك إذا نسيت كلمة المرور — يوصلك رمز تأكيد عليه. ما نرسل عليه إعلانات.">
+              <input className="input" dir="ltr" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" required maxLength={254} />
+            </Field>
+          )}
+          {register && !status?.needs_setup && (
             <Field label="اسم المستخدم" hint="اسمك — عربي أو إنجليزي، يظهر داخل التطبيق.">
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />
             </Field>
@@ -206,8 +218,9 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
                 <a href="#/plans" className="btn btn-ghost min-h-11 w-full border-red-500/30 text-red-600 dark:text-red-400">
                   <Icon name="zap" size={17} />جديد؟ شوف الباقات وابدأ
                 </a>
-                <p className="text-center text-sm">
+                <p className="flex flex-wrap items-center justify-center gap-x-4 text-center text-sm">
                   <button type="button" className="inline-flex min-h-10 items-center font-semibold text-violet-700 underline dark:text-violet-300" onClick={() => { setRegister(true); setError(null); location.hash = "#/register"; }}>عندي كود تفعيل</button>
+                  <a href="#/forgot" className="inline-flex min-h-10 items-center font-semibold text-violet-700 underline dark:text-violet-300">نسيت كلمة المرور؟</a>
                 </p>
               </div>
             ))}

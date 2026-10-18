@@ -141,6 +141,8 @@ export const registerSchema = z.object({
   password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
   code: z.string().trim().min(4, "أدخل كود التفعيل").max(40),
   ref: z.string().trim().max(20).optional(),
+  // For password recovery (confirmed by a code after sign-up).
+  email: z.string().trim().max(254).email("اكتب إيميل صحيح").optional().or(z.literal("").transform(() => undefined)),
 });
 
 const limitNum = z.number().int().min(0).max(10_000_000).nullable();

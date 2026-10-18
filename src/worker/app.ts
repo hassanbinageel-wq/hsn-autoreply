@@ -80,6 +80,8 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 import { toCsv } from "../shared/csv";
 import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, MESSAGE_LINKS, orderFeatures, type ExchangeRates, type PlanLimits } from "../shared/plans";
 import { diagnoseTenant } from "./services/diagnose";
+import { confirmEmailCode, requestPasswordReset, resetPassword, sendEmailCode } from "./services/recovery";
+import { emailEnabled } from "./services/email";
 import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp } from "./lib/totp";
 import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
@@ -627,6 +629,26 @@ export function createApp() {
     return c.json({ ok: true, username: user.username, token: s.token, expires_at: s.expiresAt });
   });
 
+  // ---- Forgot password: a one-time link to the confirmed email. Same answer whether or not the account exists.
+  app.post("/api/auth/forgot", async (c) => {
+    if (!(await rateLimit(c.env.DB, `forgot:${clientIp(c)}`, 5, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
+    const p = await parseBody(c, z.object({ login: z.string().trim().min(2).max(254) }));
+    if (!p.ok) return p.res;
+    if (!emailEnabled(c.env)) return apiError(c, 503, "email_off", "استرجاع كلمة المرور بالإيميل غير مفعّل بعد — تواصل مع إدارة الخدمة");
+    const r = await requestPasswordReset(c.env, p.data.login, c.env.PUBLIC_BASE_URL);
+    if (r === "sent") await audit(c.env.DB, OWNER_TENANT, "system", "auth.reset_requested").catch(() => undefined);
+    return c.json({ ok: true, message: "إذا كان الحساب مسجّل بإيميل مؤكَّد، وصلك رابط خلال دقائق. شيّك على البريد غير المرغوب (Spam) كمان." });
+  });
+  app.post("/api/auth/reset", async (c) => {
+    if (!(await rateLimit(c.env.DB, `reset:${clientIp(c)}`, 10, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
+    const p = await parseBody(c, z.object({ token: z.string().min(20).max(200), password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256) }));
+    if (!p.ok) return p.res;
+    const r = await resetPassword(c.env, p.data.token, p.data.password);
+    if (!r.ok) return apiError(c, 422, "invalid_link", "الرابط غير صالح أو انتهى وقته أو استُخدم — اطلب رابط جديد");
+    await audit(c.env.DB, r.tenant_id, r.username, "auth.password_reset");
+    return c.json({ ok: true, username: r.username });
+  });
+
   // Self sign-up with an activation code (no code = no account, so the form cannot be used for spam).
   app.post("/api/auth/register", async (c) => {
     if (!(await rateLimit(c.env.DB, `register:${clientIp(c)}`, 5, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
@@ -650,6 +672,14 @@ export function createApp() {
     }
     await seedStarterTemplates(c.env.DB, tid, now);
     await audit(c.env.DB, tid, p.data.username, "tenant.registered", String(tid));
+    // The email (for password recovery) gets a confirmation code; it works for recovery once confirmed.
+    if (p.data.email) {
+      const u = await first<{ id: number }>(c.env.DB, "SELECT id FROM admin_users WHERE tenant_id = ? ORDER BY id LIMIT 1", tid);
+      if (u) {
+        await run(c.env.DB, "UPDATE admin_users SET email = ? WHERE id = ?", p.data.email.toLowerCase(), u.id);
+        await sendEmailCode(c.env, u.id, p.data.email, now).catch(() => undefined);
+      }
+    }
     // Signed up through a customer's referral link: both get bonus days.
     const referrer = await applyReferral(c.env.DB, tid, p.data.ref, now).catch(() => null);
     if (referrer) {
@@ -756,6 +786,36 @@ export function createApp() {
     c.json(await all(c.env.DB, "SELECT substr(id,1,12) AS id, kind, device_label, created_at, last_seen_at, expires_at FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC", c.get("session").user_id, Date.now())),
   );
 
+  // ---- Account email (password recovery): set → confirm with the emailed code
+  api.get("/account/email", async (c) => {
+    const u = await first<{ email: string | null; email_verified_at: number | null }>(c.env.DB, "SELECT email, email_verified_at FROM admin_users WHERE id = ?", c.get("session").user_id);
+    return c.json({ email: u?.email ?? null, verified: !!u?.email_verified_at, enabled: emailEnabled(c.env) });
+  });
+  api.post("/account/email", async (c) => {
+    const s = c.get("session");
+    if (!(await rateLimit(c.env.DB, `email_code:${s.user_id}`, 5, 60 * 60_000))) return apiError(c, 429, "rate_limited", "طلبات كثيرة — حاول بعد ساعة");
+    const p = await parseBody(c, z.object({ email: z.string().trim().max(254).email("اكتب إيميل صحيح") }));
+    if (!p.ok) return p.res;
+    const r = await sendEmailCode(c.env, s.user_id, p.data.email);
+    if (!r.ok) {
+      if (r.error === "email_not_configured") return apiError(c, 503, "email_off", "إرسال الإيميلات غير مفعّل بعد — تواصل مع إدارة الخدمة");
+      if (r.error === "email_taken") return apiError(c, 409, "email_taken", "هذا الإيميل مستخدم في حساب ثاني");
+      return apiError(c, 503, "email_failed", "ما قدرنا نرسل الإيميل الحين — حاول بعد شوي");
+    }
+    return c.json({ ok: true });
+  });
+  api.post("/account/email/verify", async (c) => {
+    const s = c.get("session");
+    if (!(await rateLimit(c.env.DB, `email_verify:${s.user_id}`, 10, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة — حاول بعد ساعة");
+    const p = await parseBody(c, z.object({ code: z.string().trim().min(6).max(10) }));
+    if (!p.ok) return p.res;
+    const r = await confirmEmailCode(c.env.DB, s.user_id, p.data.code);
+    if (r === "invalid") return apiError(c, 422, "invalid_code", "الرمز غير صحيح");
+    if (r === "expired") return apiError(c, 422, "expired", "الرمز انتهى — اطلب رمز جديد");
+    if (r === "taken") return apiError(c, 409, "email_taken", "هذا الإيميل مستخدم في حساب ثاني");
+    await audit(c.env.DB, s.tenant_id, s.username, "account.email_confirmed");
+    return c.json({ ok: true });
+  });
   api.post("/auth/sessions/revoke-others", async (c) => {
     await run(c.env.DB, "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND id != ? AND revoked_at IS NULL", Date.now(), c.get("session").user_id, c.get("session").id);
     return c.json({ ok: true });
@@ -1001,6 +1061,8 @@ export function createApp() {
               (SELECT p.name FROM plans p WHERE p.id = t.plan_id) AS plan_name,
               (SELECT u.messages FROM usage_counters u WHERE u.tenant_id = t.id AND u.month = ?) AS messages_month,
               (SELECT u.username FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS username,
+              (SELECT u.email FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email,
+              (SELECT u.email_verified_at FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email_verified_at,
               (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS ig_username,
               (SELECT a.status FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS ig_status,
               (SELECT a.follow_gate_allowed FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS follow_gate_allowed,

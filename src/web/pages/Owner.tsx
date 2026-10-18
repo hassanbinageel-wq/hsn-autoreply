@@ -111,6 +111,7 @@ function CustomersTab() {
                   <b className="font-display block truncate text-base">{t.name}</b>
                   <span className="muted block text-xs">اسم المستخدم: <b className="text-[var(--text)]">{t.name}</b></span>
                   <span className="muted block text-xs">اسم المتجر (الدخول): <b className="text-[var(--text)]" dir="ltr">{t.username ?? "—"}</b></span>
+                  {!t.is_owner && <span className="muted block text-xs">الإيميل: {t.email ? <><b className="text-[var(--text)]" dir="ltr">{t.email}</b> {t.email_verified_at ? <span className="text-emerald-600">✓ مؤكَّد</span> : <span className="text-amber-600">(غير مؤكَّد)</span>}</> : "—"}</span>}
                 </div>
                 <span className={`chip ${t.status === "active" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"}`}>
                   <span className="h-1.5 w-1.5 rounded-full bg-current" />{t.status === "active" ? "نشط" : "موقوف"}

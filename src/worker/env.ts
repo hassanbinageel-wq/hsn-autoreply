@@ -29,6 +29,9 @@ export interface Env {
   SALLA_CLIENT_ID?: string;
   SALLA_CLIENT_SECRET?: string;
   SALLA_WEBHOOK_SECRET?: string;
+  // Optional: Resend (resend.com) for password-recovery emails; sender address on the verified domain.
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
   /** The service's own domain (e.g. hsnreply.online), for its expiry date. */
   SERVICE_DOMAIN?: string;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { TwoFactorCard } from "../components/TwoFactor";
+import { AccountEmailCard } from "../components/AccountEmail";
 import { askText } from "../components/Confirm";
 import { api, download } from "../api";
 import { APP_VERSION, isNative } from "../platform";
@@ -210,6 +211,10 @@ export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: s
             <Card title="المظهر" className="h-full">
               <Row label="الوضع" hint="«تلقائي» يتبع إعداد جهازك">{themeSeg}</Row>
             </Card>
+          </section>
+
+          <section id="set-email" className="scroll-mt-24">
+            <AccountEmailCard />
           </section>
 
           <section id="set-2fa" className="scroll-mt-24 empty:hidden">

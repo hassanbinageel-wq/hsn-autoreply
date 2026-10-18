@@ -41,6 +41,8 @@
     "PUBLIC_BASE_URL": "https://hsn-autoreply.YOUR-SUBDOMAIN.workers.dev",
     // The service's own domain (expiry date shown on the owner's usage page).
     "SERVICE_DOMAIN": "hsnreply.online",
+    // Sender of password-recovery emails (the domain is verified in Resend).
+    "EMAIL_FROM": "HSN AutoReply <no-reply@hsnreply.online>",
     "ALLOWED_APP_ORIGINS": "https://localhost,capacitor://localhost",
     "APP_VERSION": "1.0.0",
     "APP_DEEP_LINK": "com.hsn.autoreply://oauth-done",

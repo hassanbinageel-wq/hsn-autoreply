@@ -90,6 +90,7 @@ export function DashboardPage() {
         }
       />
 
+      <EmailNudge />
       <GettingStarted connected={!!acc && acc.status === "active"} total={(d.campaigns?.active ?? 0) + (d.campaigns?.paused ?? 0) + (d.campaigns?.draft ?? 0)} active={d.campaigns?.active ?? 0} />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
@@ -298,5 +299,17 @@ function GettingStarted({ connected, total, active }: { connected: boolean; tota
         ))}
       </ol>
     </section>
+  );
+}
+
+/** Customers without a confirmed email cannot recover their password: a gentle reminder until they add one. */
+function EmailNudge() {
+  const { data } = useAsync(() => api<{ email: string | null; verified: boolean; enabled: boolean }>("/api/account/email").catch(() => null), []);
+  if (!data || !data.enabled || data.verified) return null;
+  return (
+    <Alert tone="warn">
+      📧 {data.email ? "أكّد إيميلك" : "أضف إيميلك"} عشان تقدر تسترجع حسابك لو نسيت كلمة المرور.{" "}
+      <Link to="/settings" className="font-bold underline">من الإعدادات ←</Link>
+    </Alert>
   );
 }
