@@ -1,6 +1,7 @@
 import { MESSAGE_LINKS } from "../../shared/plans";
 import { OwnerSupportTab } from "./Support";
 import { PlaceholderChips, TemplateBar } from "../components/MessageTemplates";
+import { DiagnoseModal } from "../components/Diagnose";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DateTimeField } from "../components/DateTimeField";
 import { askConfirm, askText, showCopy } from "../components/Confirm";
@@ -77,6 +78,7 @@ function CustomersTab() {
   const { data: plans } = useAsync(() => api<any[]>("/api/owner/plans"), []);
   const [planFor, setPlanFor] = useState<any>(null);
   const [messageFor, setMessageFor] = useState<any | null>(null);
+  const [diagnoseFor, setDiagnoseFor] = useState<any | null>(null);
   const [adding, setAdding] = useState(false);
   const act = async (fn: () => Promise<unknown>, msg: string) => {
     try {
@@ -92,6 +94,7 @@ function CustomersTab() {
     <div className="space-y-5">
       {adding && <NewCustomer onClose={() => setAdding(false)} onDone={reload} />}
       {messageFor && <MessageModal tenant={messageFor} onClose={() => setMessageFor(null)} />}
+      {diagnoseFor && <DiagnoseModal tenant={diagnoseFor} onClose={() => setDiagnoseFor(null)} />}
       {planFor && <SetPlan t={planFor} plans={plans ?? []} onClose={() => setPlanFor(null)} onDone={() => { setPlanFor(null); reload(); }} />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="muted text-sm">{data ? `${customers.length} عميل · ${customers.filter((t) => t.status === "active" && t.plan_expires_at > Date.now()).length} باشتراك فعّال` : ""}</p>
@@ -137,6 +140,7 @@ function CustomersTab() {
               <div className="mt-3 flex flex-wrap gap-2">
                 <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setPlanFor(t)}><Icon name="zap" size={15} />الباقة</button>
                 {!t.is_owner && <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setMessageFor(t)}><Icon name="send" size={15} />رسالة</button>}
+                {!t.is_owner && <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setDiagnoseFor(t)}>🩺 تشخيص</button>}
                 <button
                   className="btn btn-ghost min-h-9 text-xs"
                   onClick={async () => {
@@ -1157,6 +1161,7 @@ const RISK: Record<string, { label: string; cls: string }> = {
 function HealthTab() {
   const { data, reload } = useAsync(() => api<any>("/api/owner/health"), []);
   const [messageFor, setMessageFor] = useState<any | null>(null);
+  const [diagnoseFor, setDiagnoseFor] = useState<any | null>(null);
   const [filter, setFilter] = useState<"all" | "high" | "medium" | "good">("all");
   if (!data) return <Spinner />;
   const list = data.customers.filter((c: any) => filter === "all" || c.risk === filter);
@@ -1174,7 +1179,7 @@ function HealthTab() {
       {!list.length ? <Empty title="ما فيه عملاء هنا" /> : (
         <div className="grid gap-3 md:grid-cols-2">
           {list.map((c: any) => (
-            <Card key={c.id} title={<span className="flex items-center gap-2">{c.name}<span className={`chip !py-0 text-[10.5px] ${RISK[c.risk].cls}`}>{RISK[c.risk].label}</span></span>} action={<button className="btn btn-ghost min-h-9 text-xs" onClick={() => setMessageFor(c)}><Icon name="send" size={14} />رسالة</button>}>
+            <Card key={c.id} title={<span className="flex items-center gap-2">{c.name}<span className={`chip !py-0 text-[10.5px] ${RISK[c.risk].cls}`}>{RISK[c.risk].label}</span></span>} action={<span className="flex gap-1"><button className="btn btn-ghost min-h-9 text-xs" onClick={() => setDiagnoseFor(c)}>🩺 تشخيص</button><button className="btn btn-ghost min-h-9 text-xs" onClick={() => setMessageFor(c)}><Icon name="send" size={14} />رسالة</button></span>}>
               <div className="muted mb-2 text-xs">
                 اسم المستخدم: <b className="text-[var(--text)]">{c.name}</b> · اسم المتجر (الدخول): <b className="text-[var(--text)]" dir="ltr">{c.usernames ?? "—"}</b>
                 {c.ig_username ? <> · إنستقرام: <b className="text-[var(--text)]" dir="ltr">@{c.ig_username}</b></> : null}
@@ -1199,6 +1204,7 @@ function HealthTab() {
       )}
       <button className="btn btn-ghost text-xs" onClick={reload}>تحديث</button>
       {messageFor && <MessageModal tenant={messageFor} onClose={() => setMessageFor(null)} />}
+      {diagnoseFor && <DiagnoseModal tenant={diagnoseFor} onClose={() => setDiagnoseFor(null)} />}
     </div>
   );
 }

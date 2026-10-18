@@ -79,6 +79,7 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 import { toCsv } from "../shared/csv";
 import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, MESSAGE_LINKS, orderFeatures, type ExchangeRates, type PlanLimits } from "../shared/plans";
+import { diagnoseTenant } from "./services/diagnose";
 import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
@@ -781,6 +782,13 @@ export function createApp() {
     if (!p.ok) return p.res;
     await setSetting(c.env.DB, OWNER_TENANT, "message_templates", p.data);
     return c.json({ ok: true });
+  });
+  // Diagnosis of one customer (no tokens, message texts or follower names): checks + details to download.
+  owner.get("/tenants/:id/diagnose", async (c) => {
+    const id = idParam(c);
+    const t = id && (await first<{ is_owner: number }>(c.env.DB, "SELECT is_owner FROM tenants WHERE id = ?", id));
+    if (!t || t.is_owner) return apiError(c, 404, "not_found", "العميل غير موجود");
+    return c.json(await diagnoseTenant(c.env.DB, id!, c.env.APP_VERSION));
   });
   // Customer health: who may be about to leave, and why.
   owner.get("/health", async (c) => c.json({ customers: await customerHealth(c.env.DB) }));
