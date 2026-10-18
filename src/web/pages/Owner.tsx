@@ -1,3 +1,4 @@
+import { MESSAGE_LINKS } from "../../shared/plans";
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DateTimeField } from "../components/DateTimeField";
 import { askConfirm, askText, showCopy } from "../components/Confirm";
@@ -1039,6 +1040,7 @@ const NOTICE_TEMPLATES: Array<{ label: string; title: string; body: string }> = 
 
 function BroadcastCard() {
   const [open, setOpen] = useState(false);
+  const [link, setLink] = useState("/");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1046,7 +1048,7 @@ function BroadcastCard() {
     if (!(await askConfirm({ title: "إرسال لكل العملاء؟", message: `يوصل الإشعار في جرس «الإشعارات المهمة» عند كل العملاء النشطين:\n\n${title}`, confirmLabel: "أرسل" }))) return;
     setBusy(true);
     try {
-      const r = await api<{ sent: number }>("/api/owner/broadcast", { body: { title, body: body || undefined } });
+      const r = await api<{ sent: number }>("/api/owner/broadcast", { body: { title, body: body || undefined, link } });
       toast(`وصل لـ ${r.sent} عميل`);
       setOpen(false);
       setTitle("");
@@ -1068,6 +1070,7 @@ function BroadcastCard() {
           </div>
           <input className="input" placeholder="العنوان" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
           <textarea className="input min-h-[6rem]" placeholder="التفاصيل (اختياري)" maxLength={1000} value={body} onChange={(e) => setBody(e.target.value)} />
+          <LinkSelect value={link} onChange={setLink} />
           <div className="flex gap-2">
             <button className="btn btn-primary" disabled={busy || title.trim().length < 3} onClick={send}>{busy ? "…" : "إرسال للعملاء"}</button>
             <button className="btn btn-ghost" onClick={() => setOpen(false)}>إلغاء</button>
@@ -1079,14 +1082,26 @@ function BroadcastCard() {
 }
 
 /** A private message from the owner to one customer: their bell, and their Telegram when they set it up. */
+function LinkSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="block">
+      <span className="muted text-xs">لما يضغط على الرسالة يروح إلى:</span>
+      <select className="input mt-1" value={value} onChange={(e) => onChange(e.target.value)}>
+        {MESSAGE_LINKS.map((l) => <option key={l.to} value={l.to}>{l.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function MessageModal({ tenant, onClose }: { tenant: any; onClose: () => void }) {
+  const [link, setLink] = useState("/");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const send = async () => {
     setBusy(true);
     try {
-      const r = await api<{ telegram: boolean }>(`/api/owner/tenants/${tenant.id}/message`, { body: { title, body: body || undefined } });
+      const r = await api<{ telegram: boolean }>(`/api/owner/tenants/${tenant.id}/message`, { body: { title, body: body || undefined, link } });
       toast(r.telegram ? "وصلت الرسالة (في التطبيق وتيليجرام)" : "وصلت الرسالة في التطبيق");
       onClose();
     } catch (e: any) {
@@ -1098,9 +1113,10 @@ function MessageModal({ tenant, onClose }: { tenant: any; onClose: () => void })
   return (
     <Modal open onClose={onClose} title={`رسالة إلى «${tenant.name}»`} center>
       <div className="space-y-3">
-        <p className="muted text-xs">توصل في جرس «الإشعارات المهمة» عنده، وعلى تيليجرام إذا مفعّله. هو بس اللي يشوفها.</p>
+        <p className="muted text-xs">توصل في جرس «الإشعارات المهمة» عنده مع صوت تنبيه ووميض بسيط في الشريط العلوي، وعلى تيليجرام إذا مفعّله. هو بس اللي يشوفها.</p>
         <input className="input" placeholder="العنوان (مثل: تجديد اشتراكك، ميزة جديدة لك…)" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
         <textarea className="input min-h-[8rem]" placeholder="نص الرسالة" maxLength={1000} value={body} onChange={(e) => setBody(e.target.value)} />
+        <LinkSelect value={link} onChange={setLink} />
         <div className="flex justify-end gap-2">
           <button className="btn btn-ghost" onClick={onClose}>إلغاء</button>
           <button className="btn btn-primary" disabled={busy || title.trim().length < 3} onClick={send}>{busy ? "…" : "إرسال"}</button>

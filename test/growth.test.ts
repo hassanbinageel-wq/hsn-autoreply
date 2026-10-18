@@ -56,7 +56,7 @@ describe("1) link click tracking", () => {
 
     const tap = await call(path, { headers: { "User-Agent": "Mozilla/5.0 (iPhone) Instagram 300.0" }, redirect: "manual" });
     expect(tap.status).toBe(302);
-    expect(tap.headers.get("Location")).toBe(SECRET);
+    expect(tap.headers.get("Location")).toBe(`${SECRET}?utm_source=instagram&utm_medium=hsn&utm_campaign=${encodeURIComponent("حملة")}`);
     await call(path, { headers: { "User-Agent": "Mozilla/5.0 (Android) Instagram" }, redirect: "manual" });
     f = (await flowsOf())[0];
     expect(f.link_clicks).toBe(2);
@@ -76,7 +76,7 @@ describe("1) link click tracking", () => {
     await seedCampaign({ track_clicks: false });
     const meta = new MockMeta();
     await deliver(commentPayload({ text: "كورس" }), meta);
-    expect(meta.sends()[0].msg!.linkButton!.url).toBe(SECRET);
+    expect(meta.sends()[0].msg!.linkButton!.url.startsWith(`${SECRET}?utm_source=instagram`)).toBe(true);
   });
 });
 

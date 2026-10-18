@@ -216,7 +216,7 @@ describe("follow-gated comment flow", () => {
     expect(s).toHaveLength(1);
     expect(s[0]).toMatchObject({ kind: "private_reply", target: "c_fast" });
     expect(s[0].text).toContain(SECRET);
-    expect(s[0].msg!.linkButton?.url).toBe(SECRET); // the link goes out as a tappable button
+    expect(s[0].msg!.linkButton?.url).toBe(`${SECRET}?utm_source=instagram&utm_medium=hsn&utm_campaign=${encodeURIComponent("حملة")}`); // the link goes out as a tappable button
   });
 
   it("needs_interaction from the API sends the opening (no content) and waits", async () => {
@@ -338,7 +338,7 @@ describe("story reply & story mention", () => {
     await deliver(messagePayload({ text: "واو 😍", storyReply: { id: "story_9" } }), meta);
     expect(meta.sends()).toHaveLength(1);
     expect(meta.sends()[0]).toMatchObject({ kind: "dm", target: "igsid_user_1" });
-    expect(meta.sends()[0].text).toBe(`STORY ${SECRET}`);
+    expect(meta.sends()[0].text).toBe(`STORY ${SECRET}?utm_source=instagram&utm_medium=hsn&utm_campaign=${encodeURIComponent("حملة")}`);
   });
 
   it("a plain DM is not treated as a story reply", async () => {

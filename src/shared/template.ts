@@ -90,3 +90,24 @@ export function publicReplyVariants(text: string | null | undefined): string[] {
 export function pickVariant<T>(list: readonly T[], seed: number): T {
   return list[Math.abs(Math.trunc(seed)) % list.length];
 }
+
+/**
+ * Adds UTM tags (source instagram, medium hsn, campaign name) so the store's own analytics (Google Analytics,
+ * store reports) know a visit came from this campaign. Links to chat apps and file hosts are left as they are,
+ * and tags already in the link are kept.
+ */
+export function withUtm(url: string | null | undefined, campaignName: string): string | null {
+  if (!url) return url ?? null;
+  try {
+    const u = new URL(url);
+    if (!/^https?:$/.test(u.protocol) || /(^|\.)(wa\.me|whatsapp\.com|t\.me|telegram\.me|instagram\.com|drive\.google\.com|docs\.google\.com|dropbox\.com)$/i.test(u.hostname)) return url;
+    if (u.searchParams.has("utm_source")) return url;
+    const slug = campaignName.trim().replace(/\s+/g, "-").slice(0, 60) || "campaign";
+    u.searchParams.set("utm_source", "instagram");
+    u.searchParams.set("utm_medium", "hsn");
+    u.searchParams.set("utm_campaign", slug);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}

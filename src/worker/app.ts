@@ -77,7 +77,8 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 import { toCsv } from "../shared/csv";
-import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, orderFeatures, type ExchangeRates, type PlanLimits } from "../shared/plans";
+import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, MESSAGE_LINKS, orderFeatures, type ExchangeRates, type PlanLimits } from "../shared/plans";
+const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
 import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
@@ -680,23 +681,23 @@ export function createApp() {
   });
   // A notice to every active customer's bell (maintenance, an interruption, service back).
   owner.post("/broadcast", async (c) => {
-    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional() }));
+    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional(), link: z.enum(MESSAGE_LINK_PATHS).optional() }));
     if (!p.ok) return p.res;
     if (!(await rateLimit(c.env.DB, "owner_broadcast", 10, 3_600_000))) return apiError(c, 429, "rate_limited", "أرسلت إشعارات كثيرة — جرّب بعد شوي");
-    const n = await broadcastNotice(c.env.DB, p.data.title, p.data.body ?? null);
+    const n = await broadcastNotice(c.env.DB, p.data.title, p.data.body ?? null, Date.now(), p.data.link ?? "/");
     await audit(c.env.DB, T(c), c.get("session").username, "owner.broadcast", String(n), { title: p.data.title });
     return c.json({ ok: true, sent: n });
   });
   // A private message to one customer: their bell, and their Telegram when they set it up.
   owner.post("/tenants/:id/message", async (c) => {
     const id = idParam(c);
-    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional() }));
+    const p = await parseBody(c, z.object({ title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000).optional(), link: z.enum(MESSAGE_LINK_PATHS).optional() }));
     if (!p.ok) return p.res;
     const t = id && (await first<{ id: number; is_owner: number }>(c.env.DB, "SELECT id, is_owner FROM tenants WHERE id = ?", id));
     if (!t || t.is_owner) return apiError(c, 404, "not_found", "العميل غير موجود");
     if (!(await rateLimit(c.env.DB, "owner_message", 60, 3_600_000))) return apiError(c, 429, "rate_limited", "أرسلت رسائل كثيرة — جرّب بعد شوي");
     const text = `✉️ ${p.data.title}${p.data.body ? `\n${p.data.body}` : ""}`;
-    await notify(c.env, t.id, "message", text);
+    await notify(c.env, t.id, "message", text, undefined, { link: p.data.link ?? "/" });
     const s = await getNotifySettings(c.env.DB, t.id);
     await audit(c.env.DB, T(c), c.get("session").username, "owner.message", String(t.id), { title: p.data.title });
     return c.json({ ok: true, telegram: !!s.enabled && !!s.chat_id });
@@ -1922,6 +1923,7 @@ export function createApp() {
       auto_new_media: d.auto_new_media && d.type === "comment" ? 1 : 0, auto_new_reels_only: d.auto_new_reels_only ? 1 : 0,
       store_coupon: d.store_coupon ? d.store_coupon.toUpperCase() : null,
       stock_action: d.stock_action ?? "notify",
+      utm: d.utm === false ? 0 : 1,
       out_of_stock_text: d.out_of_stock_text || null,
       // "New posts from now on": the starting point is kept once set (or taken from the request), else it is now.
       auto_new_since: d.auto_new_media && d.type === "comment"
@@ -2720,7 +2722,14 @@ export function createApp() {
     ]);
     return c.json({ items, unread: unread?.n ?? 0 });
   });
-  api.get("/app-notifications/unread", async (c) => c.json({ unread: (await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM app_notifications WHERE tenant_id = ? AND read_at IS NULL", T(c)))?.n ?? 0 }));
+  // Unread count, and the newest unread one (the app plays a sound for owner messages and support replies).
+  api.get("/app-notifications/unread", async (c) => {
+    const [n, latest] = await Promise.all([
+      first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM app_notifications WHERE tenant_id = ? AND read_at IS NULL", T(c)),
+      first<{ id: number; kind: string; title: string }>(c.env.DB, "SELECT id, kind, title FROM app_notifications WHERE tenant_id = ? AND read_at IS NULL ORDER BY id DESC LIMIT 1", T(c)),
+    ]);
+    return c.json({ unread: n?.n ?? 0, latest: latest ?? null });
+  });
   api.post("/app-notifications/read", async (c) => {
     await run(c.env.DB, "UPDATE app_notifications SET read_at = ? WHERE tenant_id = ? AND read_at IS NULL", Date.now(), T(c));
     return c.json({ ok: true });

@@ -5,17 +5,70 @@ import { Icon } from "./Icon";
 import { fmtTime } from "./ui";
 
 /** Important notifications (stock, disconnected account, failures, subscription, story suggestions) behind the bell. */
-const KIND_ICON: Record<string, string> = { stock: "📦", story: "📣", reauth: "🔌", failures: "⚠️", spike: "🔥", expiry: "⏳", usage: "📊", domain: "🌐", plan: "📨", service: "🛠️", message: "✉️" };
+const KIND_ICON: Record<string, string> = { stock: "📦", story: "📣", reauth: "🔌", failures: "⚠️", spike: "🔥", expiry: "⏳", usage: "📊", domain: "🌐", plan: "📨", service: "🛠️", message: "✉️", support: "🎧", support_reply: "🎧" };
 
-export function NotificationBell({ route }: { route: string }) {
+/** Kinds that ring: a message from the owner, a service notice, support messages. */
+const RING = new Set(["message", "service", "support", "support_reply"]);
+const SEEN_KEY = "hsn_last_ring";
+
+/** A short two-note chime, synthesized (no audio file). Browsers may stay silent until the page was tapped once. */
+function chime() {
+  try {
+    const AC: typeof AudioContext | undefined = (window as any).AudioContext ?? (window as any).webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    void ctx.resume().catch(() => undefined);
+    [880, 1318.5].forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = f;
+      const t = ctx.currentTime + i * 0.18;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      o.connect(g).connect(ctx.destination);
+      o.start(t);
+      o.stop(t + 0.55);
+    });
+    setTimeout(() => void ctx.close().catch(() => undefined), 1500);
+  } catch {
+    /* no sound */
+  }
+}
+
+export function NotificationBell({ route, onAlert }: { route: string; onAlert?: () => void }) {
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<any[] | null>(null);
   const box = useRef<HTMLDivElement>(null);
-  const refresh = () => api<{ unread: number }>("/api/app-notifications/unread").then((r) => setUnread(r.unread)).catch(() => undefined);
+  const refresh = () =>
+    api<{ unread: number; latest: { id: number; kind: string } | null }>("/api/app-notifications/unread")
+      .then((r) => {
+        setUnread(r.unread);
+        // A new owner message / notice / support message: a chime and a short flash of the top bar.
+        if (r.latest && RING.has(r.latest.kind)) {
+          let seen = 0;
+          try {
+            seen = Number(localStorage.getItem(SEEN_KEY) || 0);
+          } catch {
+            /* private mode */
+          }
+          if (r.latest.id > seen) {
+            try {
+              localStorage.setItem(SEEN_KEY, String(r.latest.id));
+            } catch {
+              /* private mode */
+            }
+            chime();
+            onAlert?.();
+          }
+        }
+      })
+      .catch(() => undefined);
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 60_000);
+    const t = setInterval(refresh, 30_000);
     return () => clearInterval(t);
   }, []);
   useEffect(() => setOpen(false), [route]);

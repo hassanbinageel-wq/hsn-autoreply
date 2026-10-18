@@ -142,3 +142,19 @@ export function formatAmount(amount: number, currency: string): string {
 export function formatPrice(amount: number, currency: string, period: string): string {
   return `${formatAmount(amount, currency)} / ${PRICE_PERIODS[period] ?? PRICE_PERIODS.month}`;
 }
+
+/** App pages an owner message can open when tapped. */
+export const MESSAGE_LINKS: Array<{ to: string; label: string }> = [
+  { to: "/", label: "الرئيسية" },
+  { to: "/subscription", label: "اشتراكي والباقات" },
+  { to: "/campaigns", label: "الحملات" },
+  { to: "/campaigns/new", label: "حملة جديدة" },
+  { to: "/schedule", label: "الجدولة" },
+  { to: "/analytics", label: "التحليلات" },
+  { to: "/report", label: "التقرير الأسبوعي" },
+  { to: "/store", label: "تحليل المتجر" },
+  { to: "/connection", label: "الربط" },
+  { to: "/inbox", label: "الرسائل" },
+  { to: "/support", label: "الدعم" },
+  { to: "/settings", label: "الإعدادات" },
+];

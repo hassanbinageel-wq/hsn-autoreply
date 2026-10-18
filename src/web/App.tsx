@@ -221,6 +221,7 @@ export function App() {
   }, []);
 
   useEffect(() => setMenuOpen(false), [route]);
+  const [flash, setFlash] = useState(false);
   const [shell, setShell] = useState<{ account?: any; unread: number; usagePct?: number; usageUsed?: number }>({ unread: 0 });
   useEffect(() => {
     if (auth !== "in") return;
@@ -376,7 +377,7 @@ export function App() {
       </aside>
 
       <div className="min-w-0 flex-1">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)]/90 px-4 backdrop-blur lg:h-[68px] lg:px-8">
+        <header className={`sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)]/90 px-4 backdrop-blur lg:h-[68px] lg:px-8 ${flash ? "bar-flash" : ""}`}>
           <Link to="/" className="flex items-center gap-2 lg:hidden" aria-label="الرئيسية">
             <span className="grad flex h-9 w-9 items-center justify-center rounded-xl text-white"><Icon name="zap" size={19} /></span>
           </Link>
@@ -387,7 +388,7 @@ export function App() {
             <button className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)]" title="المظهر" aria-label="تبديل المظهر" onClick={() => setTheme(nextTheme)}>
               <Icon name={themeIcon} size={18} />
             </button>
-            <NotificationBell route={route} />
+            <NotificationBell route={route} onAlert={() => { setFlash(true); setTimeout(() => setFlash(false), 5000); }} />
             <button className="hidden items-center gap-2 rounded-xl px-1.5 py-1 hover:bg-[var(--surface-2)] sm:flex" onClick={logout} title="تسجيل الخروج">
               <span className="grad font-display flex h-9 w-9 items-center justify-center rounded-xl font-extrabold text-white">{(username || "?")[0]?.toUpperCase()}</span>
               <span className="text-right leading-tight"><b className="block text-[13px]">{username}</b><span className="muted flex items-center gap-1 text-[11px]"><Icon name="logout" size={12} />خروج</span></span>

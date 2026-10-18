@@ -44,6 +44,7 @@ type Form = {
   track_clicks: boolean;
   store_coupon: string;
   stock_action: "notify" | "pause" | "waitlist";
+  utm: boolean;
   out_of_stock_text: string;
   follow_reminder_minutes: number;
   auto_new_media: boolean;
@@ -72,6 +73,7 @@ const EMPTY: Form = {
   final_url: "",
   store_coupon: "",
   stock_action: "notify",
+  utm: true,
   out_of_stock_text: "",
   public_reply_enabled: false,
   public_reply_text: SAFE_PUBLIC_REPLIES.join("\n"),
@@ -269,6 +271,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
             ...Object.fromEntries(Object.entries(c).filter(([, v]) => v !== null)),
             match_all: !!c.match_all,
             unify_alef: !!c.unify_alef,
+            utm: c.utm !== 0,
             include_replies: !!c.include_replies,
             require_follow: !!c.require_follow,
             follow_invite: !!c.follow_invite,
@@ -309,6 +312,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
     final_url: form.final_url.trim() || null,
     store_coupon: form.store_coupon.trim() || null,
     stock_action: form.stock_action,
+    utm: form.utm,
     out_of_stock_text: form.out_of_stock_text.trim() || null,
     opening_text: form.opening_text || null,
     public_reply_fallback_text: form.public_reply_fallback_text || null,
@@ -644,6 +648,12 @@ export function CampaignWizard({ id }: { id: number | null }) {
               onChange={(v) => set("track_clicks", v)}
               label="تتبّع الضغط على الرابط"
               description="يُرسل الرابط كزر «فتح الرابط 🔗» يمر عبر خادمك أولًا فيُحسب الضغط ثم يُحوَّل فورًا للرابط الأصلي. تظهر الأرقام وأسماء من ضغطوا في الإحصائيات."
+            />
+            <Toggle
+              checked={form.utm}
+              onChange={(v) => set("utm", v)}
+              label="وسوم Google Analytics (UTM)"
+              description="نضيف لآخر الرابط اسم المصدر (instagram) واسم الحملة، فتعرف من Google Analytics أو تقارير متجرك كم زائر وطلب جابت هذي الحملة — حتى اللي اشتروا بدون كود الخصم. المتابع يفتح نفس الصفحة بدون أي فرق."
             />
             <div className="muted text-xs">المتغيرات المتاحة: {Object.entries(TEMPLATE_VARIABLES).map(([k, v]) => `{{${k}}} — ${v}`).join(" · ")}. مثال بديل: {"{{username|يا غالي}}"}</div>
           </div>

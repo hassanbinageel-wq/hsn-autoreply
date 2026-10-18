@@ -1,4 +1,4 @@
-import { renderTemplate, claimsDelivery, contentLinkButton, pickVariant, publicReplyVariants, SAFE_PUBLIC_REPLIES } from "../../shared/template";
+import { renderTemplate, claimsDelivery, contentLinkButton, pickVariant, publicReplyVariants, SAFE_PUBLIC_REPLIES, withUtm } from "../../shared/template";
 import { TERMINAL_FLOW_STATES } from "../../shared/states";
 import { first, getSetting, run } from "../lib/db";
 import { randomToken } from "../lib/crypto";
@@ -126,19 +126,23 @@ export function buildMessage(
       if (c.stock_out_at && c.stock_action === "waitlist") {
         return { text: stripContent(renderTemplate(c.out_of_stock_text?.trim() || OUT_OF_STOCK_TEXT, vars), c.final_url) };
       }
-      const body = c.final_text?.trim() ? c.final_text : "تفضل 🎁 {{content_url}}";
-      text = renderTemplate(body, { ...vars, content_url: c.final_url ?? "" });
-      if (c.final_url && !text.includes(c.final_url)) text = `${text}\n${c.final_url}`.trim();
+      let body = c.final_text?.trim() ? c.final_text : "تفضل 🎁 {{content_url}}";
+      // The link typed straight into the text gets the same tags.
+      if (c.final_url) body = body.split(c.final_url).join("{{content_url}}");
+      // UTM tags (unless turned off) so the store's own analytics credit the campaign.
+      const url = c.utm === 0 ? c.final_url : withUtm(c.final_url, c.name);
+      text = renderTemplate(body, { ...vars, content_url: url ?? "" });
+      if (url && !text.includes(url)) text = `${text}\n${url}`.trim();
       // Optional invitation to follow: a line + an «open our account» button. The content is sent either way.
       const link = accountLink(l.account);
       if (c.follow_invite && link) {
         const invite = renderTemplate(c.follow_invite_text?.trim() || DEFAULTS.follow_invite, vars).split(link).join("").trim();
-        const linkButton = contentLinkButton(text, c.final_url);
+        const linkButton = contentLinkButton(text, url);
         if (linkButton) linkButton.text = `${linkButton.text}\n\n${invite}`.trim();
         // The plain-text fallback keeps the profile link; the button templates drop it from the text.
         return { text: `${text}\n\n${invite} ${link}`.trim(), linkButton, accountButton: { title: "👤 تابعنا", url: link } };
       }
-      return { text, linkButton: contentLinkButton(text, c.final_url) };
+      return { text, linkButton: contentLinkButton(text, url) };
     }
     case "opening":
       text = renderTemplate(c.opening_text || DEFAULTS.opening, vars);

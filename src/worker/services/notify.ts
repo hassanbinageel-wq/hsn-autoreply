@@ -144,8 +144,8 @@ const IN_APP: Partial<Record<NotifyKind, string>> = {
 };
 
 /** Saves an important notification for the in-app bell (first line = title, the rest = body). */
-export async function addAppNotification(db: D1Database, tenantId: number, kind: NotifyKind, text: string, now = Date.now()): Promise<void> {
-  const link = IN_APP[kind];
+export async function addAppNotification(db: D1Database, tenantId: number, kind: NotifyKind, text: string, now = Date.now(), linkOverride?: string): Promise<void> {
+  const link = linkOverride ?? IN_APP[kind];
   if (link === undefined) return;
   const [title, ...rest] = text.split("\n");
   await db
@@ -158,7 +158,7 @@ export async function addAppNotification(db: D1Database, tenantId: number, kind:
  * An owner/customer notification: the in-app bell (important kinds) and Telegram (when set up and that kind is on).
  * Throttled per kind so a bad hour never floods either. Never throws.
  */
-export async function notify(env: Env, tenantId: number, kind: NotifyKind, text: string, onRequest?: () => void): Promise<void> {
+export async function notify(env: Env, tenantId: number, kind: NotifyKind, text: string, onRequest?: () => void, opts: { link?: string } = {}): Promise<void> {
   try {
     const throttle = THROTTLE_MS[kind];
     if (throttle) {
@@ -167,7 +167,7 @@ export async function notify(env: Env, tenantId: number, kind: NotifyKind, text:
       if (Date.now() - last < throttle) return;
       await setSetting(env.DB, tenantId, key, Date.now());
     }
-    await addAppNotification(env.DB, tenantId, kind, text).catch((e) => console.error("app notification failed", sanitize(String(e))));
+    await addAppNotification(env.DB, tenantId, kind, text, Date.now(), opts.link).catch((e) => console.error("app notification failed", sanitize(String(e))));
     const s = await getNotifySettings(env.DB, tenantId);
     if (!s.enabled || !s.chat_id) return;
     const on: Record<NotifyKind, boolean> = {
@@ -299,10 +299,10 @@ export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number>
 }
 
 /** The owner's notice to every active customer (maintenance, an interruption, service back) — in the app only. */
-export async function broadcastNotice(db: D1Database, title: string, body: string | null, now = Date.now()): Promise<number> {
+export async function broadcastNotice(db: D1Database, title: string, body: string | null, now = Date.now(), link = "/"): Promise<number> {
   const r = await db
-    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, created_at) SELECT id, 'service', ?, ?, '/', ? FROM tenants WHERE status = 'active' AND is_owner = 0")
-    .bind(title.slice(0, 200), body?.slice(0, 1000) || null, now)
+    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, created_at) SELECT id, 'service', ?, ?, ?, ? FROM tenants WHERE status = 'active' AND is_owner = 0")
+    .bind(title.slice(0, 200), body?.slice(0, 1000) || null, link, now)
     .run();
   return r.meta.changes ?? 0;
 }

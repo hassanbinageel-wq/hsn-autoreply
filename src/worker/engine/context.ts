@@ -66,6 +66,7 @@ export interface CampaignRow {
   stock_action?: string | null;
   out_of_stock_text?: string | null;
   stock_out_at?: number | null;
+  utm?: number;
   public_reply_enabled: number;
   public_reply_text: string | null;
   public_reply_on_dm_fail: "none" | "fallback";
