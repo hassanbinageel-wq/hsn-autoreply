@@ -58,6 +58,7 @@ export async function cleanup(db: D1Database, now = Date.now()): Promise<void> {
     db.prepare("DELETE FROM media_insights WHERE captured_at < ?").bind(now - 400 * 86_400_000),
     db.prepare("DELETE FROM account_insights WHERE captured_at < ?").bind(now - 400 * 86_400_000),
     db.prepare("DELETE FROM app_notifications WHERE expires_at < ? OR (expires_at IS NULL AND created_at < ?)").bind(now, now - 30 * 86_400_000),
+    db.prepare("DELETE FROM owner_message_receipts WHERE owner_message_id IN (SELECT id FROM owner_messages WHERE created_at < ?)").bind(now - 365 * 86_400_000),
     db.prepare("DELETE FROM owner_messages WHERE created_at < ?").bind(now - 365 * 86_400_000),
   ]);
 }

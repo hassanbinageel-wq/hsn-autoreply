@@ -10,6 +10,7 @@ import { drawsThisMonth, getEntitlement, monthlyMessages } from "./plans";
 import { weeklyReport, weeklyText } from "./growth";
 import { tzOffsetMinutes } from "./analytics";
 import { serviceDomain } from "./domain";
+import { fillMessage } from "../../shared/messageTemplates";
 
 /**
  * Owner notifications through a Telegram bot the owner creates (free, no extra account needed).
@@ -329,30 +330,44 @@ export async function sendOwnerMessage(env: Env, o: { tenantId: number | null; t
   return { id: m!.id, sent };
 }
 
-/** Puts an owner message (again) on the bell of its customer(s), unread — a reminder rings and flashes again. */
+/**
+ * Puts an owner message (again) on the bell of its customer(s), unread — a reminder rings and flashes again.
+ * Placeholders ({الاسم}…) are filled per customer, and each recipient gets a permanent receipt row.
+ */
 async function deliverOwnerMessage(env: Env, id: number, prefix: string | null, now: number): Promise<number> {
   const m = await first<{ id: number; tenant_id: number | null; kind: string; title: string; body: string | null; link: string | null; keep_days: number }>(env.DB, "SELECT * FROM owner_messages WHERE id = ?", id);
   if (!m) return 0;
-  const title = `${prefix ?? ""}${m.kind === "message" ? "✉️ " : ""}${m.title}`.slice(0, 220);
   const expires = now + m.keep_days * 86_400_000;
-  if (m.tenant_id === null) {
-    const r = await env.DB
-      .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, expires_at, owner_message_id, created_at) SELECT id, 'service', ?, ?, ?, ?, ?, ? FROM tenants WHERE status = 'active' AND is_owner = 0")
-      .bind(title, m.body, m.link ?? "/", expires, m.id, now)
-      .run();
-    return r.meta.changes ?? 0;
+  const kind = m.tenant_id === null ? "service" : "message";
+  const recipients = await all<{ id: number; name: string; plan_expires_at: number | null; plan_name: string | null }>(
+    env.DB,
+    `SELECT t.id, t.name, t.plan_expires_at, p.name AS plan_name FROM tenants t LEFT JOIN plans p ON p.id = t.plan_id
+      WHERE t.is_owner = 0 AND ${m.tenant_id === null ? "t.status = 'active'" : "t.id = ?"} ORDER BY t.id`,
+    ...(m.tenant_id === null ? [] : [m.tenant_id]),
+  );
+  if (!recipients.length) return 0;
+  const stmts: D1PreparedStatement[] = [];
+  for (const r of recipients) {
+    const v = { name: r.name, plan: r.plan_name, expiresAt: r.plan_expires_at };
+    const title = `${prefix ?? ""}${kind === "message" ? "✉️ " : ""}${fillMessage(m.title, v, now)}`.slice(0, 220);
+    const body = m.body ? fillMessage(m.body, v, now).slice(0, 1200) : null;
+    stmts.push(
+      env.DB.prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, expires_at, owner_message_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(r.id, kind, title, body, m.link ?? "/", expires, m.id, now),
+      env.DB
+        .prepare("INSERT INTO owner_message_receipts (owner_message_id, tenant_id, delivered_at, last_delivered_at) VALUES (?, ?, ?, ?) ON CONFLICT(owner_message_id, tenant_id) DO UPDATE SET last_delivered_at = excluded.last_delivered_at, deleted_at = NULL")
+        .bind(m.id, r.id, now, now),
+    );
+    // A private message also goes to the customer's Telegram when they set it up.
+    if (m.tenant_id !== null) {
+      const s = await getNotifySettings(env.DB, r.id);
+      if (s.enabled && s.chat_id) await sendTelegram(env, r.id, `${title}${body ? `\n${body}` : ""}`, s).catch(() => undefined);
+    }
   }
-  await env.DB
-    .prepare("INSERT INTO app_notifications (tenant_id, kind, title, body, link, expires_at, owner_message_id, created_at) VALUES (?, 'message', ?, ?, ?, ?, ?, ?)")
-    .bind(m.tenant_id, title, m.body, m.link ?? "/", expires, m.id, now)
-    .run();
-  // A private message also goes to the customer's Telegram when they set it up.
-  const s = await getNotifySettings(env.DB, m.tenant_id);
-  if (s.enabled && s.chat_id) await sendTelegram(env, m.tenant_id, `${title}${m.body ? `\n${m.body}` : ""}`, s).catch(() => undefined);
-  return 1;
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return recipients.length;
 }
 
-/** A reminder: the earlier copies leave the bell and one fresh, unread copy arrives (ring + flash). */
+/** A reminder: the earlier copies leave the bell and one fresh, unread copy arrives (ring + flash). The receipts stay. */
 export async function remindOwnerMessage(env: Env, id: number, now = Date.now()): Promise<number> {
   await env.DB.prepare("DELETE FROM app_notifications WHERE owner_message_id = ?").bind(id).run();
   const n = await deliverOwnerMessage(env, id, "🔔 تذكير: ", now);
@@ -360,9 +375,24 @@ export async function remindOwnerMessage(env: Env, id: number, now = Date.now())
   return n;
 }
 
-/** Deletes an owner message from the history and from every customer's bell. */
+/** Deletes an owner message from the history, its receipts, and every customer's bell. */
 export async function deleteOwnerMessage(db: D1Database, id: number): Promise<void> {
-  await db.batch([db.prepare("DELETE FROM app_notifications WHERE owner_message_id = ?").bind(id), db.prepare("DELETE FROM owner_messages WHERE id = ?").bind(id)]);
+  await db.batch([
+    db.prepare("DELETE FROM app_notifications WHERE owner_message_id = ?").bind(id),
+    db.prepare("DELETE FROM owner_message_receipts WHERE owner_message_id = ?").bind(id),
+    db.prepare("DELETE FROM owner_messages WHERE id = ?").bind(id),
+  ]);
+}
+
+/**
+ * The customer acted on bell notifications (read / opened / removed): the owner-message receipts remember it for
+ * good. `where` selects the customer's notifications (it is ANDed with the tenant).
+ */
+export function receiptUpdate(db: D1Database, tenantId: number, field: "read_at" | "clicked_at" | "deleted_at", where: string, args: unknown[], now: number): D1PreparedStatement {
+  const set = field === "clicked_at" ? "clicked_at = COALESCE(clicked_at, ?1), read_at = COALESCE(read_at, ?1)" : field === "read_at" ? "read_at = COALESCE(read_at, ?1)" : "deleted_at = ?1";
+  return db
+    .prepare(`UPDATE owner_message_receipts SET ${set} WHERE tenant_id = ?2 AND owner_message_id IN (SELECT owner_message_id FROM app_notifications WHERE tenant_id = ?2 AND owner_message_id IS NOT NULL AND ${where})`)
+    .bind(now, tenantId, ...args);
 }
 
 /** The owner's notice to every active customer — kept for tests and older callers. */

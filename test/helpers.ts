@@ -151,6 +151,7 @@ const TABLES = [
   "store_oauth_states",
   "saved_replies",
   "app_notifications",
+  "owner_message_receipts",
   "owner_messages",
   "support_messages",
   "support_threads",

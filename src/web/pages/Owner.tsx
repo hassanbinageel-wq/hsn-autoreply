@@ -1,5 +1,6 @@
 import { MESSAGE_LINKS } from "../../shared/plans";
 import { OwnerSupportTab } from "./Support";
+import { PlaceholderChips, TemplateBar } from "../components/MessageTemplates";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DateTimeField } from "../components/DateTimeField";
 import { askConfirm, askText, showCopy } from "../components/Confirm";
@@ -1043,12 +1044,6 @@ function BrandingTab() {
 }
 
 /** A notice to every active customer's bell — in plain words, without technical details. */
-const NOTICE_TEMPLATES: Array<{ label: string; title: string; body: string }> = [
-  { label: "صيانة مجدولة", title: "🛠️ صيانة مجدولة للخدمة", body: "بنسوي تحسينات على الخدمة يوم … من الساعة … إلى …. ممكن تتأخر الردود التلقائية خلالها، والتعليقات اللي توصل وقتها بنرد عليها بعد ما نخلص." },
-  { label: "توقف مؤقت", title: "⏸️ الردود التلقائية متوقفة مؤقتًا", body: "الردود بترجع تلقائيًا الساعة 3 الفجر، والتعليقات الفائتة بنرد عليها أول ما ترجع. ما يحتاج تسوي أي شي." },
-  { label: "رجعت الخدمة", title: "✅ رجعت الخدمة تشتغل بشكل طبيعي", body: "الردود التلقائية رجعت، وجاري الرد على التعليقات اللي وصلت خلال التوقف." },
-];
-
 function BroadcastCard() {
   const [open, setOpen] = useState(false);
   const [link, setLink] = useState("/");
@@ -1077,11 +1072,10 @@ function BroadcastCard() {
         <p className="muted text-sm">لصيانة أو توقف مؤقت أو رجوع الخدمة — يوصل في جرس «الإشعارات المهمة» عند كل العملاء النشطين، بكلام بسيط بدون تفاصيل تقنية.</p>
       ) : (
         <div className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            {NOTICE_TEMPLATES.map((t) => <button key={t.label} type="button" className="chip surface-2" onClick={() => { setTitle(t.title); setBody(t.body); }}>{t.label}</button>)}
-          </div>
+          <TemplateBar kind="notice" current={{ title, body, link, days }} onPick={(t) => { setTitle(t.title); setBody(t.body); setLink(t.link); setDays(t.days); }} />
           <input className="input" placeholder="العنوان" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
           <textarea className="input min-h-[6rem]" placeholder="التفاصيل (اختياري)" maxLength={1000} value={body} onChange={(e) => setBody(e.target.value)} />
+          <PlaceholderChips onInsert={(k) => setBody((b) => `${b}${b && !b.endsWith(" ") ? " " : ""}${k}`)} />
           <div className="grid gap-3 sm:grid-cols-2"><LinkSelect value={link} onChange={setLink} /><DaysSelect value={days} onChange={setDays} /></div>
           <div className="flex gap-2">
             <button className="btn btn-primary" disabled={busy || title.trim().length < 3} onClick={send}>{busy ? "…" : "إرسال للعملاء"}</button>
@@ -1138,8 +1132,10 @@ function MessageModal({ tenant, onClose }: { tenant: any; onClose: () => void })
     <Modal open onClose={onClose} title={`رسالة إلى «${tenant.name}»`} center>
       <div className="space-y-3">
         <p className="muted text-xs">توصل في جرس «الإشعارات المهمة» عنده مع صوت تنبيه ووميض بسيط في الشريط العلوي، وعلى تيليجرام إذا مفعّله. هو بس اللي يشوفها.</p>
+        <TemplateBar kind="private" current={{ title, body, link, days }} onPick={(t) => { setTitle(t.title); setBody(t.body); setLink(t.link); setDays(t.days); }} />
         <input className="input" placeholder="العنوان (مثل: تجديد اشتراكك، ميزة جديدة لك…)" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
         <textarea className="input min-h-[8rem]" placeholder="نص الرسالة" maxLength={1000} value={body} onChange={(e) => setBody(e.target.value)} />
+        <PlaceholderChips onInsert={(k) => setBody((b) => `${b}${b && !b.endsWith(" ") ? " " : ""}${k}`)} />
         <div className="grid gap-3 sm:grid-cols-2"><LinkSelect value={link} onChange={setLink} /><DaysSelect value={days} onChange={setDays} /></div>
         <div className="flex justify-end gap-2">
           <button className="btn btn-ghost" onClick={onClose}>إلغاء</button>
@@ -1319,7 +1315,7 @@ function SentMessages() {
         </div>
       }
     >
-      {open && <p className="muted mb-2 text-[11px]">🟠 ما قرأها · 🟢 قرأها · 🔵 فتح الرابط — اضغط على أي رسالة لتفاصيلها. تتحدث تلقائيًا كل 30 ثانية.</p>}
+      {open && <p className="muted mb-2 text-[11px]">🟠 ما قرأها · 🟢 قرأها · 🔵 فتح الرابط · ⚪ حذفها من عنده — كل مرحلة تنحفظ عندك حتى لو حذفها. اضغط على أي رسالة لتفاصيلها. تتحدث تلقائيًا كل 30 ثانية.</p>}
       {!open ? <p className="muted text-sm">رسائلك السابقة للعملاء: تقدر تذكّرهم فيها مرة ثانية (يوصلهم صوت ووميض) أو تحذفها من عندهم.</p> : (
         <div className="divide-y divide-[var(--border)]">
           {data.map((m) => (
@@ -1335,7 +1331,7 @@ function SentMessages() {
                     {m.reminders ? ` · ذكّرت ${m.reminders} مرة` : ""}
                   </div>
                 </button>
-                <ReadBox copies={m.copies} read={m.read} clicked={m.clicked} single={!!m.tenant_id} />
+                <ReadBox copies={m.copies} read={m.read} clicked={m.clicked} deleted={m.deleted} single={!!m.tenant_id} />
               </div>
               {expanded === m.id && <MessageDetail m={m} onChange={() => { setExpanded(null); reload(); }} />}
             </div>
@@ -1358,20 +1354,22 @@ function MessageDetail({ m, onChange }: { m: any; onChange: () => void }) {
       <div>
         <div className="muted text-xs">نص الرسالة</div>
         <p className="whitespace-pre-wrap">{m.body || <span className="muted">بدون نص</span>}</p>
+        {/\{[^}]+\}/.test(`${m.title} ${m.body ?? ""}`) && <p className="muted mt-1 text-[11px]">الكلمات بين {"{ }"} تعبّت تلقائي لكل عميل ببياناته وقت الإرسال.</p>}
       </div>
       <div className="muted grid gap-1 text-xs sm:grid-cols-3">
         <div>يفتح على: <b className="text-[var(--text)]">{LINK_LABEL[m.link ?? "/"] ?? m.link}</b></div>
         <div>تبقى عنده: <b className="text-[var(--text)]">{m.keep_days} يوم</b></div>
         <div>أُرسلت: <b className="text-[var(--text)]">{fmtTime(m.created_at)}</b>{m.reminded_at ? ` · آخر تذكير ${fmtTime(m.reminded_at)}` : ""}</div>
       </div>
+      {m.tenant_id && who?.[0] && <Stages w={who[0]} />}
       {!m.tenant_id && who && who.length > 0 && (
         <div>
           <div className="muted mb-1 text-xs">العملاء ({who.length})</div>
           <div className="max-h-48 divide-y divide-[var(--border)] overflow-y-auto rounded-xl bg-[var(--surface)] px-3">
             {who.map((w) => (
-              <div key={w.tenant_id} className="flex items-center justify-between gap-2 py-1.5 text-xs">
-                <span className="truncate"><b>{w.tenant_name}</b>{w.tenant_usernames ? <span className="muted" dir="ltr"> · {w.tenant_usernames}</span> : null}</span>
-                <ReadBox copies={1} read={w.read_at ? 1 : 0} clicked={w.clicked_at ? 1 : 0} single />
+              <div key={w.tenant_id} className="space-y-1 py-2 text-xs">
+                <span className="block truncate"><b>{w.tenant_name}</b>{w.tenant_usernames ? <span className="muted" dir="ltr"> · {w.tenant_usernames}</span> : null}</span>
+                <Stages w={w} compact />
               </div>
             ))}
           </div>
@@ -1385,25 +1383,49 @@ function MessageDetail({ m, onChange }: { m: any; onChange: () => void }) {
   );
 }
 
+const TONE = {
+  blue: "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
+  green: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+  orange: "border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
+  grey: "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
+} as const;
+const box = (t: keyof typeof TONE, text: string, small = false) => <span className={`shrink-0 rounded-xl border font-bold ${small ? "px-2 py-0.5 text-[10.5px]" : "px-3 py-1.5 text-xs"} ${TONE[t]}`}>{text}</span>;
+
 /**
- * Status of a sent message: blue when its link was opened, green when read, orange when not yet,
- * grey when removed from their bell.
+ * Status of a sent message, from the permanent record (kept even after the customer deletes it):
+ * blue = opened the link, green = read, orange = not yet, grey = removed from their bell (shown alongside).
  */
-function ReadBox({ copies, read, clicked, single }: { copies: number; read: number; clicked: number; single: boolean }) {
-  const tone = (t: "blue" | "green" | "orange" | "grey") =>
-    ({
-      blue: "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
-      green: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
-      orange: "border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
-      grey: "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
-    })[t];
-  const box = (t: "blue" | "green" | "orange" | "grey", text: string) => <span className={`shrink-0 rounded-xl border px-3 py-1.5 text-xs font-bold ${tone(t)}`}>{text}</span>;
-  if (!copies) return box("grey", "انحذفت من عنده");
-  if (single) return clicked ? box("blue", "🔗 فتح الرابط") : read ? box("green", "✓ قرأها") : box("orange", "● ما قرأها بعد");
+function ReadBox({ copies, read, clicked, deleted, single }: { copies: number; read: number; clicked: number; deleted: number; single: boolean }) {
+  if (!copies) return box("grey", "ما وصلت لأحد");
+  if (single)
+    return (
+      <span className="flex shrink-0 flex-wrap gap-1.5">
+        {clicked ? box("blue", "🔗 فتح الرابط") : read ? box("green", "✓ قرأها") : box("orange", "● ما قرأها")}
+        {deleted > 0 && box("grey", "🗑 حذفها من عنده")}
+      </span>
+    );
   return (
     <span className="flex shrink-0 flex-wrap gap-1.5">
       {box(read >= copies ? "green" : "orange", `قرأها ${read} من ${copies}`)}
       {clicked > 0 && box("blue", `🔗 فتح الرابط ${clicked}`)}
+      {deleted > 0 && box("grey", `🗑 حذفها ${deleted}`)}
     </span>
+  );
+}
+
+/** Every stage for one customer, with its time: delivered → read → opened the link → removed / expired. */
+function Stages({ w, compact }: { w: any; compact?: boolean }) {
+  const step = (done: boolean, tone: keyof typeof TONE, label: string, at?: number | null) =>
+    done ? box(tone, `${label}${at ? ` · ${fmtTime(at)}` : ""}`, compact) : box("orange", `● ${label === "قرأها" ? "ما قرأها" : `ما ${label}`}`, compact);
+  return (
+    <div className={compact ? "flex flex-wrap gap-1" : "space-y-1.5"}>
+      {!compact && <div className="muted text-xs">مراحل الرسالة (تنحفظ حتى لو حذفها):</div>}
+      <div className="flex flex-wrap gap-1.5">
+        {box("grey", `📬 وصلت · ${fmtTime(w.delivered_at)}${w.last_delivered_at > w.delivered_at ? ` · آخر تذكير ${fmtTime(w.last_delivered_at)}` : ""}`, compact)}
+        {step(!!w.read_at, "green", "قرأها", w.read_at)}
+        {step(!!w.clicked_at, "blue", "فتح الرابط", w.clicked_at)}
+        {w.deleted_at ? box("grey", `🗑 حذفها من عنده · ${fmtTime(w.deleted_at)}`, compact) : !w.on_bell ? box("grey", "⌛ انتهت مدتها عنده", compact) : null}
+      </div>
+    </div>
   );
 }

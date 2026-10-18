@@ -193,6 +193,7 @@ export async function deleteTenantData(db: D1Database, tenantId: number): Promis
     db.prepare("DELETE FROM saved_replies WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM restock_waitlist WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM app_notifications WHERE tenant_id = ?").bind(t),
+    db.prepare("DELETE FROM owner_message_receipts WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM support_messages WHERE thread_id IN (SELECT id FROM support_threads WHERE tenant_id = ?)").bind(t),
     db.prepare("DELETE FROM support_threads WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM stores WHERE tenant_id = ?").bind(t),

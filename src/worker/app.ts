@@ -57,7 +57,7 @@ import {
 import { claimsDelivery, claimsFollowRequired, publicReplyVariants } from "../shared/template";
 import { cacheMediaStmt } from "./services/media";
 import { INBOX_LABELS, markRead, recordMessage, refreshAvatars, type InboxLabel } from "./services/inbox";
-import { buildDailyReport, deleteOwnerMessage, detectChat, getNotifySettings, hasBotToken, isTelegramToken, notify, remindOwnerMessage, saveBotToken, sendOwnerMessage, sendTelegram } from "./services/notify";
+import { buildDailyReport, deleteOwnerMessage, detectChat, getNotifySettings, hasBotToken, isTelegramToken, notify, receiptUpdate, remindOwnerMessage, saveBotToken, sendOwnerMessage, sendTelegram } from "./services/notify";
 import { MESSAGING_WINDOW_MS } from "./engine/context";
 import { estimateUsage, platformUsage } from "./services/usage";
 import { cloudflareUsage } from "./services/cfusage";
@@ -79,6 +79,7 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 /** Settings shown to the client / exported in backups: never the Telegram bot token or notification state. */
 import { toCsv } from "../shared/csv";
 import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, MESSAGE_LINKS, orderFeatures, type ExchangeRates, type PlanLimits } from "../shared/plans";
+import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
 import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
@@ -728,9 +729,13 @@ export function createApp() {
         c.env.DB,
         `SELECT m.id, m.tenant_id, n.name AS tenant_name, m.kind, m.title, m.body, m.link, m.keep_days, m.reminders, m.reminded_at, m.created_at,
                 (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = m.tenant_id) AS tenant_usernames,
-                (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id) AS copies,
-                (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id AND a.read_at IS NOT NULL) AS read,
-                (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id AND a.clicked_at IS NOT NULL) AS clicked
+                (SELECT COUNT(*) FROM owner_message_receipts r WHERE r.owner_message_id = m.id) AS copies,
+                (SELECT COUNT(*) FROM owner_message_receipts r WHERE r.owner_message_id = m.id AND r.read_at IS NOT NULL) AS read,
+                (SELECT COUNT(*) FROM owner_message_receipts r WHERE r.owner_message_id = m.id AND r.clicked_at IS NOT NULL) AS clicked,
+                (SELECT COUNT(*) FROM owner_message_receipts r WHERE r.owner_message_id = m.id AND r.deleted_at IS NOT NULL) AS deleted,
+                (SELECT MIN(r.read_at) FROM owner_message_receipts r WHERE r.owner_message_id = m.id) AS read_at,
+                (SELECT MIN(r.clicked_at) FROM owner_message_receipts r WHERE r.owner_message_id = m.id) AS clicked_at,
+                (SELECT MAX(r.deleted_at) FROM owner_message_receipts r WHERE r.owner_message_id = m.id) AS deleted_at
            FROM owner_messages m LEFT JOIN tenants n ON n.id = m.tenant_id ORDER BY m.id DESC LIMIT 50`,
       ),
     ),
@@ -741,8 +746,9 @@ export function createApp() {
       await all(
         c.env.DB,
         `SELECT a.tenant_id, n.name AS tenant_name, (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = a.tenant_id) AS tenant_usernames,
-                a.read_at, a.clicked_at, a.created_at
-           FROM app_notifications a JOIN tenants n ON n.id = a.tenant_id WHERE a.owner_message_id = ? ORDER BY (a.clicked_at IS NULL), (a.read_at IS NULL), n.name LIMIT 1000`,
+                a.delivered_at, a.last_delivered_at, a.read_at, a.clicked_at, a.deleted_at,
+                EXISTS (SELECT 1 FROM app_notifications x WHERE x.owner_message_id = a.owner_message_id AND x.tenant_id = a.tenant_id) AS on_bell
+           FROM owner_message_receipts a JOIN tenants n ON n.id = a.tenant_id WHERE a.owner_message_id = ? ORDER BY (a.clicked_at IS NULL), (a.read_at IS NULL), n.name LIMIT 1000`,
         idParam(c),
       ),
     ),
@@ -751,6 +757,7 @@ export function createApp() {
   owner.delete("/messages", async (c) => {
     await c.env.DB.batch([
       c.env.DB.prepare("DELETE FROM app_notifications WHERE owner_message_id IS NOT NULL"),
+      c.env.DB.prepare("DELETE FROM owner_message_receipts"),
       c.env.DB.prepare("DELETE FROM owner_messages"),
     ]);
     await audit(c.env.DB, T(c), c.get("session").username, "owner.messages_cleared", "all");
@@ -764,6 +771,15 @@ export function createApp() {
   });
   owner.delete("/messages/:id", async (c) => {
     await deleteOwnerMessage(c.env.DB, idParam(c)!);
+    return c.json({ ok: true });
+  });
+  // Ready-made messages (notices / private), editable by the owner. Without a saved list: the defaults.
+  owner.get("/message-templates", async (c) => c.json({ templates: await getSetting<MessageTemplates>(c.env.DB, OWNER_TENANT, "message_templates", DEFAULT_MESSAGE_TEMPLATES), defaults: DEFAULT_MESSAGE_TEMPLATES }));
+  owner.put("/message-templates", async (c) => {
+    const tpl = z.object({ label: z.string().trim().min(1).max(40), title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000), link: z.enum(MESSAGE_LINK_PATHS), days: z.number().int().min(1).max(365) });
+    const p = await parseBody(c, z.object({ notice: z.array(tpl).max(40), private: z.array(tpl).max(40) }));
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "message_templates", p.data);
     return c.json({ ok: true });
   });
   // Customer health: who may be about to leave, and why.
@@ -2912,20 +2928,34 @@ export function createApp() {
   // The customer tapped a notification (its link opened).
   api.post("/app-notifications/:id/click", async (c) => {
     const now = Date.now();
-    await run(c.env.DB, "UPDATE app_notifications SET clicked_at = COALESCE(clicked_at, ?), read_at = COALESCE(read_at, ?) WHERE id = ? AND tenant_id = ?", now, now, idParam(c), T(c));
+    await c.env.DB.batch([
+      receiptUpdate(c.env.DB, T(c), "clicked_at", "id = ?3", [idParam(c)], now),
+      c.env.DB.prepare("UPDATE app_notifications SET clicked_at = COALESCE(clicked_at, ?), read_at = COALESCE(read_at, ?) WHERE id = ? AND tenant_id = ?").bind(now, now, idParam(c), T(c)),
+    ]);
     return c.json({ ok: true });
   });
   api.delete("/app-notifications/:id", async (c) => {
-    await run(c.env.DB, "DELETE FROM app_notifications WHERE id = ? AND tenant_id = ?", idParam(c), T(c));
+    // The owner still sees that it was delivered / read / opened, and that it was removed.
+    await c.env.DB.batch([
+      receiptUpdate(c.env.DB, T(c), "deleted_at", "id = ?3", [idParam(c)], Date.now()),
+      c.env.DB.prepare("DELETE FROM app_notifications WHERE id = ? AND tenant_id = ?").bind(idParam(c), T(c)),
+    ]);
     return c.json({ ok: true });
   });
   // Clears every read notification of the bell.
   api.delete("/app-notifications", async (c) => {
-    await run(c.env.DB, "DELETE FROM app_notifications WHERE tenant_id = ? AND read_at IS NOT NULL", T(c));
+    await c.env.DB.batch([
+      receiptUpdate(c.env.DB, T(c), "deleted_at", "read_at IS NOT NULL", [], Date.now()),
+      c.env.DB.prepare("DELETE FROM app_notifications WHERE tenant_id = ? AND read_at IS NOT NULL").bind(T(c)),
+    ]);
     return c.json({ ok: true });
   });
   api.post("/app-notifications/read", async (c) => {
-    await run(c.env.DB, "UPDATE app_notifications SET read_at = ? WHERE tenant_id = ? AND read_at IS NULL", Date.now(), T(c));
+    const now = Date.now();
+    await c.env.DB.batch([
+      receiptUpdate(c.env.DB, T(c), "read_at", "read_at IS NULL", [], now),
+      c.env.DB.prepare("UPDATE app_notifications SET read_at = ? WHERE tenant_id = ? AND read_at IS NULL").bind(now, T(c)),
+    ]);
     return c.json({ ok: true });
   });
 
