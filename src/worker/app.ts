@@ -635,7 +635,8 @@ export function createApp() {
     const p = await parseBody(c, z.object({ login: z.string().trim().min(2).max(254) }));
     if (!p.ok) return p.res;
     if (!emailEnabled(c.env)) return apiError(c, 503, "email_off", "استرجاع كلمة المرور بالإيميل غير مفعّل بعد — تواصل مع إدارة الخدمة");
-    const r = await requestPasswordReset(c.env, p.data.login, c.env.PUBLIC_BASE_URL);
+    // The link opens on the service's own domain when it has one (PUBLIC_BASE_URL stays as Meta's/Salla's callback base).
+    const r = await requestPasswordReset(c.env, p.data.login, c.env.SERVICE_DOMAIN ? `https://${c.env.SERVICE_DOMAIN}` : c.env.PUBLIC_BASE_URL);
     if (r === "sent") await audit(c.env.DB, OWNER_TENANT, "system", "auth.reset_requested").catch(() => undefined);
     return c.json({ ok: true, message: "إذا كان الحساب مسجّل بإيميل مؤكَّد، وصلك رابط خلال دقائق. شيّك على البريد غير المرغوب (Spam) كمان." });
   });
