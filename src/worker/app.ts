@@ -728,7 +728,8 @@ export function createApp() {
         c.env.DB,
         `SELECT m.id, m.tenant_id, n.name AS tenant_name, m.kind, m.title, m.body, m.link, m.keep_days, m.reminders, m.reminded_at, m.created_at,
                 (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id) AS copies,
-                (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id AND a.read_at IS NOT NULL) AS read
+                (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id AND a.read_at IS NOT NULL) AS read,
+                (SELECT COUNT(*) FROM app_notifications a WHERE a.owner_message_id = m.id AND a.clicked_at IS NOT NULL) AS clicked
            FROM owner_messages m LEFT JOIN tenants n ON n.id = m.tenant_id ORDER BY m.id DESC LIMIT 50`,
       ),
     ),
@@ -2885,6 +2886,12 @@ export function createApp() {
       first<{ id: number; kind: string; title: string }>(c.env.DB, "SELECT id, kind, title FROM app_notifications WHERE tenant_id = ? AND read_at IS NULL ORDER BY id DESC LIMIT 1", T(c)),
     ]);
     return c.json({ unread: n?.n ?? 0, latest: latest ?? null });
+  });
+  // The customer tapped a notification (its link opened).
+  api.post("/app-notifications/:id/click", async (c) => {
+    const now = Date.now();
+    await run(c.env.DB, "UPDATE app_notifications SET clicked_at = COALESCE(clicked_at, ?), read_at = COALESCE(read_at, ?) WHERE id = ? AND tenant_id = ?", now, now, idParam(c), T(c));
+    return c.json({ ok: true });
   });
   api.delete("/app-notifications/:id", async (c) => {
     await run(c.env.DB, "DELETE FROM app_notifications WHERE id = ? AND tenant_id = ?", idParam(c), T(c));

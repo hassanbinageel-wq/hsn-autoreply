@@ -116,7 +116,7 @@ export function NotificationBell({ route, onAlert }: { route: string; onAlert?: 
               <p className="muted p-6 text-center text-sm">ما فيه إشعارات بعد. هنا يوصلك تنبيه المخزون، انقطاع الربط، فشل الرسائل، وانتهاء الاشتراك، واقتراحات مثل «حان وقت ستوري».</p>
             ) : (
               items.map((n) => (
-                <Link key={n.id} to={n.link || "/"} className={`flex gap-3 px-4 py-3 text-right transition hover:bg-[var(--surface-2)] ${n.read_at ? "" : "bg-violet-500/5"}`}>
+                <Link key={n.id} to={n.link || "/"} onClick={() => void api(`/api/app-notifications/${n.id}/click`, { body: {} }).catch(() => undefined)} className={`flex gap-3 px-4 py-3 text-right transition hover:bg-[var(--surface-2)] ${n.read_at ? "" : "bg-violet-500/5"}`}>
                   <span className="text-lg leading-6" aria-hidden>{KIND_ICON[n.kind] ?? "🔔"}</span>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold">{n.title.replace(/^\p{Extended_Pictographic}️?\s*/u, "")}</div>

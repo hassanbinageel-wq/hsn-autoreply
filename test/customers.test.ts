@@ -130,8 +130,15 @@ describe("owner tools: support, coupons, referrals, health; UTM", () => {
     expect(items[0]).toMatchObject({ title: "✉️ عرض التجديد", link: "/subscription" });
     expect(items[0].expires_at - Date.now()).toBeGreaterThan(6.9 * DAY);
     await call("/api/app-notifications/read", a.h, "POST", {});
-    const sent = (await call("/api/owner/messages", OWNER)).body;
-    expect(sent[0]).toMatchObject({ tenant_id: a.tid, copies: 1, read: 1 });
+    let sent = (await call("/api/owner/messages", OWNER)).body;
+    expect(sent[0]).toMatchObject({ tenant_id: a.tid, copies: 1, read: 1, clicked: 0 });
+    // another customer cannot mark it; the customer's tap counts as «opened the link»
+    const other = await register("shop_x");
+    await call(`/api/app-notifications/${items[0].id}/click`, other.h, "POST", {});
+    expect((await call("/api/owner/messages", OWNER)).body[0].clicked).toBe(0);
+    await call(`/api/app-notifications/${items[0].id}/click`, a.h, "POST", {});
+    sent = (await call("/api/owner/messages", OWNER)).body;
+    expect(sent[0].clicked).toBe(1);
     await call(`/api/owner/messages/${sent[0].id}/remind`, OWNER, "POST", {});
     const u = (await call("/api/app-notifications/unread", a.h)).body;
     expect(u.unread).toBe(1);

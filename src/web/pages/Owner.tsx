@@ -1290,11 +1290,19 @@ function CouponsTab() {
 
 /** Messages and notices already sent: who read them, remind (rings and flashes again), delete. */
 function SentMessages() {
-  const { data, reload } = useAsync(() => api<any[]>("/api/owner/messages"), []);
+  const { data, reload, loading } = useAsync(() => api<any[]>("/api/owner/messages"), []);
   const [open, setOpen] = useState(false);
+  // While the list is open it refreshes itself every 30 seconds (read / opened the link).
+  useEffect(() => {
+    if (!open) return;
+    const t = setInterval(reload, 30_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   if (!data || !data.length) return null;
   return (
-    <Card title={`📨 الرسائل المرسلة (${data.length})`} action={<button className="btn btn-ghost min-h-9 text-xs" onClick={() => setOpen(!open)}>{open ? "إخفاء" : "عرض"}</button>}>
+    <Card title={`📨 الرسائل المرسلة (${data.length})`} action={<div className="flex gap-2"><button className="btn btn-ghost min-h-9 text-xs" disabled={loading} onClick={reload}><Icon name="refresh" size={14} />{loading ? "…" : "تحديث"}</button><button className="btn btn-ghost min-h-9 text-xs" onClick={() => setOpen(!open)}>{open ? "إخفاء" : "عرض"}</button></div>}>
+      {open && <p className="muted mb-2 text-[11px]">🟠 ما قرأها · 🟢 قرأها · 🔵 فتح الرابط — تتحدث تلقائيًا كل 30 ثانية.</p>}
       {!open ? <p className="muted text-sm">رسائلك السابقة للعملاء: تقدر تذكّرهم فيها مرة ثانية (يوصلهم صوت ووميض) أو تحذفها من عندهم.</p> : (
         <div className="divide-y divide-[var(--border)]">
           {data.map((m) => (
@@ -1306,7 +1314,7 @@ function SentMessages() {
                   {m.reminders ? ` · ذكّرت ${m.reminders} مرة` : ""}
                 </div>
               </div>
-              <ReadBox copies={m.copies} read={m.read} single={!!m.tenant_id} />
+              <ReadBox copies={m.copies} read={m.read} clicked={m.clicked} single={!!m.tenant_id} />
               <div className="flex gap-2">
                 <button className="btn btn-ghost min-h-8 text-xs" onClick={async () => { try { const r = await api<{ sent: number }>(`/api/owner/messages/${m.id}/remind`, { body: {} }); toast(`وصل التذكير لـ ${r.sent}`); reload(); } catch (e: any) { toast(e.message, "bad"); } }}>🔔 تذكير</button>
                 <button className="btn btn-ghost min-h-8 text-xs text-red-600" onClick={async () => { if (await askConfirm({ title: "حذف الرسالة؟", message: "تنحذف من سجلك ومن إشعارات العملاء.", confirmLabel: "حذف", danger: true })) { await api(`/api/owner/messages/${m.id}`, { method: "DELETE" }); reload(); } }}>حذف</button>
@@ -1319,13 +1327,25 @@ function SentMessages() {
   );
 }
 
-/** Read status of a sent message: green when read, orange when not yet, grey when removed from their bell. */
-function ReadBox({ copies, read, single }: { copies: number; read: number; single: boolean }) {
-  const cls = !copies
-    ? "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
-    : read >= copies
-      ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-      : "border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-700 dark:bg-orange-900/30 dark:text-orange-300";
-  const text = !copies ? "انحذفت من عنده" : single ? (read ? "✓ قرأها" : "● ما قرأها بعد") : `قرأها ${read} من ${copies}`;
-  return <span className={`shrink-0 rounded-xl border px-3 py-1.5 text-xs font-bold ${cls}`}>{text}</span>;
+/**
+ * Status of a sent message: blue when its link was opened, green when read, orange when not yet,
+ * grey when removed from their bell.
+ */
+function ReadBox({ copies, read, clicked, single }: { copies: number; read: number; clicked: number; single: boolean }) {
+  const tone = (t: "blue" | "green" | "orange" | "grey") =>
+    ({
+      blue: "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
+      green: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+      orange: "border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
+      grey: "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
+    })[t];
+  const box = (t: "blue" | "green" | "orange" | "grey", text: string) => <span className={`shrink-0 rounded-xl border px-3 py-1.5 text-xs font-bold ${tone(t)}`}>{text}</span>;
+  if (!copies) return box("grey", "انحذفت من عنده");
+  if (single) return clicked ? box("blue", "🔗 فتح الرابط") : read ? box("green", "✓ قرأها") : box("orange", "● ما قرأها بعد");
+  return (
+    <span className="flex shrink-0 flex-wrap gap-1.5">
+      {box(read >= copies ? "green" : "orange", `قرأها ${read} من ${copies}`)}
+      {clicked > 0 && box("blue", `🔗 فتح الرابط ${clicked}`)}
+    </span>
+  );
 }
