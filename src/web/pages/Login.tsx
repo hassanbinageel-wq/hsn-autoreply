@@ -17,6 +17,9 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [setupToken, setSetupToken] = useState("");
+  // Two-step login: shown after the right password when the account has it switched on.
+  const [needTotp, setNeedTotp] = useState(false);
+  const [totp, setTotp] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Self sign-up with an activation code (#/register); public plans page (#/plans).
@@ -44,7 +47,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
 
   const signIn = async (u: string, pw: string) => {
     const r = await api<{ token?: string; csrf_token?: string }>("/api/auth/login", {
-      body: { username: u, password: pw, client: isNative ? "app" : "web", device_label: isNative ? "Android" : undefined },
+      body: { username: u, password: pw, client: isNative ? "app" : "web", device_label: isNative ? "Android" : undefined, totp: needTotp && totp.trim() ? totp.trim() : undefined },
     });
     if (isNative && r.token) await deviceToken.set(r.token);
     setCsrf(r.csrf_token);
@@ -67,7 +70,12 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
       onDone();
     } catch (err) {
       const e2 = err as ApiError;
-      if (e2.status === 401 || e2.code === "invalid_credentials") {
+      if (e2.code === "totp_required") {
+        setUsername(creds.username);
+        setPassword(creds.password);
+        setNeedTotp(true);
+        setError(null);
+      } else if (e2.status === 401 || e2.code === "invalid_credentials") {
         await disableBio();
         setBio(null);
         setError("كلمة المرور تغيّرت — سجّل دخولك بكلمة المرور مرة وحدة وفعّل البصمة من جديد.");
@@ -110,6 +118,10 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
       onDone();
     } catch (err) {
       const e2 = err as ApiError;
+      if (e2.code === "totp_required") {
+        setNeedTotp(true);
+        return;
+      }
       setError(e2.details?.map((d) => d.message).join("، ") || e2.message);
     } finally {
       setBusy(false);
@@ -170,6 +182,11 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               <button type="button" onClick={() => setShow((v) => !v)} className="muted absolute left-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg" aria-label={show ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}><Icon name="eye" size={18} /></button>
             </div>
           </Field>
+          {needTotp && !register && !status?.needs_setup && (
+            <Field label="🔐 رمز التحقق" hint="الرمز المكوّن من 6 أرقام في تطبيق المصادقة — أو رمز استرداد إذا ما عندك الجوال.">
+              <input className="input text-center text-lg tracking-[0.3em]" dir="ltr" inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={14} value={totp} onChange={(e) => setTotp(e.target.value)} placeholder="123456" required />
+            </Field>
+          )}
           {error && <Alert tone="bad">{error}</Alert>}
           {bio && !register && !status?.needs_setup && (
             <button type="button" onClick={fingerprint} disabled={busy} className="flex w-full items-center justify-center gap-2.5 rounded-2xl border-2 border-violet-500/40 bg-violet-500/5 py-3 font-bold text-violet-700 transition hover:bg-violet-500/10 dark:text-violet-300">

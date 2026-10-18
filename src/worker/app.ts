@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { Env } from "./env";
 import { missingSecrets } from "./env";
 import { all, audit, first, getSetting, OWNER_TENANT, run, setSetting, settingKey, tenantSettingsFilter } from "./lib/db";
-import { hashPassword, randomToken, sha256Hex, timingSafeEqual, verifyMetaSignature, verifyPassword } from "./lib/crypto";
+import { decryptSecret, encryptSecret, hashPassword, randomToken, sha256Hex, timingSafeEqual, verifyMetaSignature, verifyPassword } from "./lib/crypto";
 import { parseWebhook } from "./meta/webhook-parse";
 import { INSIGHTS_SCOPE, INSTAGRAM_SCOPES, WEBHOOK_FIELDS, sanitize } from "./meta/client";
 import type { MediaItem } from "./meta/types";
@@ -80,6 +80,7 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 import { toCsv } from "../shared/csv";
 import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, MESSAGE_LINKS, orderFeatures, type ExchangeRates, type PlanLimits } from "../shared/plans";
 import { diagnoseTenant } from "./services/diagnose";
+import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp } from "./lib/totp";
 import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
@@ -114,6 +115,32 @@ const idParam = (c: C) => {
   const n = Number(c.req.param("id"));
   return Number.isInteger(n) && n > 0 ? n : null;
 };
+
+/**
+ * Second login step: a current authenticator code (never the same step twice) or an unused recovery code
+ * (consumed). Returns which one matched, or null.
+ */
+async function checkSecondFactor(
+  env: Env,
+  u: { id: number; totp_ciphertext: string | null; totp_iv: string | null; totp_last_step: number | null; totp_recovery: string | null },
+  code: string,
+  now: number,
+): Promise<"totp" | "recovery" | null> {
+  if (/^\s*\d{3}\s?\d{3}\s*$/.test(code)) {
+    if (!u.totp_ciphertext || !u.totp_iv) return null;
+    const secret = await decryptSecret(u.totp_ciphertext, u.totp_iv, env.TOKEN_ENC_KEY, `totp:${u.id}`);
+    const step = await verifyTotp(secret, code, now, u.totp_last_step);
+    if (step === null) return null;
+    const r = await env.DB.prepare("UPDATE admin_users SET totp_last_step = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)").bind(step, u.id, step).run();
+    return r.meta.changes ? "totp" : null;
+  }
+  const hashes: string[] = u.totp_recovery ? JSON.parse(u.totp_recovery) : [];
+  const h = await sha256Hex(normRecovery(code));
+  if (!hashes.includes(h)) return null;
+  const left = JSON.stringify(hashes.filter((x) => x !== h));
+  const r = await env.DB.prepare("UPDATE admin_users SET totp_recovery = ? WHERE id = ? AND totp_recovery = ?").bind(left, u.id, u.totp_recovery).run();
+  return r.meta.changes ? "recovery" : null;
+}
 
 async function currentAccount(db: D1Database, tenantId: number): Promise<AccountRow & Record<string, any> | null> {
   return first(db, "SELECT * FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 ORDER BY (status = 'active') DESC, updated_at DESC LIMIT 1", tenantId);
@@ -560,7 +587,7 @@ export function createApp() {
     if (!(await rateLimit(c.env.DB, `login:${ip}`, 10, 15 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، انتظر 15 دقيقة");
     const p = await parseBody(c, loginSchema);
     if (!p.ok) return p.res;
-    const user = await first<{ id: number; username: string; password_hash: string; failed_attempts: number; locked_until: number | null; tenant_id: number; tenant_status: string }>(
+    const user = await first<{ id: number; username: string; password_hash: string; failed_attempts: number; locked_until: number | null; tenant_id: number; tenant_status: string; totp_enabled_at: number | null; totp_ciphertext: string | null; totp_iv: string | null; totp_last_step: number | null; totp_recovery: string | null }>(
       c.env.DB,
       // The store name logs in without caring about upper/lower case (exact match preferred).
       "SELECT u.*, t.status AS tenant_status FROM admin_users u JOIN tenants t ON t.id = u.tenant_id WHERE u.username = ? COLLATE NOCASE ORDER BY (u.username = ?) DESC LIMIT 1",
@@ -576,6 +603,17 @@ export function createApp() {
         await run(c.env.DB, "UPDATE admin_users SET failed_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?", fails, fails >= 5 ? now + 15 * 60_000 : null, now, user.id);
       }
       return apiError(c, 401, "invalid_credentials", "بيانات الدخول غير صحيحة");
+    }
+    // Two-step login: after the right password, the authenticator code (or a one-time recovery code).
+    if (user.totp_enabled_at) {
+      if (!p.data.totp) return apiError(c, 401, "totp_required", "اكتب رمز التحقق من تطبيق المصادقة");
+      const ok = await checkSecondFactor(c.env, user, p.data.totp, now);
+      if (!ok) {
+        const fails = user.failed_attempts + 1;
+        await run(c.env.DB, "UPDATE admin_users SET failed_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?", fails, fails >= 5 ? now + 15 * 60_000 : null, now, user.id);
+        return apiError(c, 401, "invalid_totp", "رمز التحقق غير صحيح أو انتهى وقته — اكتب الرمز الحالي من التطبيق");
+      }
+      if (ok === "recovery") await audit(c.env.DB, user.tenant_id, user.username, "auth.recovery_code_used");
     }
     await run(c.env.DB, "UPDATE admin_users SET failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?", now, user.id);
     if (user.tenant_status !== "active") return apiError(c, 403, "account_suspended", "هذا الحساب موقوف — تواصل مع إدارة الخدمة");
@@ -627,6 +665,56 @@ export function createApp() {
   // ------------------------------------------------------------------ Authenticated API
   const api = new Hono<AppEnv>();
   api.use("*", requireAuth);
+
+  // ---- Two-step login (owner): set up with an authenticator app, confirm with a code, turn off.
+  api.get("/auth/totp", async (c) => {
+    const u = await first<{ totp_enabled_at: number | null; totp_recovery: string | null }>(c.env.DB, "SELECT totp_enabled_at, totp_recovery FROM admin_users WHERE id = ?", c.get("session").user_id);
+    return c.json({ available: !!c.get("session").is_owner, enabled: !!u?.totp_enabled_at, enabled_at: u?.totp_enabled_at ?? null, recovery_left: u?.totp_recovery ? (JSON.parse(u.totp_recovery) as string[]).length : 0 });
+  });
+  api.post("/auth/totp/setup", async (c) => {
+    const s = c.get("session");
+    if (!s.is_owner) return apiError(c, 403, "owner_only", "متاح لحساب المالك");
+    const u = await first<{ totp_enabled_at: number | null }>(c.env.DB, "SELECT totp_enabled_at FROM admin_users WHERE id = ?", s.user_id);
+    if (u?.totp_enabled_at) return apiError(c, 409, "already_enabled", "التحقق بخطوتين مفعّل — أوقفه أولًا إذا تبغى تربط جهاز جديد");
+    const secret = newTotpSecret();
+    const e = await encryptSecret(secret, c.env.TOKEN_ENC_KEY, `totp:${s.user_id}`);
+    await run(c.env.DB, "UPDATE admin_users SET totp_ciphertext = ?, totp_iv = ?, totp_enabled_at = NULL, totp_last_step = NULL, totp_recovery = NULL, updated_at = ? WHERE id = ?", e.ciphertext, e.iv, Date.now(), s.user_id);
+    return c.json({ secret, uri: otpauthUri(secret, s.username) });
+  });
+  api.post("/auth/totp/enable", async (c) => {
+    const s = c.get("session");
+    if (!s.is_owner) return apiError(c, 403, "owner_only", "متاح لحساب المالك");
+    if (!(await rateLimit(c.env.DB, `totp_enable:${s.user_id}`, 10, 15 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، انتظر 15 دقيقة");
+    const p = await parseBody(c, z.object({ code: z.string().trim().min(6).max(10) }));
+    if (!p.ok) return p.res;
+    const u = await first<{ totp_ciphertext: string | null; totp_iv: string | null; totp_enabled_at: number | null }>(c.env.DB, "SELECT totp_ciphertext, totp_iv, totp_enabled_at FROM admin_users WHERE id = ?", s.user_id);
+    if (!u?.totp_ciphertext || !u.totp_iv) return apiError(c, 409, "not_setup", "ابدأ الإعداد أولًا");
+    if (u.totp_enabled_at) return apiError(c, 409, "already_enabled", "مفعّل مسبقًا");
+    const secret = await decryptSecret(u.totp_ciphertext, u.totp_iv, c.env.TOKEN_ENC_KEY, `totp:${s.user_id}`);
+    const now = Date.now();
+    const step = await verifyTotp(secret, p.data.code, now);
+    if (step === null) return apiError(c, 422, "invalid_totp", "الرمز غير صحيح — تأكد إن وقت الجوال مضبوط واكتب الرمز الحالي");
+    const codes = newRecoveryCodes();
+    const hashes = await Promise.all(codes.map((x) => sha256Hex(normRecovery(x))));
+    await run(c.env.DB, "UPDATE admin_users SET totp_enabled_at = ?, totp_last_step = ?, totp_recovery = ?, updated_at = ? WHERE id = ?", now, step, JSON.stringify(hashes), now, s.user_id);
+    await audit(c.env.DB, s.tenant_id, s.username, "auth.totp_enabled");
+    return c.json({ ok: true, recovery_codes: codes });
+  });
+  api.post("/auth/totp/disable", async (c) => {
+    const s = c.get("session");
+    if (!(await rateLimit(c.env.DB, `totp_disable:${s.user_id}`, 10, 15 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، انتظر 15 دقيقة");
+    const p = await parseBody(c, z.object({ password: z.string().min(1).max(256), code: z.string().trim().min(6).max(20) }));
+    if (!p.ok) return p.res;
+    const u = await first<any>(c.env.DB, "SELECT * FROM admin_users WHERE id = ?", s.user_id);
+    if (!u?.totp_enabled_at) return c.json({ ok: true });
+    const now = Date.now();
+    if (!(await verifyPassword(p.data.password, u.password_hash, c.env.PASSWORD_PEPPER)) || !(await checkSecondFactor(c.env, u, p.data.code, now)))
+      return apiError(c, 422, "invalid_credentials", "كلمة المرور أو رمز التحقق غير صحيح");
+    await run(c.env.DB, "UPDATE admin_users SET totp_ciphertext = NULL, totp_iv = NULL, totp_enabled_at = NULL, totp_last_step = NULL, totp_recovery = NULL, updated_at = ? WHERE id = ?", now, s.user_id);
+    await audit(c.env.DB, s.tenant_id, s.username, "auth.totp_disabled");
+    return c.json({ ok: true });
+  });
+
 
   // Ownership guard: any route addressing a row by id only reaches rows of the caller's tenant (404 otherwise).
   const OWNED: Record<string, string> = {

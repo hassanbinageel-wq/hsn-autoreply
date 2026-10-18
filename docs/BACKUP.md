@@ -6,6 +6,23 @@
 الاستعادة: «استعادة من ملف» → تُنشأ الحملات كمسودات لتراجعها ثم تفعّلها.
 
 ## 2) قاعدة البيانات كاملة
+
+### النسخة الأسبوعية التلقائية (مشفّرة)
+- تعمل كل جمعة 3:17 فجرًا بتوقيت الرياض: `.github/workflows/backup.yml` — وتقدر تشغّلها يدويًا من Actions ← «Database backup» ← Run workflow.
+- الناتج ملف `hsn-db-backup-YYYY-MM-DD-ENCRYPTED` في صفحة التشغيل (قسم Artifacts)، يبقى **30 يوم**.
+- مشفّر AES-256 بعبارة السر `DB_BACKUP_PASSPHRASE` (أو `BACKUP_PASSPHRASE` إذا ما أضفتها). **بدون العبارة ما ينفتح** — احفظها في مدير كلمات مرور.
+- فيه بيانات العملاء (مشفّرة) — لا ترسله في المحادثات ولا تفك تشفيره إلا وقت الاستعادة.
+
+**الاستعادة من النسخة الأسبوعية:**
+```bash
+7z x hsn-db-YYYY-MM-DD.7z            # يطلب العبارة
+npx wrangler d1 create hsn_autoreply_restore
+npx wrangler d1 execute hsn_autoreply_restore --remote --file hsn_autoreply-YYYY-MM-DD.sql
+# ثم ضع id القاعدة الجديدة في vars.D1_DATABASE_ID وشغّل Deploy
+```
+الأسرار (`TOKEN_ENC_KEY`، `PASSWORD_PEPPER`) لازم تبقى نفسها على الـ Worker عشان توكنات إنستقرام وكلمات المرور تشتغل؛ وإلا يعيد العملاء ربط إنستقرام وتعطيهم كلمات مرور جديدة.
+
+### يدويًا
 ```bash
 npx wrangler d1 export hsn_autoreply --remote --output hsn-$(date +%F).sql
 # الاستعادة إلى قاعدة جديدة:
@@ -38,3 +55,12 @@ npx wrangler d1 execute hsn_autoreply_restore --remote --file hsn-YYYY-MM-DD.sql
 - الحملة النشطة المسترجَعة تبدأ من لحظة الاسترجاع ولا تعيد معالجة التعليقات القديمة.
 - صور بطاقات التهنئة لا تُحفظ مع السحب المحذوف؛ تُولَّد من جديد عند الحاجة.
 - العملية التي تتجاوز نسختها ~1.9MB (مثلاً سحب ضخم جدًا) تظهر في القائمة لكنها غير قابلة للاسترجاع.
+
+## التحقق بخطوتين (حساب المالك)
+- يتفعّل من «الإعدادات ← التحقق بخطوتين» بتطبيق مصادقة (Google/Microsoft Authenticator). السر محفوظ مشفّرًا بـ `TOKEN_ENC_KEY`.
+- عند التفعيل تظهر **8 رموز استرداد** مرة وحدة — كل رمز يدخلك مرة بدل رمز التطبيق. احفظها بعيد عن الإيميل.
+- ضاع الجوال والرموز معًا؟ من جهاز عنده صلاحية Cloudflare:
+  ```bash
+  npx wrangler d1 execute hsn_autoreply --remote --command "UPDATE admin_users SET totp_enabled_at = NULL, totp_ciphertext = NULL, totp_iv = NULL, totp_recovery = NULL WHERE tenant_id = 1"
+  ```
+  ثم ادخل بكلمة المرور وفعّله من جديد.

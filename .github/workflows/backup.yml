@@ -1,0 +1,73 @@
+# Weekly encrypted backup of the whole database (D1).
+# The export is encrypted on the runner (AES-256 7z, file names hidden) with a passphrase only the owner knows,
+# then kept as a workflow artifact for 30 days. Nothing readable leaves Cloudflare.
+# Secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, and DB_BACKUP_PASSPHRASE (falls back to BACKUP_PASSPHRASE).
+# Restore: docs/BACKUP.md.
+name: Database backup (weekly, encrypted)
+
+on:
+  schedule:
+    - cron: "17 0 * * 5" # Friday 03:17 Riyadh time
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Point wrangler at the production database
+        env:
+          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$D1_DATABASE_ID" =~ ^[0-9a-f-]{36}$ ]] || { echo "::error::vars.D1_DATABASE_ID missing"; exit 1; }
+          node -e 'const fs=require("fs");let s=fs.readFileSync("wrangler.jsonc","utf8");fs.writeFileSync("wrangler.jsonc",s.replace("00000000-0000-0000-0000-000000000000",process.env.D1_DATABASE_ID));'
+      - name: Export and encrypt
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PASS1: ${{ secrets.DB_BACKUP_PASSPHRASE }}
+          PASS2: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          PASS="${PASS1:-$PASS2}"
+          [ ${#PASS} -ge 12 ] || { echo "::error::Add the secret DB_BACKUP_PASSPHRASE (12+ characters) — the backup is encrypted with it"; exit 1; }
+          umask 077
+          D="$RUNNER_TEMP/db"; mkdir -p "$D"
+          STAMP=$(date -u +%Y-%m-%d)
+          npx wrangler d1 export hsn_autoreply --remote --output "$D/hsn_autoreply-$STAMP.sql"
+          SIZE=$(stat -c %s "$D/hsn_autoreply-$STAMP.sql")
+          [ "$SIZE" -gt 1000 ] || { echo "::error::The export looks empty ($SIZE bytes)"; exit 1; }
+          TABLES=$(grep -c '^CREATE TABLE' "$D/hsn_autoreply-$STAMP.sql" || true)
+          7z a -t7z -mhe=on -mx=9 -p"$PASS" "$RUNNER_TEMP/hsn-db-$STAMP.7z" "$D"/* >/dev/null
+          rm -rf "$D"
+          # Prove the archive opens with the passphrase (without writing the data anywhere).
+          7z t -p"$PASS" "$RUNNER_TEMP/hsn-db-$STAMP.7z" >/dev/null
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          {
+            echo "### ✅ Database backup $STAMP"
+            echo "- Tables: $TABLES · SQL size: $((SIZE / 1024)) KB · encrypted archive: $(( $(stat -c %s "$RUNNER_TEMP/hsn-db-$STAMP.7z") / 1024 )) KB"
+            echo "- SHA-256: \`$(sha256sum "$RUNNER_TEMP/hsn-db-$STAMP.7z" | cut -d' ' -f1)\`"
+            echo "- Kept 30 days. Restore steps: docs/BACKUP.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hsn-db-backup-${{ env.STAMP }}-ENCRYPTED
+          path: ${{ runner.temp }}/hsn-db-${{ env.STAMP }}.7z
+          retention-days: 30
+          if-no-files-found: error

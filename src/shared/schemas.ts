@@ -118,6 +118,8 @@ export const loginSchema = z.object({
   password: z.string().min(1).max(256),
   client: z.enum(["web", "app"]).default("web"),
   device_label: optText(80),
+  // Two-step login: the 6-digit authenticator code, or a recovery code.
+  totp: z.string().trim().max(20).optional(),
 });
 
 export const setupSchema = z.object({
