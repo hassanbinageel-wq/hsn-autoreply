@@ -121,7 +121,10 @@ export function NotificationBell({ route, onAlert }: { route: string; onAlert?: 
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold">{n.title.replace(/^\p{Extended_Pictographic}️?\s*/u, "")}</div>
                     {n.body && <p className="muted mt-0.5 whitespace-pre-line text-xs leading-relaxed">{n.body}</p>}
-                    <div className="muted mt-1 text-[10.5px]">{fmtTime(n.created_at)}{n.expires_at ? ` · يختفي بعد ${Math.max(1, Math.ceil((n.expires_at - Date.now()) / 86_400_000))} يوم` : ""}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px]">
+                      <span className="muted">{fmtTime(n.created_at)}</span>
+                      {n.expires_at && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">⏳ يختفي بعد {Math.max(1, Math.ceil((n.expires_at - Date.now()) / 86_400_000))} يوم</span>}
+                    </div>
                   </div>
                   {!n.read_at && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-pink-600" aria-label="جديد" />}
                   <button

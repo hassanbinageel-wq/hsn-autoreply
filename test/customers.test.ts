@@ -104,11 +104,13 @@ describe("owner tools: support, coupons, referrals, health; UTM", () => {
     expect((await call("/api/owner/health", a.h)).status).toBe(403);
   });
 
-  it("usernames: Arabic allowed, invisible direction marks removed (sign-up and login)", async () => {
+  it("store name (login): English only, invisible marks and @ removed, any letter case at login; display name may be Arabic", async () => {
     const c = await code();
-    expect((await call("/api/auth/register", {}, "POST", { name: "متجر نور", username: "\u200Fمتجر_نور", password: "another-strong-password", code: c })).status).toBe(200);
-    expect((await call("/api/auth/login", {}, "POST", { username: "متجر_نور\u200E", password: "another-strong-password", client: "app" })).body.token).toBeTruthy();
-    expect((await call("/api/auth/register", {}, "POST", { name: "x", username: "a b", password: "another-strong-password", code: await code() })).status).toBe(422);
+    expect((await call("/api/auth/register", {}, "POST", { name: "ماجد", username: "\u200F@Majed.Store", password: "another-strong-password", code: c })).status).toBe(200);
+    expect((await DB.prepare("SELECT username FROM admin_users WHERE username = 'Majed.Store'").first<any>())).toBeTruthy();
+    expect((await call("/api/auth/login", {}, "POST", { username: "majed.store\u200E", password: "another-strong-password", client: "app" })).body.token).toBeTruthy();
+    expect((await call("/api/auth/register", {}, "POST", { name: "خالد", username: "متجر_نور", password: "another-strong-password", code: await code() })).status).toBe(422);
+    expect((await call("/api/auth/register", {}, "POST", { name: "خالد", username: "MAJED.STORE", password: "another-strong-password", code: await code() })).status).toBe(409);
   });
 
   it("a discount code typed in the activation box says where it goes", async () => {

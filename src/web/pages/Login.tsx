@@ -151,14 +151,19 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               <Field label="كود التفعيل" hint="يصلك بعد الاشتراك، مثل: HSN-XXXX-XXXX-XXXX">
                 <input className="input" dir="ltr" autoComplete="off" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="HSN-XXXX-XXXX-XXXX" required />
               </Field>
-              <Field label="اسمك أو اسم متجرك">
-                <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />
-              </Field>
             </>
           )}
-          <Field label="اسم المستخدم" hint={register && !status?.needs_setup ? "حروف عربية أو إنجليزية وأرقام، بدون مسافات" : undefined}>
-            <input className="input" dir="ltr" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
+          <Field
+            label={status?.needs_setup ? "اسم المستخدم" : register ? "اسم متجرك (في إنستقرام)" : "اسم متجرك"}
+            hint={register && !status?.needs_setup ? "بالإنجليزي بدون مسافات، مثل: hsn.store — وهو اللي تسجّل فيه دخولك للحساب" : undefined}
+          >
+            <input className="input" dir="ltr" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={status?.needs_setup ? undefined : "hsn.store"} required />
           </Field>
+          {register && !status?.needs_setup && (
+            <Field label="اسم المستخدم" hint="اسمك — عربي أو إنجليزي، يظهر داخل التطبيق.">
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />
+            </Field>
+          )}
           <Field label="كلمة المرور" hint={status?.needs_setup || register ? "12 حرفًا على الأقل" : undefined}>
             <div className="relative">
               <input className="input pl-11" dir="ltr" type={show ? "text" : "password"} autoComplete={status?.needs_setup || register ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} required />

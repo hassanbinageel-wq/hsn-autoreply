@@ -560,7 +560,9 @@ export function createApp() {
     if (!p.ok) return p.res;
     const user = await first<{ id: number; username: string; password_hash: string; failed_attempts: number; locked_until: number | null; tenant_id: number; tenant_status: string }>(
       c.env.DB,
-      "SELECT u.*, t.status AS tenant_status FROM admin_users u JOIN tenants t ON t.id = u.tenant_id WHERE u.username = ?",
+      // The store name logs in without caring about upper/lower case (exact match preferred).
+      "SELECT u.*, t.status AS tenant_status FROM admin_users u JOIN tenants t ON t.id = u.tenant_id WHERE u.username = ? COLLATE NOCASE ORDER BY (u.username = ?) DESC LIMIT 1",
+      p.data.username,
       p.data.username,
     );
     const now = Date.now();
@@ -594,7 +596,7 @@ export function createApp() {
     // Check the code first (without using it) so a typo never creates an empty account.
     const code = await first<{ id: number }>(c.env.DB, "SELECT id FROM activation_codes WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL", await codeHash(p.data.code));
     if (!code) return apiError(c, 422, "invalid_code", "كود التفعيل غير صحيح أو مستخدم");
-    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ?", p.data.username)) return apiError(c, 409, "username_taken", "اسم المستخدم مستخدم — اختر غيره");
+    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم المتجر هذا مسجّل من قبل — اختر غيره");
     const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
     const t = await first<{ id: number }>(c.env.DB, "INSERT INTO tenants (name, created_at, updated_at) VALUES (?, ?, ?) RETURNING id", p.data.name, now, now);
     const tid = t!.id;
@@ -880,7 +882,7 @@ export function createApp() {
   owner.post("/tenants", async (c) => {
     const p = await parseBody(c, tenantCreateSchema);
     if (!p.ok) return p.res;
-    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ?", p.data.username)) return apiError(c, 409, "username_taken", "اسم المستخدم مستخدم — اختر غيره");
+    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم المتجر هذا مسجّل من قبل — اختر غيره");
     const now = Date.now();
     const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
     const t = await first<{ id: number }>(c.env.DB, "INSERT INTO tenants (name, notes, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id", p.data.name, p.data.notes ?? null, now, now);

@@ -105,12 +105,13 @@ export const templateInputSchema = z.object({
 });
 
 /**
- * Usernames: English or Arabic letters, digits, _ . - (3–64). Invisible direction marks that RTL keyboards add,
- * Arabic diacritics and tatweel are removed, so what the person sees is what is stored and compared.
+ * Login names. Invisible direction marks that RTL keyboards add, Arabic diacritics, tatweel and a leading @ are
+ * removed, so what the person sees is what is stored and compared.
  */
-export const normUsername = (v: string) => v.normalize("NFC").replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u064B-\u0652\u0640]/g, "").trim();
-const USERNAME_RE = /^[A-Za-z0-9_.\-\u0621-\u063A\u0641-\u064A\u0660-\u0669]{3,64}$/;
-const username = () => z.string().max(200).transform(normUsername).pipe(z.string().regex(USERNAME_RE, "اسم المستخدم: 3 أحرف على الأقل (عربي أو إنجليزي) وأرقام، بدون مسافات"));
+export const normUsername = (v: string) => v.normalize("NFC").replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u064B-\u0652\u0640]/g, "").trim().replace(/^@+/, "");
+/** The login name is the store's Instagram-style name: English letters, digits, _ . - (3–64). */
+const USERNAME_RE = /^[A-Za-z0-9_.-]{3,64}$/;
+const username = () => z.string().max(200).transform(normUsername).pipe(z.string().regex(USERNAME_RE, "اسم المتجر: بالإنجليزي (حروف وأرقام و _ .) بدون مسافات، مثل اسم حسابك في إنستقرام"));
 
 export const loginSchema = z.object({
   username: z.string().max(200).transform(normUsername).pipe(z.string().min(1).max(64)),
@@ -133,7 +134,7 @@ export const tenantCreateSchema = z.object({
 });
 
 export const registerSchema = z.object({
-  name: text(80).min(2, "اكتب اسمك أو اسم متجرك"),
+  name: text(80).min(2, "اكتب اسم المستخدم (اسمك)"),
   username: username(),
   password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
   code: z.string().trim().min(4, "أدخل كود التفعيل").max(40),

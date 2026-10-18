@@ -37,7 +37,7 @@ function NewCustomer({ onClose, onDone }: { onClose: () => void; onDone: () => v
     }
   };
   if (created) {
-    const text = `بيانات دخولك على HSN AutoReply:\nاسم المستخدم: ${created.username}\nكلمة المرور: ${created.password}\n${location.origin}`;
+    const text = `بيانات دخولك على HSN AutoReply:\nاسم المتجر: ${created.username}\nكلمة المرور: ${created.password}\n${location.origin}`;
     return (
       <Modal open onClose={onClose} title="تم إنشاء العميل ✅">
         <Alert tone="warn">أرسل بيانات الدخول للعميل بنفسك عبر قناة خاصة. كلمة المرور لا تظهر مرة ثانية (تقدر تعيد تعيينها لاحقًا).</Alert>
@@ -52,10 +52,10 @@ function NewCustomer({ onClose, onDone }: { onClose: () => void; onDone: () => v
   return (
     <Modal open onClose={onClose} title="عميل جديد">
       <div className="space-y-3">
-        <Field label="اسم العميل (المتجر أو الشخص)"><input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} /></Field>
-        <Field label="اسم المستخدم للدخول" hint="حروف عربية أو إنجليزية وأرقام بدون مسافات، مثل: shop_noor أو متجر_نور">
+        <Field label="اسم المتجر (للدخول)" hint="بالإنجليزي بدون مسافات، مثل اسم حسابه في إنستقرام: shop_noor">
           <input className="input" dir="ltr" value={username} onChange={(e) => setUsername(e.target.value.replace(/\s/g, ""))} maxLength={64} />
         </Field>
+        <Field label="اسم المستخدم (اسم العميل)"><input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} /></Field>
         <Field label="كلمة المرور المؤقتة" hint="12 حرفًا على الأقل. أنشأنا لك واحدة قوية.">
           <div className="flex gap-2">
             <input className="input" dir="ltr" value={password} onChange={(e) => setPassword(e.target.value)} />
@@ -105,7 +105,8 @@ function CustomersTab() {
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <b className="font-display block truncate text-base">{t.name}</b>
-                  <span className="muted block text-xs" dir="ltr" style={{ textAlign: "right" }}>{t.username}</span>
+                  <span className="muted block text-xs">اسم المستخدم: <b className="text-[var(--text)]">{t.name}</b></span>
+                  <span className="muted block text-xs">اسم المتجر (الدخول): <b className="text-[var(--text)]" dir="ltr">{t.username ?? "—"}</b></span>
                 </div>
                 <span className={`chip ${t.status === "active" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"}`}>
                   <span className="h-1.5 w-1.5 rounded-full bg-current" />{t.status === "active" ? "نشط" : "موقوف"}
@@ -1179,7 +1180,7 @@ function HealthTab() {
           {list.map((c: any) => (
             <Card key={c.id} title={<span className="flex items-center gap-2">{c.name}<span className={`chip !py-0 text-[10.5px] ${RISK[c.risk].cls}`}>{RISK[c.risk].label}</span></span>} action={<button className="btn btn-ghost min-h-9 text-xs" onClick={() => setMessageFor(c)}><Icon name="send" size={14} />رسالة</button>}>
               <div className="muted mb-2 text-xs">
-                المستخدم: <b className="text-[var(--text)]">{c.usernames ?? "—"}</b>
+                اسم المستخدم: <b className="text-[var(--text)]">{c.name}</b> · اسم المتجر (الدخول): <b className="text-[var(--text)]" dir="ltr">{c.usernames ?? "—"}</b>
                 {c.ig_username ? <> · إنستقرام: <b className="text-[var(--text)]" dir="ltr">@{c.ig_username}</b></> : null}
                 {c.store_name ? <> · المتجر: <b className="text-[var(--text)]">🛍️ {c.store_name}</b></> : null}
               </div>
@@ -1302,10 +1303,10 @@ function SentMessages() {
                 <div className="text-sm font-semibold">{m.title}</div>
                 <div className="muted text-xs">
                   {m.tenant_id ? `إلى: ${m.tenant_name ?? "عميل محذوف"}` : "إلى: كل العملاء"} · {fmtTime(m.created_at)} · تبقى {m.keep_days} يوم
-                  {m.copies > 0 ? ` · قرأها ${m.read} من ${m.copies}` : " · انحذفت من عندهم"}
                   {m.reminders ? ` · ذكّرت ${m.reminders} مرة` : ""}
                 </div>
               </div>
+              <ReadBox copies={m.copies} read={m.read} single={!!m.tenant_id} />
               <div className="flex gap-2">
                 <button className="btn btn-ghost min-h-8 text-xs" onClick={async () => { try { const r = await api<{ sent: number }>(`/api/owner/messages/${m.id}/remind`, { body: {} }); toast(`وصل التذكير لـ ${r.sent}`); reload(); } catch (e: any) { toast(e.message, "bad"); } }}>🔔 تذكير</button>
                 <button className="btn btn-ghost min-h-8 text-xs text-red-600" onClick={async () => { if (await askConfirm({ title: "حذف الرسالة؟", message: "تنحذف من سجلك ومن إشعارات العملاء.", confirmLabel: "حذف", danger: true })) { await api(`/api/owner/messages/${m.id}`, { method: "DELETE" }); reload(); } }}>حذف</button>
@@ -1316,4 +1317,15 @@ function SentMessages() {
       )}
     </Card>
   );
+}
+
+/** Read status of a sent message: green when read, orange when not yet, grey when removed from their bell. */
+function ReadBox({ copies, read, single }: { copies: number; read: number; single: boolean }) {
+  const cls = !copies
+    ? "border-slate-300 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+    : read >= copies
+      ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+      : "border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-700 dark:bg-orange-900/30 dark:text-orange-300";
+  const text = !copies ? "انحذفت من عنده" : single ? (read ? "✓ قرأها" : "● ما قرأها بعد") : `قرأها ${read} من ${copies}`;
+  return <span className={`shrink-0 rounded-xl border px-3 py-1.5 text-xs font-bold ${cls}`}>{text}</span>;
 }
