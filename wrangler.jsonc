@@ -16,7 +16,7 @@
     "directory": "./dist/web",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/l/*", "/m/*", "/c/*", "/webhooks/*", "/oauth/*", "/meta/*", "/privacy", "/terms", "/data-deletion", "/pricing", "/healthz", "/utm-check"]
+    "run_worker_first": ["/api/*", "/l/*", "/m/*", "/c/*", "/webhooks/*", "/oauth/*", "/meta/*", "/privacy", "/terms", "/data-deletion", "/pricing", "/healthz"]
   },
   "d1_databases": [
     {

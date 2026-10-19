@@ -49,8 +49,8 @@ export default defineConfig(({ mode }) => {
             // Only the public UI shell is cached — never API responses or auth pages.
             globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
             navigateFallback: "/index.html",
-            // Server routes: tracked campaign links (/l/), media (/m/), card links (/c/), test pages — never the app shell.
-            navigateFallbackDenylist: [/^\/api\//, /^\/l\//, /^\/m\//, /^\/c\//, /^\/utm-check/, /^\/webhooks\//, /^\/oauth\//, /^\/meta\//, /^\/privacy/, /^\/terms/, /^\/data-deletion/, /^\/healthz/, /^\/app\.apk/, /^\/pricing/],
+            // Server routes: tracked campaign links (/l/), media (/m/), card links (/c/) — never the app shell.
+            navigateFallbackDenylist: [/^\/api\//, /^\/l\//, /^\/m\//, /^\/c\//, /^\/webhooks\//, /^\/oauth\//, /^\/meta\//, /^\/privacy/, /^\/terms/, /^\/data-deletion/, /^\/healthz/, /^\/app\.apk/, /^\/pricing/],
             runtimeCaching: [],
             cleanupOutdatedCaches: true,
           },
