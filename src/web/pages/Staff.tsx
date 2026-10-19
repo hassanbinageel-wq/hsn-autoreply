@@ -28,6 +28,9 @@ export function StaffPage() {
         subtitle="أضف موظف يدخل بحسابه الخاص، وحدد له الأقسام اللي يشتغل عليها بس — ما يشوف الإعدادات ولا الربط ولا الاشتراك."
         actions={<button className="btn btn-primary" disabled={data.staff.length >= data.max} onClick={() => setEditing("new")}><Icon name="plus" size={17} />موظف جديد</button>}
       />
+      {data.max === 0 && (
+        <Alert tone="info">إضافة الموظفين متاحة في الباقات الأعلى — <a href="#/subscription" className="font-bold underline">شوف الباقات من «اشتراكي»</a>.</Alert>
+      )}
       {!data.staff.length ? (
         <Empty title="ما فيه موظفين بعد">مثلًا: موظف يرد على الرسائل بس، أو مسوّق يجهّز الحملات والجدولة.</Empty>
       ) : (
@@ -49,7 +52,7 @@ export function StaffPage() {
           ))}
         </div>
       )}
-      <p className="muted text-xs">الحد الأقصى {data.max} موظفين. كل اللي يسويه الموظف يتسجل باسمه في «السجل».</p>
+      <p className="muted text-xs">{data.max ? `باقتك تسمح بـ ${data.max} ${data.max === 1 ? "موظف" : "موظفين"} (عندك ${data.staff.length}).` : ""} كل اللي يسويه الموظف يتسجل باسمه في «السجل».</p>
       {editing && <StaffModal row={editing === "new" ? null : editing} available={data.available} onClose={() => setEditing(null)} onDone={() => { setEditing(null); reload(); }} />}
     </div>
   );

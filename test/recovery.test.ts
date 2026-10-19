@@ -114,4 +114,27 @@ describe("account email and password recovery", () => {
     await DB.prepare("UPDATE password_resets SET expires_at = ?").bind(Date.now() - 1).run();
     expect((await call("/api/auth/reset", {}, "POST", { token, password: "a-brand-new-password-1" })).status).toBe(422);
   });
+
+  it("changing the password needs the current one and the code emailed to the confirmed address", async () => {
+    stubResend();
+    await call("/api/auth/register", {}, "POST", { name: "متجر أ", username: "shop_a", password: "another-strong-password", code: await code() });
+    const h = await login("shop_a", "another-strong-password");
+    const other = await login("shop_a", "another-strong-password");
+    // no confirmed email yet
+    expect((await call("/api/account/password", h, "POST", { current: "another-strong-password", password: "a-brand-new-password-1" })).body.error.code).toBe("need_email");
+    await call("/api/account/email", h, "POST", { email: "me@example.com" });
+    await call("/api/account/email/verify", h, "POST", { code: codeOf(mails.at(-1)!) });
+    expect((await call("/api/account/password", h, "POST", { current: "wrong-password-here", password: "a-brand-new-password-1" })).body.error.code).toBe("wrong_current");
+    expect((await call("/api/account/password", h, "POST", { current: "another-strong-password", password: "a-brand-new-password-1" })).status).toBe(200);
+    expect(mails.at(-1)!.subject).toContain("تغيير كلمة المرور");
+    // nothing changes before the code
+    await login("shop_a", "another-strong-password");
+    expect((await call("/api/account/password/confirm", h, "POST", { code: "000000" })).status).toBe(422);
+    expect((await call("/api/account/password/confirm", h, "POST", { code: codeOf(mails.at(-1)!) })).status).toBe(200);
+    // this device stays signed in, the others are signed out; only the new password works
+    expect((await call("/api/account/email", h)).status).toBe(200);
+    expect((await call("/api/account/email", other)).status).toBe(401);
+    expect((await call("/api/auth/login", {}, "POST", { username: "shop_a", password: "another-strong-password", client: "app" })).status).toBe(401);
+    await login("shop_a", "a-brand-new-password-1");
+  });
 });

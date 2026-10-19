@@ -404,6 +404,7 @@ const LIMIT_FIELDS: Array<[string, string]> = [
   ["active_campaigns", "الحملات النشطة"],
   ["monthly_messages", "الرسائل شهريًا"],
   ["draws_per_month", "السحوبات شهريًا"],
+  ["staff", "عدد الموظفين (0 = بدون، فارغ = حتى 10)"],
 ];
 
 function PlansTab() {

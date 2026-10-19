@@ -45,6 +45,7 @@ const NONE: PlanLimits = {
   undo: false,
   scheduling: false,
   store: false,
+  staff: 0,
 };
 
 export function parseLimits(raw: string): PlanLimits {

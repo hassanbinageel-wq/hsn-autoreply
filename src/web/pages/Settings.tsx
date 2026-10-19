@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { TwoFactorCard } from "../components/TwoFactor";
 import { AccountEmailCard } from "../components/AccountEmail";
+import { ChangePasswordCard } from "../components/ChangePassword";
 import { isStaff } from "../lib/me";
 import { askText } from "../components/Confirm";
 import { api, download } from "../api";
@@ -11,14 +12,15 @@ import { Icon } from "../components/Icon";
 import { Alert, Card, PageHeader, Spinner, Toggle, setTz, toast, useAsync } from "../components/ui";
 import { bioUser, disableBio } from "../lib/biometric";
 
-const SECTIONS: Array<[string, string, string]> = [
-  ["general", "عام", "settings"],
-  ["notifications", "الإشعارات", "send"],
-  ["privacy", "الخصوصية والاحتفاظ", "shield"],
-  ["backup", "النسخ الاحتياطي", "download"],
-  ["appearance", "المظهر", "sun"],
-  ["security", "الأمان", "lock"],
+const SECTIONS: Array<[string, string, string, string]> = [
+  ["general", "عام", "settings", "المنطقة الزمنية وحماية التكرار واسترجاع التعليقات"],
+  ["notifications", "الإشعارات", "send", "تيليجرام والتقارير والتنبيهات"],
+  ["security", "الحساب والأمان", "lock", "الإيميل وكلمة المرور والتحقق بخطوتين والأجهزة"],
+  ["privacy", "الخصوصية والاحتفاظ", "shield", "مدة حفظ السجلات وحذف البيانات"],
+  ["backup", "النسخ الاحتياطي", "download", "تنزيل الإعدادات والحملات أو استعادتها"],
+  ["appearance", "المظهر", "sun", "فاتح، داكن، أو تلقائي"],
 ];
+const SECTION_IDS = SECTIONS.map(([id]) => id);
 
 /** One settings line: label + description on the right, the control on the left. */
 function Row({ label, hint, children }: { label: ReactNode; hint?: ReactNode; children: ReactNode }) {
@@ -46,6 +48,7 @@ function StaffSettings({ onLogout, username }: SettingsProps) {
       <PageHeader title="حسابي" subtitle={`أنت داخل كموظف (${username}) — إعدادات الحساب الكاملة عند صاحب الحساب.`} />
       <div className="grid gap-4 lg:grid-cols-2">
         <AccountEmailCard />
+        <ChangePasswordCard />
         <TwoFactorCard />
         <Card title="الجلسة">
           <button className="btn btn-ghost" onClick={onLogout}><Icon name="logout" size={17} />تسجيل الخروج</button>
@@ -58,7 +61,17 @@ function StaffSettings({ onLogout, username }: SettingsProps) {
 function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) {
   const { data, loading, reload } = useAsync(() => api("/api/settings"), []);
   const [s, setS] = useState<any>(null);
-  const [active, setActive] = useState("general");
+  // One section at a time; the choice is kept in the address (#/settings?tab=security) and for next time.
+  const [active, setActive] = useState(() => {
+    const fromUrl = new URLSearchParams(location.hash.split("?")[1] ?? "").get("tab");
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem("hsn_settings_tab");
+    } catch {
+      /* private mode */
+    }
+    return [fromUrl, saved].find((x) => x && SECTION_IDS.includes(x)) ?? "general";
+  });
   const [dirty, setDirty] = useState(false);
   useEffect(() => {
     if (data) setS(data.settings);
@@ -122,8 +135,14 @@ function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) 
 
   const go = (id: string) => {
     setActive(id);
-    document.getElementById(`set-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    try {
+      localStorage.setItem("hsn_settings_tab", id);
+    } catch {
+      /* private mode */
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  const section = SECTIONS.find(([id]) => id === active)!;
   const themeSeg = (
     <div className="seg">
       {[["light", "فاتح"], ["dark", "داكن"], ["system", "تلقائي"]].map(([k, v]) => (
@@ -149,7 +168,7 @@ function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) 
           {/* Faded left edge on phones: more sections are a swipe away. */}
           <div className="flex gap-1 overflow-x-auto [mask-image:linear-gradient(to_right,transparent,black_40px)] lg:flex-col lg:[mask-image:none]">
             {SECTIONS.map(([id, label, icon]) => (
-              <button key={id} onClick={() => go(id)} className={`nav-link shrink-0 ${active === id ? "on" : ""}`}>
+              <button key={id} onClick={() => go(id)} aria-current={active === id ? "page" : undefined} className={`nav-link shrink-0 ${active === id ? "on" : ""}`}>
                 <Icon name={icon} size={19} />
                 {label}
               </button>
@@ -157,8 +176,12 @@ function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) 
           </div>
         </nav>
 
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-2">
-          <section id="set-general" className="scroll-mt-24">
+        <div className="min-w-0 space-y-4">
+          <div className="hidden lg:block">
+            <h2 className="font-display text-lg font-extrabold">{section[1]}</h2>
+            <p className="muted text-sm">{section[3]}</p>
+          </div>
+          {active === "general" && <section id="set-general" className="max-w-3xl">
             <Card title="عام" className="h-full">
               <div className="divide-y divide-[var(--border)]">
                 <Row label="المنطقة الزمنية" hint="الأوقات تُعرض بهذه المنطقة">
@@ -188,13 +211,13 @@ function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) 
                 />
               </div>
             </Card>
-          </section>
+          </section>}
 
-          <section id="set-notifications" className="scroll-mt-24">
+          {active === "notifications" && <section id="set-notifications" className="max-w-3xl">
             <NotificationsCard />
-          </section>
+          </section>}
 
-          <section id="set-privacy" className="scroll-mt-24">
+          {active === "privacy" && <section id="set-privacy" className="max-w-3xl">
             <Card title="الخصوصية والاحتفاظ" className="h-full">
               <div className="divide-y divide-[var(--border)]">
                 <Row label="الاحتفاظ بالسجلات (أيام)" hint="بعدها تُمسح النصوص والبيانات الشخصية">
@@ -213,9 +236,9 @@ function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) 
                 </div>
               </div>
             </Card>
-          </section>
+          </section>}
 
-          <section id="set-backup" className="scroll-mt-24">
+          {active === "backup" && <section id="set-backup" className="max-w-3xl">
             <Card title="النسخ الاحتياطي" action={<span className="chip surface-2 muted">بدون أسرار</span>} className="h-full">
               <p className="muted mb-4 text-sm">يشمل الإعدادات والحملات والقوالب فقط. لا يشمل التوكنات أو كلمات المرور أو بيانات المتفاعلين.</p>
               <div className="flex flex-wrap gap-2">
@@ -228,24 +251,19 @@ function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) 
                 </label>
               </div>
             </Card>
-          </section>
+          </section>}
 
-          <section id="set-appearance" className="scroll-mt-24">
+          {active === "appearance" && <section id="set-appearance" className="max-w-3xl">
             <Card title="المظهر" className="h-full">
               <Row label="الوضع" hint="«تلقائي» يتبع إعداد جهازك">{themeSeg}</Row>
             </Card>
-          </section>
+          </section>}
 
-          <section id="set-email" className="scroll-mt-24">
+          {active === "security" && <section id="set-security" className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-2">
             <AccountEmailCard />
-          </section>
-
-          <section id="set-2fa" className="scroll-mt-24 empty:hidden">
+            <ChangePasswordCard />
             <TwoFactorCard />
-          </section>
-
-          <section id="set-security" className="scroll-mt-24">
-            <Card title="الأمان والحساب" className="h-full">
+            <Card title="الأجهزة والجلسة" className="h-full">
               <div className="flex flex-wrap gap-2">
                 <Link to="/connection" className="btn btn-ghost"><Icon name="link" size={17} />إدارة الربط والتشخيص</Link>
                 <button className="btn btn-ghost" onClick={async () => { await api("/api/auth/sessions/revoke-others", { body: {} }); toast("تم تسجيل الخروج من الأجهزة الأخرى"); }}>
@@ -259,7 +277,7 @@ function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) 
                 <Link to="/download" className="mr-2 font-semibold text-violet-600 underline dark:text-violet-300">تنزيل أحدث APK</Link>
               </div>
             </Card>
-          </section>
+          </section>}
         </div>
       </div>
       {dirty && (

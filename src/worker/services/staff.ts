@@ -11,6 +11,7 @@ const RULES: Rule[] = [
   // Every staff member: their own login, the bell, and read-only views the app shell needs.
   { re: /^\/auth\/(me|logout|sessions|sessions\/revoke-others|totp(\/(setup|enable|disable))?)$/, perms: "any" },
   { re: /^\/account\/email(\/verify)?$/, perms: "any" },
+  { re: /^\/account\/password(\/confirm)?$/, perms: "any" },
   { re: /^\/app-notifications(\/.*)?$/, perms: "any" },
   { re: /^\/(dashboard|account|settings|subscription|usage)$/, perms: "any", read: true },
 

@@ -44,6 +44,9 @@ async function addStaff(holder: H, u: string, perms: string[]) {
 }
 
 describe("staff logins with limited sections", () => {
+  beforeEach(async () => {
+    await DB.prepare("UPDATE plans SET limits = json_set(limits, '$.staff', 3) WHERE id = 'basic'").run();
+  });
   it("a customer adds a staff member who reaches only the chosen sections", async () => {
     const a = await register("shop_a");
     expect((await addStaff(a.h, "sara_inbox", ["inbox", "owner_support"])).status).toBe(200);
@@ -106,5 +109,25 @@ describe("staff logins with limited sections", () => {
     expect((await call("/api/owner/codes", s, "POST", { plan_id: "basic", days: 30, count: 1 })).status).toBe(403);
     expect((await call("/api/owner/usage", s)).status).toBe(403);
     expect((await call("/api/owner/payment-providers", s)).status).toBe(403);
+  });
+
+  it("the plan decides how many staff a customer may add", async () => {
+    await DB.prepare("UPDATE plans SET limits = json_set(limits, '$.staff', 0) WHERE id = 'basic'").run();
+    const a = await register("shop_a");
+    const r0 = await addStaff(a.h, "s_one", ["inbox"]);
+    expect(r0.status).toBe(403);
+    expect(r0.body.error.code).toBe("plan_feature");
+    expect((await call("/api/staff", a.h)).body.max).toBe(0);
+    await DB.prepare("UPDATE plans SET limits = json_set(limits, '$.staff', 1) WHERE id = 'basic'").run();
+    expect((await addStaff(a.h, "s_one", ["inbox"])).status).toBe(200);
+    expect((await addStaff(a.h, "s_two", ["inbox"])).status).toBe(403);
+  });
+
+  it("saving a plan keeps scheduling, store and the staff limit", async () => {
+    const plan = (await call("/api/owner/plans", OWNER)).body.find((p: any) => p.id === "pro");
+    const limits = { ...plan.limits, scheduling: true, store: true, staff: 2 };
+    expect((await call("/api/owner/plans/pro", OWNER, "PUT", { name: plan.name, active: true, limits })).status).toBe(200);
+    const saved = (await call("/api/owner/plans", OWNER)).body.find((p: any) => p.id === "pro");
+    expect(saved.limits).toMatchObject({ scheduling: true, store: true, staff: 2 });
   });
 });

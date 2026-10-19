@@ -30,12 +30,13 @@ export function Features({ limits, order, hideMissing = false }: { limits: PlanL
     if (k === "active_campaigns") return row(k, true, `الحملات النشطة: ${n(limits.active_campaigns)}`, LIMIT_HINTS.active_campaigns);
     if (k === "monthly_messages") return row(k, true, `الرسائل شهريًا: ${n(limits.monthly_messages)}`, LIMIT_HINTS.monthly_messages);
     if (k === "draws_per_month") return row(k, limits.draws_per_month !== 0, `السحوبات: ${limits.draws_per_month === null ? "غير محدودة" : `${limits.draws_per_month} شهريًا`}`, LIMIT_HINTS.draws_per_month);
+    if (k === "staff") return row(k, (limits.staff ?? 0) !== 0, `الموظفين: ${limits.staff === null ? "حتى 10" : limits.staff ? `${limits.staff} ${limits.staff === 1 ? "موظف" : "موظفين"}` : "بدون"}`, LIMIT_HINTS.staff);
     return row(k, !!(limits as any)[k], FEATURE_LABELS[k], FEATURE_HINTS[k]);
   };
   const keys = orderFeatures(order);
   if (!hideMissing) return <ul className="space-y-2 text-sm">{keys.map(render)}</ul>;
   // Plan cards: what the plan includes; what it lacks folds into one line so plans compare at a glance.
-  const included = (k: string) => (k === "draws_per_month" ? limits.draws_per_month !== 0 : k in LIMIT_HINTS || !!(limits as any)[k]);
+  const included = (k: string) => (k === "draws_per_month" ? limits.draws_per_month !== 0 : k === "staff" ? (limits.staff ?? 0) !== 0 : k in LIMIT_HINTS || !!(limits as any)[k]);
   const missing = keys.filter((k) => !included(k));
   return (
     <div className="text-sm">

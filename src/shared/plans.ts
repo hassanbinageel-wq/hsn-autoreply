@@ -20,6 +20,8 @@ export interface PlanLimits {
   scheduling?: boolean;
   /** Store connection (Salla) and store analytics: orders and revenue per campaign / product. */
   store?: boolean;
+  /** Staff logins the customer may add: 0 = none, null = up to the service maximum (10). */
+  staff?: number | null;
 }
 
 /** The owner's own workspace: everything, no expiry. */
@@ -41,6 +43,7 @@ export const OWNER_LIMITS: PlanLimits = {
   undo: true,
   scheduling: true,
   store: true,
+  staff: null,
 };
 
 export const FEATURE_LABELS: Record<string, string> = {
@@ -65,6 +68,7 @@ export const LIMIT_ROW_LABELS: Record<string, string> = {
   active_campaigns: "عدد الحملات النشطة",
   monthly_messages: "الرسائل شهريًا",
   draws_per_month: "السحوبات",
+  staff: "الموظفين",
 };
 
 /** Default display order of every plan point (limits first, then features). */
@@ -101,6 +105,7 @@ export const LIMIT_HINTS: Record<string, string> = {
   active_campaigns: "عدد الحملات اللي تقدر تشغّلها بنفس الوقت. الحملات الموقوفة والمسودات ما تنحسب.",
   monthly_messages: "مجموع الرسائل والردود اللي يرسلها النظام نيابةً عنك خلال الشهر الميلادي. يتجدد أول كل شهر.",
   draws_per_month: "عدد السحوبات اللي تقدر تسويها على متفاعلين حملاتك كل شهر، مع شاشة السحب الحيّة.",
+  staff: "حسابات دخول لموظفيك، كل واحد بالأقسام اللي تحددها له بس (مثل الرد على الرسائل).",
 };
 
 export const EVENT_LABELS: Record<string, string> = { comment: "تعليقات", story_reply: "ردود الستوري", story_mention: "منشن الستوري" };

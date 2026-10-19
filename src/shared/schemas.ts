@@ -170,6 +170,9 @@ export const planUpdateSchema = z.object({
     simulator: z.boolean().default(false),
     campaign_stats: z.boolean().default(false),
     undo: z.boolean().default(false),
+    scheduling: z.boolean().default(false),
+    store: z.boolean().default(false),
+    staff: z.number().int().min(0).max(10).nullable().default(0),
   }),
 });
 

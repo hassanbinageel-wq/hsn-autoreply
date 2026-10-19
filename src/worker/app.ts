@@ -85,7 +85,7 @@ import { parsePerms } from "./services/staff";
 import { permsFor } from "../shared/staff";
 
 const MAX_STAFF = 10;
-import { confirmEmailCode, requestPasswordReset, resetPassword, sendEmailCode } from "./services/recovery";
+import { confirmEmailCode, confirmPasswordChange, requestPasswordReset, resetPassword, sendEmailCode, startPasswordChange } from "./services/recovery";
 import { emailEnabled } from "./services/email";
 import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp } from "./lib/totp";
 import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
@@ -797,6 +797,14 @@ export function createApp() {
     display_name: z.string().trim().min(2, "اكتب اسم الموظف").max(60),
     perms: z.array(z.string().max(30)).max(20),
   });
+  /** How many staff the account may have: its plan's limit (the owner's account: the service maximum). */
+  const staffLimit = async (c: C) => {
+    if (c.get("session").is_owner) return MAX_STAFF;
+    const ent = await getEntitlement(c.env.DB, T(c));
+    if (!ent.active) return 0;
+    const l = ent.limits.staff ?? 0;
+    return l === null ? MAX_STAFF : Math.min(l, MAX_STAFF);
+  };
   const cleanPerms = (c: C, perms: string[]) => {
     const allowed = new Set(permsFor(c.get("session").is_owner).map((p) => p.key as string));
     return [...new Set(perms)].filter((p) => allowed.has(p));
@@ -811,7 +819,7 @@ export function createApp() {
          FROM admin_users u WHERE u.tenant_id = ? AND u.role = 'staff' ORDER BY u.id`,
       T(c),
     );
-    return c.json({ staff: rows.map((r) => ({ ...r, perms: parsePerms(r.perms) })), available: permsFor(c.get("session").is_owner), max: MAX_STAFF });
+    return c.json({ staff: rows.map((r) => ({ ...r, perms: parsePerms(r.perms) })), available: permsFor(c.get("session").is_owner), max: await staffLimit(c) });
   });
   api.post("/staff", async (c) => {
     const bad = holderOnly(c);
@@ -819,7 +827,9 @@ export function createApp() {
     const p = await parseBody(c, staffSchema.extend({ username: username(), password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256) }));
     if (!p.ok) return p.res;
     const n = await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM admin_users WHERE tenant_id = ? AND role = 'staff'", T(c));
-    if ((n?.n ?? 0) >= MAX_STAFF) return apiError(c, 409, "staff_limit", `الحد الأقصى ${MAX_STAFF} موظفين`);
+    const limit = await staffLimit(c);
+    if (limit === 0) return apiError(c, 403, "plan_feature", "إضافة الموظفين غير متاحة في باقتك — رقّ باقتك من «اشتراكي»");
+    if ((n?.n ?? 0) >= limit) return apiError(c, 403, "plan_feature", `باقتك تسمح بـ ${limit} ${limit === 1 ? "موظف" : "موظفين"} — رقّ باقتك من «اشتراكي» لإضافة المزيد`);
     if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم الدخول هذا مستخدم — اختر غيره");
     const perms = cleanPerms(c, p.data.perms);
     if (!perms.length) return apiError(c, 422, "no_perms", "اختر قسم واحد على الأقل");
@@ -915,6 +925,31 @@ export function createApp() {
     if (r === "expired") return apiError(c, 422, "expired", "الرمز انتهى — اطلب رمز جديد");
     if (r === "taken") return apiError(c, 409, "email_taken", "هذا الإيميل مستخدم في حساب ثاني");
     await audit(c.env.DB, s.tenant_id, s.username, "account.email_confirmed");
+    return c.json({ ok: true });
+  });
+  // ---- Change password (Settings ← الأمان): current password → code to the confirmed email → applied.
+  api.post("/account/password", async (c) => {
+    const s = c.get("session");
+    if (!(await rateLimit(c.env.DB, `pw_change:${s.user_id}`, 5, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة — حاول بعد ساعة");
+    const p = await parseBody(c, z.object({ current: z.string().min(1).max(256), password: z.string().min(12, "كلمة المرور الجديدة 12 حرفًا على الأقل").max(256) }));
+    if (!p.ok) return p.res;
+    const r = await startPasswordChange(c.env, s.user_id, p.data.current, p.data.password);
+    if (r === "wrong_current") return apiError(c, 422, "wrong_current", "كلمة المرور الحالية غير صحيحة");
+    if (r === "same") return apiError(c, 422, "same_password", "كلمة المرور الجديدة نفس الحالية");
+    if (r === "no_email") return apiError(c, 409, "need_email", "أضف إيميلك وأكّده أول (من «إيميل استرجاع الحساب») — التغيير يحتاج تأكيد عليه");
+    if (r === "email_off") return apiError(c, 503, "email_off", "إرسال الإيميلات غير مفعّل — تواصل مع إدارة الخدمة");
+    if (r === "send_failed") return apiError(c, 503, "email_failed", "ما قدرنا نرسل الإيميل الحين — حاول بعد شوي");
+    return c.json({ ok: true });
+  });
+  api.post("/account/password/confirm", async (c) => {
+    const s = c.get("session");
+    if (!(await rateLimit(c.env.DB, `pw_confirm:${s.user_id}`, 10, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة — حاول بعد ساعة");
+    const p = await parseBody(c, z.object({ code: z.string().trim().min(6).max(10) }));
+    if (!p.ok) return p.res;
+    const r = await confirmPasswordChange(c.env, s.user_id, s.id, p.data.code);
+    if (r === "invalid") return apiError(c, 422, "invalid_code", "الرمز غير صحيح");
+    if (r === "expired") return apiError(c, 422, "expired", "الرمز انتهى — ابدأ التغيير من جديد");
+    await audit(c.env.DB, s.tenant_id, s.username, "account.password_changed");
     return c.json({ ok: true });
   });
   api.post("/auth/sessions/revoke-others", async (c) => {

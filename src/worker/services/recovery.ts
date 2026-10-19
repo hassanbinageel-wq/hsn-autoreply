@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { first, run } from "../lib/db";
-import { hashPassword, randomToken, sha256Hex } from "../lib/crypto";
+import { hashPassword, randomToken, sha256Hex, verifyPassword } from "../lib/crypto";
 import { emailEnabled, emailLayout, sendEmail } from "./email";
 
 /**
@@ -112,4 +112,60 @@ export async function resetPassword(env: Env, token: string, password: string, n
       html: emailLayout({ title: "تم تغيير كلمة المرور ✅", lines: [`تم تغيير كلمة المرور لحساب «${u.username}» وتسجيل الخروج من كل الأجهزة.`], footer: "إذا ما سويت هذا بنفسك، تواصل مع الدعم فورًا." }),
     }).catch(() => undefined);
   return { ok: true, username: u?.username ?? "", tenant_id: u?.tenant_id ?? 0 };
+}
+
+/**
+ * Changing the password from Settings: the current password, then a code sent to the confirmed email; the new
+ * password applies only after the code (so a stolen session alone cannot change it).
+ */
+export async function startPasswordChange(env: Env, userId: number, current: string, next: string, now = Date.now()): Promise<"sent" | "wrong_current" | "same" | "no_email" | "email_off" | "send_failed"> {
+  if (!emailEnabled(env)) return "email_off";
+  const u = await first<{ password_hash: string; email: string | null; email_verified_at: number | null; username: string }>(env.DB, "SELECT password_hash, email, email_verified_at, username FROM admin_users WHERE id = ?", userId);
+  if (!u) return "wrong_current";
+  if (!(await verifyPassword(current, u.password_hash, env.PASSWORD_PEPPER))) return "wrong_current";
+  if (current === next) return "same";
+  if (!u.email || !u.email_verified_at) return "no_email";
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
+  const newHash = await hashPassword(next, env.PASSWORD_PEPPER, Number(env.PBKDF2_ITERATIONS || 100_000));
+  await run(
+    env.DB,
+    "INSERT INTO password_changes (user_id, new_hash, code_hash, attempts, expires_at, created_at) VALUES (?, ?, ?, 0, ?, ?) ON CONFLICT(user_id) DO UPDATE SET new_hash = excluded.new_hash, code_hash = excluded.code_hash, attempts = 0, expires_at = excluded.expires_at, created_at = excluded.created_at",
+    userId,
+    newHash,
+    await sha256Hex(`pw:${userId}:${code}`),
+    now + CODE_TTL,
+    now,
+  );
+  const r = await sendEmail(env, {
+    to: u.email,
+    subject: `رمز تأكيد تغيير كلمة المرور: ${code}`,
+    text: `طلب تغيير كلمة المرور لحساب «${u.username}».\nالرمز: ${code} (صالح 15 دقيقة).\nإذا ما طلبت هذا، لا تعطي الرمز لأحد وغيّر كلمة مرورك فورًا.`,
+    html: emailLayout({ title: "تأكيد تغيير كلمة المرور", lines: [`طلب تغيير كلمة المرور لحساب «${u.username}». اكتب الرمز في التطبيق لإكمال التغيير.`, "الرمز صالح 15 دقيقة."], code, footer: "إذا ما طلبت هذا، لا تعطي الرمز لأحد وغيّر كلمة مرورك فورًا — كلمة المرور ما تتغير بدون الرمز." }),
+  });
+  return r.ok ? "sent" : "send_failed";
+}
+
+export async function confirmPasswordChange(env: Env, userId: number, keepSessionId: string, code: string, now = Date.now()): Promise<"ok" | "invalid" | "expired"> {
+  const row = await first<{ new_hash: string; code_hash: string; attempts: number; expires_at: number }>(env.DB, "SELECT new_hash, code_hash, attempts, expires_at FROM password_changes WHERE user_id = ?", userId);
+  if (!row) return "invalid";
+  if (row.expires_at < now || row.attempts >= 5) return "expired";
+  if ((await sha256Hex(`pw:${userId}:${code.replace(/\D/g, "")}`)) !== row.code_hash) {
+    await run(env.DB, "UPDATE password_changes SET attempts = attempts + 1 WHERE user_id = ?", userId);
+    return "invalid";
+  }
+  await env.DB.batch([
+    env.DB.prepare("UPDATE admin_users SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?").bind(row.new_hash, now, userId),
+    env.DB.prepare("DELETE FROM password_changes WHERE user_id = ?").bind(userId),
+    // Other devices sign out; this one stays signed in.
+    env.DB.prepare("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND id != ? AND revoked_at IS NULL").bind(now, userId, keepSessionId),
+  ]);
+  const u = await first<{ username: string; email: string | null }>(env.DB, "SELECT username, email FROM admin_users WHERE id = ?", userId);
+  if (u?.email)
+    await sendEmail(env, {
+      to: u.email,
+      subject: "تم تغيير كلمة المرور — HSN AutoReply",
+      text: `تم تغيير كلمة المرور لحساب «${u.username}» وتسجيل الخروج من الأجهزة الأخرى.\nإذا ما سويت هذا بنفسك، تواصل مع الدعم فورًا.`,
+      html: emailLayout({ title: "تم تغيير كلمة المرور ✅", lines: [`تم تغيير كلمة المرور لحساب «${u.username}» وتسجيل الخروج من الأجهزة الأخرى.`], footer: "إذا ما سويت هذا بنفسك، تواصل مع الدعم فورًا." }),
+    }).catch(() => undefined);
+  return "ok";
 }
