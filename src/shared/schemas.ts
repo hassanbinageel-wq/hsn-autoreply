@@ -111,7 +111,7 @@ export const templateInputSchema = z.object({
 export const normUsername = (v: string) => v.normalize("NFC").replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u064B-\u0652\u0640]/g, "").trim().replace(/^@+/, "");
 /** The login name is the store's Instagram-style name: English letters, digits, _ . - (3–64). */
 const USERNAME_RE = /^[A-Za-z0-9_.-]{3,64}$/;
-const username = () => z.string().max(200).transform(normUsername).pipe(z.string().regex(USERNAME_RE, "اسم المتجر: بالإنجليزي (حروف وأرقام و _ .) بدون مسافات، مثل اسم حسابك في إنستقرام"));
+export const username = () => z.string().max(200).transform(normUsername).pipe(z.string().regex(USERNAME_RE, "اسم المتجر: بالإنجليزي (حروف وأرقام و _ .) بدون مسافات، مثل اسم حسابك في إنستقرام"));
 
 export const loginSchema = z.object({
   username: z.string().max(200).transform(normUsername).pipe(z.string().min(1).max(64)),

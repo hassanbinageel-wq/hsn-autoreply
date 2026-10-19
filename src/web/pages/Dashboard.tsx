@@ -6,6 +6,7 @@ import { Link } from "../App";
 import { Alert, Badge, Card, PageHeader, Spinner, Stat, Toggle, toast, useAsync, fmtTime, currentTz } from "../components/ui";
 import { AccountAvatar, UserAvatar } from "../components/UserAvatar";
 import { UsageCard } from "../components/UsageCard";
+import { hasPerm, isStaff } from "../lib/me";
 import { Icon } from "../components/Icon";
 import { AreaChart, Sparkline } from "../components/Charts";
 import { AR_LABELS } from "../../shared/states";
@@ -85,13 +86,13 @@ export function DashboardPage() {
                 </button>
               ))}
             </div>
-            <Link to="/campaigns/new" className="btn btn-primary"><Icon name="plus" size={18} />حملة جديدة</Link>
+            {hasPerm("campaigns") && <Link to="/campaigns/new" className="btn btn-primary"><Icon name="plus" size={18} />حملة جديدة</Link>}
           </>
         }
       />
 
       <EmailNudge />
-      <GettingStarted connected={!!acc && acc.status === "active"} total={(d.campaigns?.active ?? 0) + (d.campaigns?.paused ?? 0) + (d.campaigns?.draft ?? 0)} active={d.campaigns?.active ?? 0} />
+      {!isStaff() && <GettingStarted connected={!!acc && acc.status === "active"} total={(d.campaigns?.active ?? 0) + (d.campaigns?.paused ?? 0) + (d.campaigns?.draft ?? 0)} active={d.campaigns?.active ?? 0} />}
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
         {[
@@ -129,7 +130,7 @@ export function DashboardPage() {
             <Toggle
               checked={!!d.automation_enabled}
               onChange={toggleAutomation}
-              disabled={busy}
+              disabled={busy || isStaff()}
               label={d.automation_enabled ? "الأتمتة تعمل" : "الأتمتة متوقفة"}
               description="إيقاف شامل: يوقف معالجة الأحداث الجديدة ويلغي الرسائل المعلّقة."
             />
@@ -226,7 +227,7 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      <UsageCard />
+      {!isStaff() && <UsageCard />}
 
       <details className="card group p-0">
         <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-5 py-3 font-bold [&::-webkit-details-marker]:hidden">

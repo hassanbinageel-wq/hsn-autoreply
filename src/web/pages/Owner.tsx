@@ -2,6 +2,7 @@ import { MESSAGE_LINKS } from "../../shared/plans";
 import { OwnerSupportTab } from "./Support";
 import { PlaceholderChips, TemplateBar } from "../components/MessageTemplates";
 import { DiagnoseModal } from "../components/Diagnose";
+import { hasPerm } from "../lib/me";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DateTimeField } from "../components/DateTimeField";
 import { askConfirm, askText, showCopy } from "../components/Confirm";
@@ -11,6 +12,10 @@ import { BANNER_SIZES, DEFAULT_TEXTS, DesktopBanner, MobileBanner, toCm, type Ba
 import { Icon } from "../components/Icon";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, LIMIT_ROW_LABELS, PRICE_PERIODS, formatPrice, orderFeatures } from "../../shared/plans";
+
+const TABS = [["customers", "العملاء"], ["health", "صحة العملاء"], ["support", "الدعم"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["coupons", "الكوبونات والإحالة"], ["payments", "الحسابات البنكية"], ["branding", "صفحة الدخول"]] as const;
+/** Which staff section opens each tab (the account holder sees all). */
+const TAB_PERM: Record<(typeof TABS)[number][0], string> = { customers: "owner_customers", health: "owner_customers", support: "owner_support", plans: "owner_plans", codes: "owner_plans", coupons: "owner_plans", payments: "owner_payments", branding: "owner_branding" };
 
 /** A random 16-character password (the owner gives it to the customer, who can change it later). */
 function generatePassword(): string {
@@ -524,6 +529,14 @@ export function OwnerPage() {
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
+  // A staff login opens on the first tab it may use.
+  useEffect(() => {
+    if (!hasPerm(TAB_PERM[tab])) {
+      const first = TABS.find(([k]) => hasPerm(TAB_PERM[k]));
+      if (first) setTab(first[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   return (
     <div className="space-y-5">
       <header>
@@ -531,7 +544,7 @@ export function OwnerPage() {
         <p className="muted mt-1 text-sm">العملاء، الباقات، وأكواد التفعيل — لإدارة الخدمة فقط.</p>
       </header>
       <div className="seg w-fit max-w-full overflow-x-auto" role="tablist">
-        {([["customers", "العملاء"], ["health", "صحة العملاء"], ["support", "الدعم"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["coupons", "الكوبونات والإحالة"], ["payments", "الحسابات البنكية"], ["branding", "صفحة الدخول"]] as const).map(([k, l]) => (
+        {TABS.filter(([k]) => hasPerm(TAB_PERM[k])).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>

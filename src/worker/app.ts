@@ -53,6 +53,7 @@ import {
   setupSchema,
   simulateSchema,
   templateInputSchema,
+  username,
 } from "../shared/schemas";
 import { claimsDelivery, claimsFollowRequired, publicReplyVariants } from "../shared/template";
 import { cacheMediaStmt } from "./services/media";
@@ -80,6 +81,10 @@ import { cardByToken, planFor, publicReplyToWinner, sendCard, storeCard } from "
 import { toCsv } from "../shared/csv";
 import { DEFAULT_RATES, EVENT_LABELS, FEATURE_LABELS, formatPrice, MESSAGE_LINKS, orderFeatures, type ExchangeRates, type PlanLimits } from "../shared/plans";
 import { diagnoseTenant } from "./services/diagnose";
+import { parsePerms } from "./services/staff";
+import { permsFor } from "../shared/staff";
+
+const MAX_STAFF = 10;
 import { confirmEmailCode, requestPasswordReset, resetPassword, sendEmailCode } from "./services/recovery";
 import { emailEnabled } from "./services/email";
 import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp } from "./lib/totp";
@@ -589,7 +594,7 @@ export function createApp() {
     if (!(await rateLimit(c.env.DB, `login:${ip}`, 10, 15 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، انتظر 15 دقيقة");
     const p = await parseBody(c, loginSchema);
     if (!p.ok) return p.res;
-    const user = await first<{ id: number; username: string; password_hash: string; failed_attempts: number; locked_until: number | null; tenant_id: number; tenant_status: string; totp_enabled_at: number | null; totp_ciphertext: string | null; totp_iv: string | null; totp_last_step: number | null; totp_recovery: string | null }>(
+    const user = await first<{ id: number; username: string; password_hash: string; failed_attempts: number; locked_until: number | null; tenant_id: number; tenant_status: string; totp_enabled_at: number | null; totp_ciphertext: string | null; totp_iv: string | null; totp_last_step: number | null; totp_recovery: string | null; disabled_at: number | null }>(
       c.env.DB,
       // The store name logs in without caring about upper/lower case (exact match preferred).
       "SELECT u.*, t.status AS tenant_status FROM admin_users u JOIN tenants t ON t.id = u.tenant_id WHERE u.username = ? COLLATE NOCASE ORDER BY (u.username = ?) DESC LIMIT 1",
@@ -618,6 +623,7 @@ export function createApp() {
       if (ok === "recovery") await audit(c.env.DB, user.tenant_id, user.username, "auth.recovery_code_used");
     }
     await run(c.env.DB, "UPDATE admin_users SET failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?", now, user.id);
+    if (user.disabled_at) return apiError(c, 403, "staff_disabled", "هذا الحساب موقوف من صاحب الحساب");
     if (user.tenant_status !== "active") return apiError(c, 403, "account_suspended", "هذا الحساب موقوف — تواصل مع إدارة الخدمة");
     const kind = p.data.client === "app" ? "device" : "web";
     const s = await createSession(c.env.DB, user.id, kind, p.data.device_label);
@@ -772,7 +778,7 @@ export function createApp() {
 
   api.get("/auth/me", (c) => {
     const s = c.get("session");
-    return c.json({ username: s.username, kind: s.kind, is_owner: s.is_owner, csrf_token: s.kind === "web" ? s.csrf_token : undefined });
+    return c.json({ username: s.username, kind: s.kind, is_owner: s.is_owner, role: s.role, perms: s.perms, display_name: s.display_name, csrf_token: s.kind === "web" ? s.csrf_token : undefined });
   });
 
   api.post("/auth/logout", async (c) => {
@@ -784,6 +790,102 @@ export function createApp() {
   api.get("/auth/sessions", async (c) =>
     c.json(await all(c.env.DB, "SELECT substr(id,1,12) AS id, kind, device_label, created_at, last_seen_at, expires_at FROM sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY last_seen_at DESC", c.get("session").user_id, Date.now())),
   );
+
+  // ---- Staff: the account holder adds logins limited to chosen sections (enforced in requireAuth).
+  const holderOnly = (c: C) => (c.get("session").role !== "owner" ? apiError(c, 403, "holder_only", "إدارة الموظفين لصاحب الحساب فقط") : null);
+  const staffSchema = z.object({
+    display_name: z.string().trim().min(2, "اكتب اسم الموظف").max(60),
+    perms: z.array(z.string().max(30)).max(20),
+  });
+  const cleanPerms = (c: C, perms: string[]) => {
+    const allowed = new Set(permsFor(c.get("session").is_owner).map((p) => p.key as string));
+    return [...new Set(perms)].filter((p) => allowed.has(p));
+  };
+  api.get("/staff", async (c) => {
+    const bad = holderOnly(c);
+    if (bad) return bad;
+    const rows = await all<any>(
+      c.env.DB,
+      `SELECT u.id, u.username, u.display_name, u.perms, u.disabled_at, u.created_at, u.totp_enabled_at IS NOT NULL AS totp,
+              (SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.user_id = u.id) AS last_seen
+         FROM admin_users u WHERE u.tenant_id = ? AND u.role = 'staff' ORDER BY u.id`,
+      T(c),
+    );
+    return c.json({ staff: rows.map((r) => ({ ...r, perms: parsePerms(r.perms) })), available: permsFor(c.get("session").is_owner), max: MAX_STAFF });
+  });
+  api.post("/staff", async (c) => {
+    const bad = holderOnly(c);
+    if (bad) return bad;
+    const p = await parseBody(c, staffSchema.extend({ username: username(), password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256) }));
+    if (!p.ok) return p.res;
+    const n = await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM admin_users WHERE tenant_id = ? AND role = 'staff'", T(c));
+    if ((n?.n ?? 0) >= MAX_STAFF) return apiError(c, 409, "staff_limit", `الحد الأقصى ${MAX_STAFF} موظفين`);
+    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم الدخول هذا مستخدم — اختر غيره");
+    const perms = cleanPerms(c, p.data.perms);
+    if (!perms.length) return apiError(c, 422, "no_perms", "اختر قسم واحد على الأقل");
+    const now = Date.now();
+    const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
+    await run(
+      c.env.DB,
+      "INSERT INTO admin_users (username, password_hash, tenant_id, role, perms, display_name, created_by, created_at, updated_at) VALUES (?, ?, ?, 'staff', ?, ?, ?, ?, ?)",
+      p.data.username, hash, T(c), JSON.stringify(perms), p.data.display_name, c.get("session").user_id, now, now,
+    );
+    await audit(c.env.DB, T(c), c.get("session").username, "staff.created", p.data.username, { perms });
+    return c.json({ ok: true });
+  });
+  const staffRow = (c: C) => first<{ id: number; username: string }>(c.env.DB, "SELECT id, username FROM admin_users WHERE id = ? AND tenant_id = ? AND role = 'staff'", idParam(c), T(c));
+  api.put("/staff/:id", async (c) => {
+    const bad = holderOnly(c);
+    if (bad) return bad;
+    const u = await staffRow(c);
+    if (!u) return apiError(c, 404, "not_found", "الموظف غير موجود");
+    const p = await parseBody(c, staffSchema.partial().extend({ disabled: z.boolean().optional() }));
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    if (p.data.perms) {
+      const perms = cleanPerms(c, p.data.perms);
+      if (!perms.length) return apiError(c, 422, "no_perms", "اختر قسم واحد على الأقل");
+      await run(c.env.DB, "UPDATE admin_users SET perms = ?, updated_at = ? WHERE id = ?", JSON.stringify(perms), now, u.id);
+    }
+    if (p.data.display_name) await run(c.env.DB, "UPDATE admin_users SET display_name = ?, updated_at = ? WHERE id = ?", p.data.display_name, now, u.id);
+    if (p.data.disabled !== undefined) {
+      await run(c.env.DB, "UPDATE admin_users SET disabled_at = ?, updated_at = ? WHERE id = ?", p.data.disabled ? now : null, now, u.id);
+      if (p.data.disabled) await run(c.env.DB, "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, u.id);
+    }
+    await audit(c.env.DB, T(c), c.get("session").username, "staff.updated", u.username, p.data);
+    return c.json({ ok: true });
+  });
+  api.post("/staff/:id/password", async (c) => {
+    const bad = holderOnly(c);
+    if (bad) return bad;
+    const u = await staffRow(c);
+    if (!u) return apiError(c, 404, "not_found", "الموظف غير موجود");
+    const p = await parseBody(c, z.object({ password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256) }));
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE admin_users SET password_hash = ?, failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?").bind(hash, now, u.id),
+      c.env.DB.prepare("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").bind(now, u.id),
+    ]);
+    await audit(c.env.DB, T(c), c.get("session").username, "staff.password", u.username);
+    return c.json({ ok: true });
+  });
+  api.delete("/staff/:id", async (c) => {
+    const bad = holderOnly(c);
+    if (bad) return bad;
+    const u = await staffRow(c);
+    if (!u) return apiError(c, 404, "not_found", "الموظف غير موجود");
+    await c.env.DB.batch([
+      c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id),
+      c.env.DB.prepare("DELETE FROM oauth_states WHERE user_id = ?").bind(u.id),
+      c.env.DB.prepare("DELETE FROM password_resets WHERE user_id = ?").bind(u.id),
+      c.env.DB.prepare("DELETE FROM email_codes WHERE user_id = ?").bind(u.id),
+      c.env.DB.prepare("DELETE FROM admin_users WHERE id = ?").bind(u.id),
+    ]);
+    await audit(c.env.DB, T(c), c.get("session").username, "staff.deleted", u.username);
+    return c.json({ ok: true });
+  });
 
   // ---- Account email (password recovery): set → confirm with the emailed code
   api.get("/account/email", async (c) => {
@@ -876,7 +978,7 @@ export function createApp() {
       await all(
         c.env.DB,
         `SELECT m.id, m.tenant_id, n.name AS tenant_name, m.kind, m.title, m.body, m.link, m.keep_days, m.reminders, m.reminded_at, m.created_at,
-                (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = m.tenant_id) AS tenant_usernames,
+                (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = m.tenant_id AND u.role = 'owner') AS tenant_usernames,
                 (SELECT COUNT(*) FROM owner_message_receipts r WHERE r.owner_message_id = m.id) AS copies,
                 (SELECT COUNT(*) FROM owner_message_receipts r WHERE r.owner_message_id = m.id AND r.read_at IS NOT NULL) AS read,
                 (SELECT COUNT(*) FROM owner_message_receipts r WHERE r.owner_message_id = m.id AND r.clicked_at IS NOT NULL) AS clicked,
@@ -893,7 +995,7 @@ export function createApp() {
     c.json(
       await all(
         c.env.DB,
-        `SELECT a.tenant_id, n.name AS tenant_name, (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = a.tenant_id) AS tenant_usernames,
+        `SELECT a.tenant_id, n.name AS tenant_name, (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = a.tenant_id AND u.role = 'owner') AS tenant_usernames,
                 a.delivered_at, a.last_delivered_at, a.read_at, a.clicked_at, a.deleted_at,
                 EXISTS (SELECT 1 FROM app_notifications x WHERE x.owner_message_id = a.owner_message_id AND x.tenant_id = a.tenant_id) AS on_bell
            FROM owner_message_receipts a JOIN tenants n ON n.id = a.tenant_id WHERE a.owner_message_id = ? ORDER BY (a.clicked_at IS NULL), (a.read_at IS NULL), n.name LIMIT 1000`,
@@ -1006,7 +1108,7 @@ export function createApp() {
       await all(
         c.env.DB,
         `SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.status, t.last_from, t.updated_at,
-                (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.tenant_id) AS tenant_usernames,
+                (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.tenant_id AND u.role = 'owner') AS tenant_usernames,
                 (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.tenant_id ORDER BY a.id DESC LIMIT 1) AS ig_username,
                 (SELECT st.name FROM stores st WHERE st.tenant_id = t.tenant_id AND st.status != 'disconnected' ORDER BY st.id DESC LIMIT 1) AS store_name,
                 (t.last_from = 'customer' AND COALESCE(t.owner_read_at, 0) < t.updated_at) AS unread,
@@ -1020,7 +1122,7 @@ export function createApp() {
     const t = await first(
       c.env.DB,
       `SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.status, t.created_at,
-              (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.tenant_id) AS tenant_usernames,
+              (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.tenant_id AND u.role = 'owner') AS tenant_usernames,
                 (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.tenant_id ORDER BY a.id DESC LIMIT 1) AS ig_username,
                 (SELECT st.name FROM stores st WHERE st.tenant_id = t.tenant_id AND st.status != 'disconnected' ORDER BY st.id DESC LIMIT 1) AS store_name
          FROM support_threads t JOIN tenants n ON n.id = t.tenant_id WHERE t.id = ?`,
@@ -3045,7 +3147,7 @@ export function createApp() {
     const p = id && (await first<any>(c.env.DB, "SELECT id, username, profile_pic_url, last_user_message_at, last_follow_status, is_demo, inbox_label, inbox_label_source FROM participants WHERE id = ? AND is_demo = 0", id));
     if (!p) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
     const [messages, flows] = await Promise.all([
-      all<any>(c.env.DB, "SELECT id, direction, source, kind, text, created_at FROM messages WHERE participant_id = ? ORDER BY id DESC LIMIT 200", id),
+      all<any>(c.env.DB, "SELECT id, direction, source, kind, text, created_at, sent_by FROM messages WHERE participant_id = ? ORDER BY id DESC LIMIT 200", id),
       all<any>(
         c.env.DB,
         `SELECT f.id, f.state, f.created_at, f.link_clicks, c.name AS campaign_name FROM conversation_flows f JOIN campaigns c ON c.id = f.campaign_id
@@ -3226,7 +3328,7 @@ export function createApp() {
       const msg = r.error.kind === "window_closed" ? "انتهت نافذة المراسلة (24 ساعة)" : r.error.kind === "uncertain" ? "انقطع الاتصال — قد تكون الرسالة وصلت، تحقق قبل إعادة الإرسال" : r.error.message;
       return apiError(c, 502 as any, "meta_error", msg);
     }
-    await recordMessage(c.env.DB, { accountId: a.id, participantId: p.id, direction: "out", source: "manual", kind: "message", text: body.data.text, mid: r.data.message_id ?? null, at: now });
+    await recordMessage(c.env.DB, { accountId: a.id, participantId: p.id, direction: "out", source: "manual", kind: "message", text: body.data.text, mid: r.data.message_id ?? null, at: now, sentBy: c.get("session").role === "staff" ? (c.get("session").display_name ?? c.get("session").username) : null });
     await markRead(c.env.DB, p.id, now);
     await audit(c.env.DB, T(c), c.get("session").username, "inbox.sent", String(p.id));
     return c.json({ ok: true });

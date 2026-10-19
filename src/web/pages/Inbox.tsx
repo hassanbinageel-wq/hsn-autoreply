@@ -118,7 +118,7 @@ function Thread({ id, onSent, onBack }: { id: number; onSent: () => void; onBack
         {data.messages.map((m: any) => (
           <div key={m.id} className={`flex ${m.direction === "in" ? "justify-start" : "justify-end"}`}>
             <div className={`max-w-[86%] rounded-2xl px-3 py-2 text-[15px] leading-relaxed shadow-sm sm:max-w-[78%] sm:px-3.5 sm:py-2.5 sm:text-sm ${m.direction === "in" ? "rounded-br-md border border-[var(--border)] bg-[var(--surface)]" : "rounded-bl-md bg-gradient-to-br from-violet-600 to-indigo-500 text-white"}`}>
-              {m.direction === "out" && SOURCE[m.source] && <div className="mb-0.5 text-[10.5px] opacity-75">{SOURCE[m.source]}</div>}
+              {m.direction === "out" && SOURCE[m.source] && <div className="mb-0.5 text-[10.5px] opacity-75">{SOURCE[m.source]}{m.sent_by ? ` · ${m.sent_by}` : ""}</div>}
               <div className="whitespace-pre-wrap break-words">{m.text || <span className="opacity-60">(مرفق أو رسالة بدون نص)</span>}</div>
               <div className={`mt-1 text-[10.5px] ${m.direction === "in" ? "muted" : "opacity-75"}`}>{fmtTime(m.created_at)}</div>
             </div>

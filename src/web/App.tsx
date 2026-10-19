@@ -8,6 +8,8 @@ import { Icon } from "./components/Icon";
 import { NotificationBell } from "./components/NotificationBell";
 import { AccountAvatar } from "./components/UserAvatar";
 import { LoginPage } from "./pages/Login";
+import { canOpenPage } from "../shared/staff";
+import { hasPerm, setMe } from "./lib/me";
 import { DashboardPage } from "./pages/Dashboard";
 import { CampaignsPage } from "./pages/Campaigns";
 
@@ -49,6 +51,7 @@ const SettingsPage = lazyPage(() => import("./pages/Settings"), "SettingsPage");
 const DownloadPage = lazyPage(() => import("./pages/Download"), "DownloadPage");
 const AnalyticsPage = lazyPage(() => import("./pages/Analytics"), "AnalyticsPage");
 const SchedulePage = lazyPage(() => import("./pages/Schedule"), "SchedulePage");
+const StaffPage = lazyPage(() => import("./pages/Staff"), "StaffPage");
 
 // ---------------- tiny hash router ----------------
 export function useRoute(): string {
@@ -121,6 +124,7 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ to: string; label: strin
   { title: "الحساب", items: [
     { to: "/connection", label: "الربط", icon: "link" },
     { to: "/settings", label: "الإعدادات", icon: "settings" },
+    { to: "/staff", label: "الموظفين", icon: "users" },
     { to: "/download", label: "تنزيل التطبيق", icon: "smartphone" },
   ] },
 ];
@@ -139,6 +143,10 @@ export function App() {
   const [auth, setAuth] = useState<"loading" | "in" | "out">("loading");
   const [username, setUsername] = useState("");
   const [isOwner, setIsOwner] = useState(false);
+  // A staff login sees only the sections the account holder gave it (the server enforces the same).
+  const [role, setRole] = useState<"owner" | "staff">("owner");
+  const [perms, setPerms] = useState<string[]>([]);
+  const can = (to: string) => canOpenPage(to, role, perms);
   const [sub, setSub] = useState<{ active: boolean; expires_at: number | null; reason?: string } | null>(null);
   // Customers: "تنزيل التطبيق" goes straight to the stable download link the owner controls.
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -170,11 +178,17 @@ export function App() {
   const checkAuth = useCallback(async () => {
     try {
       if (isNative && !(await deviceToken.get())) return setAuth("out");
-      const me = await api<{ username: string; csrf_token?: string; is_owner?: boolean }>("/api/auth/me");
+      const me = await api<{ username: string; csrf_token?: string; is_owner?: boolean; role?: "owner" | "staff"; perms?: string[]; display_name?: string | null }>("/api/auth/me");
       setCsrf(me.csrf_token);
-      setUsername(me.username);
+      setUsername(me.role === "staff" && me.display_name ? me.display_name : me.username);
       setIsOwner(!!me.is_owner);
-      if (!me.is_owner)
+      setRole(me.role ?? "owner");
+      setPerms(me.perms ?? []);
+      setMe({ role: me.role ?? "owner", perms: me.perms ?? [], display_name: me.display_name ?? null, is_owner: !!me.is_owner });
+      if (me.role === "staff") {
+        setSub(null);
+        setLimits(null);
+      } else if (!me.is_owner)
         api<any>("/api/subscription")
           .then((x) => {
             setSub({ active: x.active, expires_at: x.expires_at, reason: x.reason });
@@ -255,11 +269,21 @@ export function App() {
   };
 
   let page: ReactNode;
+  const noAccess = !can(route);
   const m = route.match(/^\/campaigns\/(new|\d+)$/);
   const ms = route.match(/^\/campaigns\/(\d+)\/stats$/);
   const md = route.match(/^\/campaigns\/(\d+)\/draws$/);
   const mdr = route.match(/^\/draws\/(\d+)$/);
-  if (m) page = <CampaignWizard id={m[1] === "new" ? null : Number(m[1])} />;
+  if (noAccess)
+    page = (
+      <div className="card mx-auto mt-6 max-w-md p-8 text-center">
+        <span className="surface-2 mx-auto flex h-14 w-14 items-center justify-center rounded-2xl"><Icon name="lock" size={26} /></span>
+        <h1 className="mt-4 text-xl font-extrabold">ما عندك صلاحية لهذا القسم</h1>
+        <p className="muted mt-2 text-sm">اطلبها من صاحب الحساب إذا تحتاجها.</p>
+        <Link to="/" className="btn btn-primary mt-5">الرجوع للرئيسية</Link>
+      </div>
+    );
+  else if (m) page = <CampaignWizard id={m[1] === "new" ? null : Number(m[1])} />;
   else if (ms) page = <CampaignStatsPage id={Number(ms[1])} />;
   else if (md) page = <DrawsHomePage />;
   else if (mdr) page = <DrawPage key={mdr[1]} id={Number(mdr[1])} />;
@@ -285,6 +309,7 @@ export function App() {
       case "/subscription": page = <SubscriptionPage />; break;
       case "/analytics": page = <AnalyticsPage />; break;
       case "/schedule": page = <SchedulePage />; break;
+      case "/staff": page = <StaffPage />; break;
       default:
         page = (
           <div className="card mx-auto mt-6 max-w-md p-8 text-center">
@@ -358,7 +383,10 @@ export function App() {
           {(isOwner
             ? [NAV_GROUPS[0], OWNER_GROUP, ...NAV_GROUPS.slice(1)]
             : [...NAV_GROUPS.slice(0, 2), { ...NAV_GROUPS[2], items: [SUBSCRIPTION_ITEM, SUPPORT_ITEM, ...NAV_GROUPS[2].items] }]
-          ).map((g) => (
+          )
+            .map((g) => ({ ...g, items: g.items.filter((n) => can(n.to)) }))
+            .filter((g) => g.items.length > 0)
+            .map((g) => (
             <div key={g.title}>
               <div className="muted px-2.5 pb-1.5 pt-3 text-[11px] font-semibold">{g.title}</div>
               {g.items.map((n) => (
@@ -422,6 +450,7 @@ export function App() {
       <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 items-start border-t border-[var(--border)] bg-[var(--surface)] lg:hidden" aria-label="التنقل">
         {MOBILE_TABS.slice(0, 2).map((to) => {
           const n = NAV.find((x) => x.to === to)!;
+          if (!can(to)) return <div key={to} />;
           return (
             <NavLink key={to} to={to} className={`font-display flex flex-col items-center gap-0.5 pb-2 pt-2.5 text-[11px] font-bold ${isActive(to) ? "text-violet-600 dark:text-violet-400" : "muted"}`}>
               <Icon name={n.icon} size={22} />
@@ -430,12 +459,13 @@ export function App() {
           );
         })}
         <div className="flex justify-center">
-          {!route.startsWith("/campaigns/") && <Link to="/campaigns/new" className="grad -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/40" aria-label="حملة جديدة">
+          {!route.startsWith("/campaigns/") && hasPerm("campaigns") && <Link to="/campaigns/new" className="grad -mt-5 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/40" aria-label="حملة جديدة">
             <Icon name="plus" size={26} />
           </Link>}
         </div>
         {(() => {
           const n = NAV.find((x) => x.to === "/inbox")!;
+          if (!can("/inbox")) return <div />;
           return (
             <Link to="/inbox" className={`font-display relative flex flex-col items-center gap-0.5 pb-2 pt-2.5 text-[11px] font-bold ${isActive("/inbox") ? "text-violet-600 dark:text-violet-400" : "muted"}`}>
               <Icon name={n.icon} size={22} />
@@ -454,7 +484,7 @@ export function App() {
           <div className="card safe-bottom absolute inset-x-0 bottom-0 max-h-[80vh] overflow-y-auto rounded-b-none p-4" onClick={(e) => e.stopPropagation()} role="menu">
             <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-[var(--border)]" />
             <div className="grid grid-cols-3 gap-2">
-              {NAV.filter((n) => !MOBILE_TABS.includes(n.to) && (isOwner ? n.to !== "/subscription" && n.to !== "/support" : n.to !== "/owner" && n.to !== "/usage")).map((n) => (
+              {NAV.filter((n) => !MOBILE_TABS.includes(n.to) && can(n.to) && (isOwner ? n.to !== "/subscription" && n.to !== "/support" : n.to !== "/owner" && n.to !== "/usage")).map((n) => (
                 <NavLink key={n.to} to={n.to} className={`flex flex-col items-center gap-1.5 rounded-2xl border border-[var(--border)] px-2 py-3.5 text-center text-xs font-bold ${isActive(n.to) ? "border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300" : ""}`}>
                   <Icon name={n.icon} size={22} />
                   {n.label}

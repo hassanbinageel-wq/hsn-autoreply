@@ -15,6 +15,8 @@ export interface NewMessage {
   mid?: string | null;
   isDemo?: boolean;
   at: number;
+  /** A manual reply written by a staff login: their name (shown to the account holder in the conversation). */
+  sentBy?: string | null;
 }
 
 /**
@@ -27,13 +29,14 @@ export async function recordMessage(db: D1Database, m: NewMessage): Promise<void
     await db.batch([
       db
         .prepare(
-          `INSERT INTO messages (account_id, participant_id, direction, source, kind, text, mid, is_demo, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO messages (account_id, participant_id, direction, source, kind, text, mid, is_demo, created_at, sent_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(mid) WHERE mid IS NOT NULL DO UPDATE SET
              source = CASE WHEN excluded.source IN ('bot','manual') THEN excluded.source ELSE messages.source END,
-             text = COALESCE(messages.text, excluded.text)`,
+             text = COALESCE(messages.text, excluded.text),
+             sent_by = COALESCE(messages.sent_by, excluded.sent_by)`,
         )
-        .bind(m.accountId, m.participantId, m.direction, m.source, m.kind ?? null, m.text?.slice(0, 2000) ?? null, m.mid ?? null, m.isDemo ? 1 : 0, m.at),
+        .bind(m.accountId, m.participantId, m.direction, m.source, m.kind ?? null, m.text?.slice(0, 2000) ?? null, m.mid ?? null, m.isDemo ? 1 : 0, m.at, m.sentBy ?? null),
       db
         .prepare("UPDATE participants SET last_message_at = MAX(COALESCE(last_message_at, 0), ?) WHERE id = ?")
         .bind(m.at, m.participantId),

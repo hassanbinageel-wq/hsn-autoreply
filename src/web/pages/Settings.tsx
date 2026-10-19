@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { TwoFactorCard } from "../components/TwoFactor";
 import { AccountEmailCard } from "../components/AccountEmail";
+import { isStaff } from "../lib/me";
 import { askText } from "../components/Confirm";
 import { api, download } from "../api";
 import { APP_VERSION, isNative } from "../platform";
 import { Link } from "../App";
 import { NotificationsCard } from "../components/NotificationsCard";
 import { Icon } from "../components/Icon";
-import { Alert, Card, Spinner, Toggle, setTz, toast, useAsync } from "../components/ui";
+import { Alert, Card, PageHeader, Spinner, Toggle, setTz, toast, useAsync } from "../components/ui";
 import { bioUser, disableBio } from "../lib/biometric";
 
 const SECTIONS: Array<[string, string, string]> = [
@@ -32,7 +33,29 @@ function Row({ label, hint, children }: { label: ReactNode; hint?: ReactNode; ch
   );
 }
 
-export function SettingsPage({ theme, setTheme, onLogout, username }: { theme: string; setTheme: (t: any) => void; onLogout: () => void; username: string }) {
+type SettingsProps = { theme: string; setTheme: (t: any) => void; onLogout: () => void; username: string };
+
+export function SettingsPage(props: SettingsProps) {
+  return isStaff() ? <StaffSettings {...props} /> : <HolderSettings {...props} />;
+}
+
+/** A staff login: only its own sign-in settings (the account's settings belong to the account holder). */
+function StaffSettings({ onLogout, username }: SettingsProps) {
+  return (
+    <div className="space-y-5">
+      <PageHeader title="حسابي" subtitle={`أنت داخل كموظف (${username}) — إعدادات الحساب الكاملة عند صاحب الحساب.`} />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <AccountEmailCard />
+        <TwoFactorCard />
+        <Card title="الجلسة">
+          <button className="btn btn-ghost" onClick={onLogout}><Icon name="logout" size={17} />تسجيل الخروج</button>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) {
   const { data, loading, reload } = useAsync(() => api("/api/settings"), []);
   const [s, setS] = useState<any>(null);
   const [active, setActive] = useState("general");
