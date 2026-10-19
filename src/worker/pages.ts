@@ -31,6 +31,7 @@ export function privacyPage(baseUrl: string): string {
 <ul>
 <li>معرّفات Instagram الرسمية للمستخدمين الذين يعلّقون أو يراسلون الحساب (Instagram-scoped ID) واسم المستخدم عند توفره في الحدث.</li>
 <li>نص التعليق أو الرسالة المستلمة لغرض المطابقة مع كلمات الحملة.</li>
+<li>إيميل صاحب الحساب (عميل الخدمة) إذا أضافه: يُستخدم فقط لتأكيده ولإرسال رابط استرجاع كلمة المرور وإشعار تغييرها — بدون رسائل تسويقية، ولا يُشارك مع أي جهة. يُرسل الإيميل عبر مزوّد الإرسال Resend.</li>
 <li>نتيجة التحقق من متابعة الحساب (متابع/غير متابع/غير معروف) عبر User Profile API الرسمي عند السماح بذلك.</li>
 <li>حالة الرسائل المرسلة (قبول Meta للطلب أو فشله).</li>
 <li>نص الرسائل المتبادلة في المحادثات الخاصة مع الحساب، لعرضها لصاحب الحساب في صندوق الرسائل داخل الأداة.</li>
@@ -97,3 +98,19 @@ export async function parseSignedRequest(signed: string, appSecret: string): Pro
 
 
 
+
+/** Temporary test page: shows the campaign tags (UTM) a link arrived with — no tracking, nothing stored. */
+export function utmCheckPage(q: Record<string, string | undefined>): string {
+  const row = (k: string, label: string) =>
+    `<tr><td style="padding:8px 10px;opacity:.75">${label}</td><td style="padding:8px 10px;font-weight:700;direction:ltr;text-align:left">${q[k] ? esc(q[k]) : '<span style="color:#dc2626">— ما وصل</span>'}</td></tr>`;
+  const ok = q.utm_source && q.utm_medium && q.utm_campaign;
+  return layout(
+    "فحص روابط الحملات",
+    `<h1>🔎 فحص وسوم الحملة (UTM)</h1>
+<p style="padding:12px 14px;border-radius:12px;font-weight:700;${ok ? "background:#dcfce7;color:#166534" : "background:#fee2e2;color:#991b1b"}">${ok ? "✅ الرابط وصل ومعه وسوم الحملة — Google Analytics بيعرف إن الزائر جاء من هذي الحملة." : "❌ الرابط وصل بدون وسوم الحملة — تأكد إن «وسوم Google Analytics (UTM)» مفعّل في الحملة."}</p>
+<table style="width:100%;border-collapse:collapse;border:1px solid rgba(127,127,127,.3);border-radius:12px">
+${row("utm_source", "المصدر")}${row("utm_medium", "الوسيط")}${row("utm_campaign", "اسم الحملة")}
+</table>
+<p class="muted">صفحة تجريبية مؤقتة للتأكد من الخدمة — ما تحفظ أي بيانات.</p>`,
+  );
+}

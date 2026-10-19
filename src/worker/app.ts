@@ -88,7 +88,7 @@ const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[
 import { listPaymentMethods } from "./services/payments";
 import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
-import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, termsPage } from "./pages";
+import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, utmCheckPage, termsPage } from "./pages";
 
 type C = Context<AppEnv>;
 
@@ -326,6 +326,11 @@ export function createApp() {
   });
 
   app.get("/privacy", (c) => html(c, privacyPage(c.env.PUBLIC_BASE_URL)));
+  // Temporary: checks the UTM tags a campaign link arrives with (delete after the owner's test).
+  app.get("/utm-check", (c) => {
+    c.header("X-Robots-Tag", "noindex");
+    return html(c, utmCheckPage({ utm_source: c.req.query("utm_source"), utm_medium: c.req.query("utm_medium"), utm_campaign: c.req.query("utm_campaign") }));
+  });
   // The plans page lives in the app now (works for visitors without an account).
   app.get("/pricing", (c) => c.redirect("/#/plans", 302));
   app.get("/terms", (c) => html(c, termsPage()));
