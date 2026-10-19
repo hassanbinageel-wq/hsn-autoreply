@@ -697,14 +697,13 @@ export function createApp() {
   const api = new Hono<AppEnv>();
   api.use("*", requireAuth);
 
-  // ---- Two-step login (owner): set up with an authenticator app, confirm with a code, turn off.
+  // ---- Two-step login (every account): set up with an authenticator app, confirm with a code, turn off.
   api.get("/auth/totp", async (c) => {
     const u = await first<{ totp_enabled_at: number | null; totp_recovery: string | null }>(c.env.DB, "SELECT totp_enabled_at, totp_recovery FROM admin_users WHERE id = ?", c.get("session").user_id);
-    return c.json({ available: !!c.get("session").is_owner, enabled: !!u?.totp_enabled_at, enabled_at: u?.totp_enabled_at ?? null, recovery_left: u?.totp_recovery ? (JSON.parse(u.totp_recovery) as string[]).length : 0 });
+    return c.json({ available: true, enabled: !!u?.totp_enabled_at, enabled_at: u?.totp_enabled_at ?? null, recovery_left: u?.totp_recovery ? (JSON.parse(u.totp_recovery) as string[]).length : 0 });
   });
   api.post("/auth/totp/setup", async (c) => {
     const s = c.get("session");
-    if (!s.is_owner) return apiError(c, 403, "owner_only", "متاح لحساب المالك");
     const u = await first<{ totp_enabled_at: number | null }>(c.env.DB, "SELECT totp_enabled_at FROM admin_users WHERE id = ?", s.user_id);
     if (u?.totp_enabled_at) return apiError(c, 409, "already_enabled", "التحقق بخطوتين مفعّل — أوقفه أولًا إذا تبغى تربط جهاز جديد");
     const secret = newTotpSecret();
@@ -714,7 +713,6 @@ export function createApp() {
   });
   api.post("/auth/totp/enable", async (c) => {
     const s = c.get("session");
-    if (!s.is_owner) return apiError(c, 403, "owner_only", "متاح لحساب المالك");
     if (!(await rateLimit(c.env.DB, `totp_enable:${s.user_id}`, 10, 15 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، انتظر 15 دقيقة");
     const p = await parseBody(c, z.object({ code: z.string().trim().min(6).max(10) }));
     if (!p.ok) return p.res;
@@ -932,6 +930,15 @@ export function createApp() {
     await setSetting(c.env.DB, OWNER_TENANT, "message_templates", p.data);
     return c.json({ ok: true });
   });
+  // A customer lost both the phone and the recovery codes: the owner turns their two-step login off.
+  owner.post("/tenants/:id/totp-reset", async (c) => {
+    const id = idParam(c);
+    const t = id && (await first<{ is_owner: number }>(c.env.DB, "SELECT is_owner FROM tenants WHERE id = ?", id));
+    if (!t || t.is_owner) return apiError(c, 404, "not_found", "العميل غير موجود");
+    await run(c.env.DB, "UPDATE admin_users SET totp_ciphertext = NULL, totp_iv = NULL, totp_enabled_at = NULL, totp_last_step = NULL, totp_recovery = NULL, updated_at = ? WHERE tenant_id = ?", Date.now(), id);
+    await audit(c.env.DB, T(c), c.get("session").username, "owner.totp_reset", String(id));
+    return c.json({ ok: true });
+  });
   // Diagnosis of one customer (no tokens, message texts or follower names): checks + details to download.
   owner.get("/tenants/:id/diagnose", async (c) => {
     const id = idParam(c);
@@ -1064,6 +1071,7 @@ export function createApp() {
               (SELECT u.username FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS username,
               (SELECT u.email FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email,
               (SELECT u.email_verified_at FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email_verified_at,
+              (SELECT u.totp_enabled_at FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS totp_enabled_at,
               (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS ig_username,
               (SELECT a.status FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS ig_status,
               (SELECT a.follow_gate_allowed FROM instagram_accounts a WHERE a.tenant_id = t.id AND a.is_demo = 0 ORDER BY (a.status = 'active') DESC, a.updated_at DESC LIMIT 1) AS follow_gate_allowed,

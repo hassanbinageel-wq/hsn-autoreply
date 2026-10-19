@@ -112,6 +112,21 @@ function CustomersTab() {
                   <span className="muted block text-xs">اسم المستخدم: <b className="text-[var(--text)]">{t.name}</b></span>
                   <span className="muted block text-xs">اسم المتجر (الدخول): <b className="text-[var(--text)]" dir="ltr">{t.username ?? "—"}</b></span>
                   {!t.is_owner && <span className="muted block text-xs">الإيميل: {t.email ? <><b className="text-[var(--text)]" dir="ltr">{t.email}</b> {t.email_verified_at ? <span className="text-emerald-600">✓ مؤكَّد</span> : <span className="text-amber-600">(غير مؤكَّد)</span>}</> : "—"}</span>}
+                  {!t.is_owner && !!t.totp_enabled_at && (
+                    <span className="muted flex flex-wrap items-center gap-2 text-xs">
+                      🔐 التحقق بخطوتين: <b className="text-emerald-600">مفعّل</b>
+                      <button
+                        type="button"
+                        className="font-semibold text-red-600 underline"
+                        onClick={async () => {
+                          if (!(await askConfirm({ title: `إيقاف التحقق بخطوتين لـ «${t.name}»؟`, message: "استخدمه بس إذا العميل ضيّع جواله ورموز الاسترداد، وتأكدت إنه صاحب الحساب فعلًا. بعدها يدخل بكلمة المرور وحدها ويقدر يفعّله من جديد.", confirmLabel: "إيقاف", danger: true }))) return;
+                          act(() => api(`/api/owner/tenants/${t.id}/totp-reset`, { body: {} }), "تم إيقاف التحقق بخطوتين");
+                        }}
+                      >
+                        إيقاف (فقد جواله)
+                      </button>
+                    </span>
+                  )}
                 </div>
                 <span className={`chip ${t.status === "active" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"}`}>
                   <span className="h-1.5 w-1.5 rounded-full bg-current" />{t.status === "active" ? "نشط" : "موقوف"}

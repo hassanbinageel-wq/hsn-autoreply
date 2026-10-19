@@ -56,11 +56,12 @@ npx wrangler d1 execute hsn_autoreply_restore --remote --file hsn-YYYY-MM-DD.sql
 - صور بطاقات التهنئة لا تُحفظ مع السحب المحذوف؛ تُولَّد من جديد عند الحاجة.
 - العملية التي تتجاوز نسختها ~1.9MB (مثلاً سحب ضخم جدًا) تظهر في القائمة لكنها غير قابلة للاسترجاع.
 
-## التحقق بخطوتين (حساب المالك)
-- يتفعّل من «الإعدادات ← التحقق بخطوتين» بتطبيق مصادقة (Google/Microsoft Authenticator). السر محفوظ مشفّرًا بـ `TOKEN_ENC_KEY`.
+## التحقق بخطوتين (كل الحسابات)
+- متاح للمالك والعملاء. يتفعّل من «الإعدادات ← التحقق بخطوتين» بتطبيق مصادقة (Google/Microsoft Authenticator). السر محفوظ مشفّرًا بـ `TOKEN_ENC_KEY`.
 - عند التفعيل تظهر **8 رموز استرداد** مرة وحدة — كل رمز يدخلك مرة بدل رمز التطبيق. احفظها بعيد عن الإيميل.
 - ضاع الجوال والرموز معًا؟ من جهاز عنده صلاحية Cloudflare:
   ```bash
   npx wrangler d1 execute hsn_autoreply --remote --command "UPDATE admin_users SET totp_enabled_at = NULL, totp_ciphertext = NULL, totp_iv = NULL, totp_recovery = NULL WHERE tenant_id = 1"
   ```
   ثم ادخل بكلمة المرور وفعّله من جديد.
+- عميل ضيّع جواله ورموز الاسترداد: من لوحة المالك ← «العملاء» ← بطاقته ← «إيقاف (فقد جواله)» — بعد التأكد إنه صاحب الحساب.

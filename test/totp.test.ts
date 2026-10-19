@@ -72,12 +72,23 @@ describe("two-step login (owner)", () => {
     expect((await loginWith()).status).toBe(200);
   });
 
-  it("is not offered to customers", async () => {
-    await call("/api/owner/codes", OWNER, "POST", { plan_id: "basic", days: 30, count: 1 }).then(async (r) => {
-      await call("/api/auth/register", {}, "POST", { name: "متجر", username: "shop_a", password: "another-strong-password", code: r.body.codes[0] });
-    });
+  it("customers can turn it on; their login then needs the code; the owner can turn it off if they lose the phone", async () => {
+    const r = await call("/api/owner/codes", OWNER, "POST", { plan_id: "basic", days: 30, count: 1 });
+    await call("/api/auth/register", {}, "POST", { name: "متجر أ", username: "shop_a", password: "another-strong-password", code: r.body.codes[0] });
     const h = await login("shop_a", "another-strong-password");
-    expect((await call("/api/auth/totp", h)).body.available).toBe(false);
-    expect((await call("/api/auth/totp/setup", h, "POST", {})).status).toBe(403);
+    expect((await call("/api/auth/totp", h)).body.available).toBe(true);
+    const setup = await call("/api/auth/totp/setup", h, "POST", {});
+    expect(setup.status).toBe(200);
+    expect((await call("/api/auth/totp/enable", h, "POST", { code: await code(setup.body.secret) })).status).toBe(200);
+    const tryLogin = (totp?: string) => call("/api/auth/login", {}, "POST", { username: "shop_a", password: "another-strong-password", client: "app", totp });
+    expect((await tryLogin()).body.error.code).toBe("totp_required");
+    expect((await tryLogin(await code(setup.body.secret, 1))).status).toBe(200);
+    const tid = (await DB.prepare("SELECT tenant_id FROM admin_users WHERE username = 'shop_a'").first<any>()).tenant_id;
+    const list = (await call("/api/owner/tenants", OWNER)).body;
+    expect((Array.isArray(list) ? list : list.tenants).find((t: any) => t.id === tid).totp_enabled_at).toBeGreaterThan(0);
+    // a customer cannot reset anyone's; the owner can
+    expect((await call(`/api/owner/tenants/${tid}/totp-reset`, h, "POST", {})).status).toBe(403);
+    expect((await call(`/api/owner/tenants/${tid}/totp-reset`, OWNER, "POST", {})).status).toBe(200);
+    expect((await tryLogin()).status).toBe(200);
   });
 });
