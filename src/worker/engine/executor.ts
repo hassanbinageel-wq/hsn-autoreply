@@ -494,6 +494,8 @@ async function execSendMessage(ctx: EngineContext, job: JobRow, owner: string): 
     return { outcome: "failed" };
   }
 
+  // Campaign tags (UTM) on the content link only where the plan includes them.
+  if (isContent && l.campaign.utm !== 0 && !l.flow.is_demo && !(await getEntitlement(ctx.db, l.account.tenant_id, ctx.now())).limits.utm) l.campaign = { ...l.campaign, utm: 0 };
   const msg = buildMessage(purpose, l, channel);
   if (isContent && msg.linkButton) await trackLink(ctx, l, msg);
   const token = await ctx.getAccessToken(l.account);

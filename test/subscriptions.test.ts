@@ -344,7 +344,7 @@ describe("owner tools", () => {
 
   it("the owner sets the order of the plan points; unknown keys are dropped and missing ones appended", async () => {
     const def = (await call("/api/public/plans")).body.feature_order;
-    expect(def.slice(0, 4)).toEqual(["events", "active_campaigns", "monthly_messages", "draws_per_month"]);
+    expect(def.slice(0, 4)).toEqual(["events", "active_campaigns", "monthly_messages", "store"]);
     expect((await call("/api/owner/feature-order", OWNER, "PUT", { order: ["recover", "bogus", "events", "recover"] })).status).toBe(200);
     const got = (await call("/api/public/plans")).body.feature_order;
     expect(got.slice(0, 2)).toEqual(["recover", "events"]);

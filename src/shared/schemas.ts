@@ -172,6 +172,7 @@ export const planUpdateSchema = z.object({
     undo: z.boolean().default(false),
     scheduling: z.boolean().default(false),
     store: z.boolean().default(false),
+    utm: z.boolean().default(false),
     staff: z.number().int().min(0).max(10).nullable().default(0),
   }),
 });

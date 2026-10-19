@@ -1,7 +1,7 @@
 {
   "name": "hsn-autoreply",
   "private": true,
-  "version": "2.31.0",
+  "version": "2.32.0",
   "description": "HSN AutoReply — Instagram automation via the official Meta Instagram API",
   "type": "module",
   "scripts": {

@@ -45,6 +45,7 @@ const NONE: PlanLimits = {
   undo: false,
   scheduling: false,
   store: false,
+  utm: false,
   staff: 0,
 };
 

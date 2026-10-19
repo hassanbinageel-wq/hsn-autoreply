@@ -20,6 +20,8 @@ export interface PlanLimits {
   scheduling?: boolean;
   /** Store connection (Salla) and store analytics: orders and revenue per campaign / product. */
   store?: boolean;
+  /** Google Analytics campaign tags (UTM) on content links. */
+  utm?: boolean;
   /** Staff logins the customer may add: 0 = none, null = up to the service maximum (10). */
   staff?: number | null;
 }
@@ -43,6 +45,7 @@ export const OWNER_LIMITS: PlanLimits = {
   undo: true,
   scheduling: true,
   store: true,
+  utm: true,
   staff: null,
 };
 
@@ -60,6 +63,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   undo: "التراجع عن آخر العمليات",
   scheduling: "جدولة نشر المنشورات والريلز والستوري",
   store: "ربط المتجر (سلة) وتحليل الطلبات والمبيعات",
+  utm: "روابط Google Analytics (UTM) لكل حملة",
 };
 
 /** The four limit rows shown before the on/off features, by key. */
@@ -71,8 +75,28 @@ export const LIMIT_ROW_LABELS: Record<string, string> = {
   staff: "الموظفين",
 };
 
-/** Default display order of every plan point (limits first, then features). */
-export const DEFAULT_FEATURE_ORDER: string[] = [...Object.keys(LIMIT_ROW_LABELS), ...Object.keys(FEATURE_LABELS)];
+/** Default display order of every plan point: the essentials, then from the strongest feature to the lightest. */
+export const DEFAULT_FEATURE_ORDER: string[] = [
+  "events",
+  "active_campaigns",
+  "monthly_messages",
+  "store",
+  "scheduling",
+  "utm",
+  "link_tracking",
+  "campaign_stats",
+  "inbox_manual",
+  "public_reply",
+  "staff",
+  "telegram",
+  "recover",
+  "draws_per_month",
+  "draw_video",
+  "cards",
+  "simulator",
+  "undo",
+  "csv_export",
+];
 
 /** The owner's saved order, cleaned: unknown keys dropped, duplicates removed, new points appended at the end. */
 export function orderFeatures(order?: readonly string[] | null): string[] {
@@ -85,6 +109,7 @@ export function orderFeatures(order?: readonly string[] | null): string[] {
 
 /** One-line explanation of each plan point, shown in a hover box on the plans. */
 export const FEATURE_HINTS: Record<string, string> = {
+  utm: "يضيف لروابط حملاتك وسوم Google Analytics، فتعرف من تقارير متجرك كم زائر وطلب جابت كل حملة — حتى اللي اشتروا بدون كود خصم.",
   public_reply: "رد علني قصير تحت تعليق المتابع (مثل «أرسلنا لك في الخاص») بصيغ متنوعة، إضافةً للرسالة الخاصة.",
   link_tracking: "يحوّل رابطك لرابط تتبع، وتعرف كم شخص ضغط عليه فعلًا من كل حملة.",
   inbox_manual: "ترد بنفسك على أي محادثة من صندوق الرسائل داخل اللوحة، ضمن نافذة الرد المسموحة من Meta.",

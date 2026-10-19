@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AR_LABELS } from "../../shared/states";
 
 export function Card({ children, className = "", title, action, id }: { children: ReactNode; className?: string; title?: ReactNode; action?: ReactNode; id?: string }) {
@@ -92,15 +93,19 @@ export function InfoDot({ text, className = "" }: { text: string; className?: st
       className={`relative inline-flex h-6 w-6 shrink-0 cursor-help items-center justify-center rounded-full bg-[var(--border)] text-[11px] font-bold text-[var(--text-2)] outline-none ${className}`}
     >
       ?
-      {open && pos && (
-        <span
-          role="tooltip"
-          style={{ left: pos.left, top: pos.top, width: pos.width, transform: pos.above ? "translateY(-100%)" : undefined }}
-          className="pointer-events-none fixed z-[60] rounded-xl bg-[#16122b] px-3 py-2 text-right text-xs font-normal leading-relaxed text-white shadow-lg dark:bg-white dark:text-[#16122b]"
-        >
-          {text}
-        </span>
-      )}
+      {open && pos &&
+        // On the page itself (not inside the card): a scaled or moved card would otherwise shift the box.
+        createPortal(
+          <span
+            role="tooltip"
+            dir="rtl"
+            style={{ left: pos.left, top: pos.top, width: pos.width, transform: pos.above ? "translateY(-100%)" : undefined }}
+            className="pointer-events-none fixed z-[60] rounded-xl bg-[#16122b] px-3 py-2 text-right text-xs font-normal leading-relaxed text-white shadow-lg dark:bg-white dark:text-[#16122b]"
+          >
+            {text}
+          </span>,
+          document.body,
+        )}
     </span>
   );
 }
@@ -348,11 +353,13 @@ export function Tip({ text, children, className = "" }: { text?: string; childre
       {children}
       {"\u200F"}
       <span className="muted mr-1 text-[0.75em]" aria-hidden>ⓘ</span>
-      {pos && (
-        <span role="tooltip" style={{ left: pos.left, top: pos.top, width: pos.width, transform: pos.above ? "translateY(-100%)" : undefined }} className="pointer-events-none fixed z-[60] rounded-xl bg-[#16122b] px-3 py-2 text-right text-xs font-normal leading-relaxed text-white no-underline shadow-lg dark:bg-white dark:text-[#16122b]">
-          {text}
-        </span>
-      )}
+      {pos &&
+        createPortal(
+          <span role="tooltip" dir="rtl" style={{ left: pos.left, top: pos.top, width: pos.width, transform: pos.above ? "translateY(-100%)" : undefined }} className="pointer-events-none fixed z-[60] rounded-xl bg-[#16122b] px-3 py-2 text-right text-xs font-normal leading-relaxed text-white no-underline shadow-lg dark:bg-white dark:text-[#16122b]">
+            {text}
+          </span>,
+          document.body,
+        )}
     </span>
   );
 }

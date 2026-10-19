@@ -125,9 +125,9 @@ describe("staff logins with limited sections", () => {
 
   it("saving a plan keeps scheduling, store and the staff limit", async () => {
     const plan = (await call("/api/owner/plans", OWNER)).body.find((p: any) => p.id === "pro");
-    const limits = { ...plan.limits, scheduling: true, store: true, staff: 2 };
+    const limits = { ...plan.limits, scheduling: true, store: true, utm: true, staff: 2 };
     expect((await call("/api/owner/plans/pro", OWNER, "PUT", { name: plan.name, active: true, limits })).status).toBe(200);
     const saved = (await call("/api/owner/plans", OWNER)).body.find((p: any) => p.id === "pro");
-    expect(saved.limits).toMatchObject({ scheduling: true, store: true, staff: 2 });
+    expect(saved.limits).toMatchObject({ scheduling: true, store: true, utm: true, staff: 2 });
   });
 });

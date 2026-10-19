@@ -653,7 +653,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
               checked={form.utm}
               onChange={(v) => set("utm", v)}
               label="وسوم Google Analytics (UTM)"
-              description="نضيف لآخر الرابط اسم المصدر (instagram) واسم الحملة، فتعرف من Google Analytics أو تقارير متجرك كم زائر وطلب جابت هذي الحملة — حتى اللي اشتروا بدون كود الخصم. المتابع يفتح نفس الصفحة بدون أي فرق."
+              description="نضيف لآخر الرابط اسم المصدر (instagram) واسم الحملة، فتعرف من Google Analytics أو تقارير متجرك كم زائر وطلب جابت هذي الحملة — حتى اللي اشتروا بدون كود الخصم. المتابع يفتح نفس الصفحة بدون أي فرق. (حسب باقتك — إذا ما كانت تشملها ما تنضاف الوسوم)"
             />
             <div className="muted text-xs">المتغيرات المتاحة: {Object.entries(TEMPLATE_VARIABLES).map(([k, v]) => `{{${k}}} — ${v}`).join(" · ")}. مثال بديل: {"{{username|يا غالي}}"}</div>
           </div>

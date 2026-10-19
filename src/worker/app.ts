@@ -2398,6 +2398,7 @@ export function createApp() {
       warnings.push("الرد العام غير متاح في باقتك — حُفظت الحملة بدونه.");
     }
     if (d.track_clicks && !ent.limits.link_tracking) d.track_clicks = false;
+    if (d.utm && !ent.limits.utm) d.utm = false;
     if (d.require_follow && !(await followGateAllowed(c.env.DB, T(c)))) {
       warnings.push("شرط المتابعة غير مسموح لهذا الحساب — حُفظت الحملة بدونه. يمكنك إضافة دعوة اختيارية للمتابعة.");
     }
