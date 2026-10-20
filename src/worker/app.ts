@@ -91,8 +91,8 @@ import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp }
 import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
-import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, PERIOD_DAYS, redeemCode, RedeemError } from "./services/plans";
-import { cardEnabled, isTestKey, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
+import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
+import { cardEnabled, cardPriceHalalas, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, refundPage, termsPage } from "./pages";
 
@@ -219,7 +219,7 @@ async function publicCatalog(c: C) {
       .map(({ id, name, price_label, price_amount, price_currency, price_period, card_price_halalas, description, limits }) => ({
         id, name, price_label, price_amount, price_currency, price_period, description, limits,
         // Fixed SAR price for card payment (Moyasar), only when card payments are on and the period has a length.
-        card_price: cardEnabled(c.env) && card_price_halalas && card_price_halalas >= 100 && PERIOD_DAYS[price_period] ? card_price_halalas / 100 : null,
+        card_price: cardEnabled(c.env) ? (cardPriceHalalas({ card_price_halalas, price_amount, price_currency, price_period }) ?? 0) / 100 || null : null,
       })),
     card_payments: cardEnabled(c.env),
     rates: { ...DEFAULT_RATES, ...rates, USD: 1 },
@@ -682,29 +682,35 @@ export function createApp() {
     return c.json({ ok: true, username: r.username });
   });
 
-  // Self sign-up with an activation code (no code = no account, so the form cannot be used for spam).
+  // Self sign-up with an activation code, or (when card payment is on) with a plan to pay for right after:
+  // that account starts without a plan and is activated by the card payment.
   app.post("/api/auth/register", async (c) => {
     if (!(await rateLimit(c.env.DB, `register:${clientIp(c)}`, 5, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
     const p = await parseBody(c, registerSchema);
     if (!p.ok) return p.res;
     const now = Date.now();
-    // Check the code first (without using it) so a typo never creates an empty account.
-    const code = await first<{ id: number }>(c.env.DB, "SELECT id FROM activation_codes WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL", await codeHash(p.data.code));
-    if (!code) return apiError(c, 422, "invalid_code", "كود التفعيل غير صحيح أو مستخدم");
+    const withCode = !!p.data.code;
+    if (withCode) {
+      // Check the code first (without using it) so a typo never creates an empty account.
+      const code = await first<{ id: number }>(c.env.DB, "SELECT id FROM activation_codes WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL", await codeHash(p.data.code!));
+      if (!code) return apiError(c, 422, "invalid_code", "كود التفعيل غير صحيح أو مستخدم");
+    } else if (!p.data.plan_id || !(await payablePlan(c.env, p.data.plan_id))) {
+      return apiError(c, 422, "code_required", "أدخل كود التفعيل، أو اختر باقة من صفحة الباقات وادفع بالبطاقة");
+    }
     if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم المتجر هذا مسجّل من قبل — اختر غيره");
     const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
     const t = await first<{ id: number }>(c.env.DB, "INSERT INTO tenants (name, created_at, updated_at) VALUES (?, ?, ?) RETURNING id", p.data.name, now, now);
     const tid = t!.id;
     try {
       await run(c.env.DB, "INSERT INTO admin_users (username, password_hash, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", p.data.username, hash, tid, now, now);
-      await redeemCode(c.env.DB, tid, p.data.code, now);
+      if (withCode) await redeemCode(c.env.DB, tid, p.data.code!, now);
     } catch (e) {
       await deleteTenantData(c.env.DB, tid);
       if (e instanceof RedeemError) return apiError(c, 422, e.code, e.message);
       return apiError(c, 409, "username_taken", "اسم المستخدم مستخدم — اختر غيره");
     }
     await seedStarterTemplates(c.env.DB, tid, now);
-    await audit(c.env.DB, tid, p.data.username, "tenant.registered", String(tid));
+    await audit(c.env.DB, tid, p.data.username, "tenant.registered", String(tid), withCode ? undefined : { pay_plan: p.data.plan_id });
     // The email (for password recovery) gets a confirmation code; it works for recovery once confirmed.
     if (p.data.email) {
       const u = await first<{ id: number }>(c.env.DB, "SELECT id FROM admin_users WHERE tenant_id = ? ORDER BY id LIMIT 1", tid);
@@ -1407,7 +1413,8 @@ export function createApp() {
     const amount = p.data.price_amount ?? null;
     // A structured price wins; otherwise the free-text label (or nothing → "تواصل معنا").
     const label = amount !== null ? formatPrice(amount, currency, period) : (p.data.price_label ?? null);
-    const card = p.data.card_price_sar ? Math.round(p.data.card_price_sar * 100) : null;
+    // empty = the plan's own price when it is in SAR; 0 = no card payment for this plan
+    const card = p.data.card_price_sar === null || p.data.card_price_sar === undefined ? null : Math.round(p.data.card_price_sar * 100);
     await run(
       c.env.DB,
       "UPDATE plans SET name = ?, price_label = ?, price_amount = ?, price_currency = ?, price_period = ?, card_price_halalas = ?, description = ?, limits = ?, active = ?, updated_at = ? WHERE id = ?",

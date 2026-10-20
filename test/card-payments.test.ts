@@ -23,7 +23,7 @@ beforeEach(async () => {
   await seedAccount();
   await call("/api/auth/setup", {}, "POST", { setup_token: "test_setup_token_123456", username: "admin", password: "a-very-strong-password" });
   OWNER = await login("admin", "a-very-strong-password");
-  await DB.prepare("UPDATE plans SET card_price_halalas = NULL, price_period = 'month'").run();
+  await DB.prepare("UPDATE plans SET card_price_halalas = 0, price_period = 'month'").run();
 });
 async function register(username: string) {
   const code = (await call("/api/owner/codes", OWNER, "POST", { plan_id: "basic", days: 10, count: 1 })).body.codes[0];
@@ -67,6 +67,38 @@ describe("card payments (Moyasar)", () => {
     expect(sub.card_payments).toBe(true);
     expect(sub.plans.find((p: any) => p.id === "pro").card_price).toBe(149.5);
     expect(sub.plans.find((p: any) => p.id === "basic").card_price).toBeNull();
+  });
+
+  it("empty card price = the plan's own SAR price; 0 switches card payment off", async () => {
+    await DB.prepare("UPDATE plans SET price_amount = 2, price_currency = 'SAR', card_price_halalas = NULL WHERE id = 'pro'").run();
+    await DB.prepare("UPDATE plans SET price_amount = 5, price_currency = 'USD', card_price_halalas = NULL WHERE id = 'max'").run();
+    const plans = (await call("/api/public/plans")).body.plans as any[];
+    expect(plans.find((p) => p.id === "pro").card_price).toBe(2);
+    expect(plans.find((p) => p.id === "max").card_price).toBeNull();
+    await DB.prepare("UPDATE plans SET card_price_halalas = 0 WHERE id = 'pro'").run();
+    expect(((await call("/api/public/plans")).body.plans as any[]).find((p) => p.id === "pro").card_price).toBeNull();
+  });
+
+  it("sign-up without a code for a card-payable plan: no plan until it is paid, then activated", async () => {
+    await DB.prepare("UPDATE plans SET card_price_halalas = 9900 WHERE id = 'pro'").run();
+    // no code and no payable plan: refused, nothing created
+    expect((await call("/api/auth/register", {}, "POST", { name: "متجر", username: "shop_x", password: "another-strong-password" })).body.error.code).toBe("code_required");
+    expect((await call("/api/auth/register", {}, "POST", { name: "متجر", username: "shop_x", password: "another-strong-password", plan_id: "basic" })).body.error.code).toBe("code_required");
+    expect(await DB.prepare("SELECT 1 FROM admin_users WHERE username = 'shop_x'").first()).toBeNull();
+
+    expect((await call("/api/auth/register", {}, "POST", { name: "متجر", username: "shop_x", password: "another-strong-password", plan_id: "pro" })).status).toBe(200);
+    const h = await login("shop_x", "another-strong-password");
+    const tid = (await DB.prepare("SELECT tenant_id FROM admin_users WHERE username = 'shop_x'").first<any>()).tenant_id;
+    expect((await tenant(tid)).plan_id).toBeNull();
+    expect((await call("/api/subscription", h)).body.active).toBe(false);
+    stubMoyasar();
+    const pay = await call("/api/subscription/pay", h, "POST", { plan_id: "pro" });
+    expect(pay.status).toBe(200);
+    remote = { status: "paid" };
+    expect((await call("/webhooks/moyasar", {}, "POST", { id: "inv_0001abcd" })).body.result).toBe("paid");
+    const sub = (await call("/api/subscription", h)).body;
+    expect(sub).toMatchObject({ active: true, plan: { id: "pro" } });
+    expect(sub.expires_at - Date.now()).toBeGreaterThan(29 * DAY);
   });
 
   it("pay → forged callback does nothing → real paid invoice activates once (30 days after the current expiry)", async () => {

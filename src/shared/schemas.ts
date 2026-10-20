@@ -139,7 +139,9 @@ export const registerSchema = z.object({
   name: text(80).min(2, "اكتب اسم المستخدم (اسمك)"),
   username: username(),
   password: z.string().min(12, "كلمة المرور 12 حرفًا على الأقل").max(256),
-  code: z.string().trim().min(4, "أدخل كود التفعيل").max(40),
+  // Either an activation code, or a plan the new customer pays for by card right after signing up.
+  code: z.string().trim().max(40).optional().transform((v) => (v ? v : undefined)).refine((v) => v === undefined || v.length >= 4, "أدخل كود التفعيل"),
+  plan_id: z.string().max(20).optional(),
   ref: z.string().trim().max(20).optional(),
   // For password recovery (confirmed by a code after sign-up).
   email: z.string().trim().max(254).email("اكتب إيميل صحيح").optional().or(z.literal("").transform(() => undefined)),
@@ -153,7 +155,7 @@ export const planUpdateSchema = z.object({
   price_currency: z.enum(["USD", "SAR", "YER", "YER_SAN"]).optional(),
   price_period: z.enum(["month", "quarter", "year", "once"]).optional(),
   /** Fixed card price in SAR (Moyasar); empty = no card payment for this plan. */
-  card_price_sar: z.number().min(1).max(100_000).nullable().optional(),
+  card_price_sar: z.number().min(0).max(100_000).nullable().optional(),
   description: text(200).optional(),
   active: z.boolean().default(true),
   limits: z.object({

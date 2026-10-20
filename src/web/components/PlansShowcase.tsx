@@ -293,13 +293,16 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
                   <span className="font-display text-2xl font-extrabold text-violet-600 dark:text-violet-300">{p.price_label || "تواصل معنا"}</span>
                 )}
               </div>
-              {onChoose && (
-                <button type="button" onClick={onChoose} className={`btn mt-4 w-full ${isFeatured && !(onCardPay && p.card_price) ? "btn-primary" : "btn-ghost"}`}>{onCardPay && p.card_price ? "تحويل بنكي / صرافة" : `اشترك في ${p.name}`}</button>
-              )}
               {onCardPay && p.card_price ? (
-                <button type="button" onClick={() => onCardPay(p.id)} className={`btn w-full ${onChoose ? "mt-2" : "mt-4"} ${isFeatured ? "btn-primary" : "btn-ghost"}`}>
-                  💳 ادفع بالبطاقة — {p.card_price.toLocaleString("en-US")} ر.س
-                </button>
+                <>
+                  <button type="button" onClick={() => onCardPay(p.id)} className={`btn mt-4 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>
+                    💳 اشترك وادفع بالبطاقة — {p.card_price.toLocaleString("en-US")} ر.س
+                  </button>
+                  <div className="muted mt-1 text-center text-[11px]">مدى · فيزا · ماستركارد · Apple Pay — تتفعّل فورًا</div>
+                  {onChoose && <button type="button" onClick={onChoose} className="mt-1 w-full text-center text-xs font-semibold text-violet-700 underline dark:text-violet-300">أو تحويل بنكي / صرافة</button>}
+                </>
+              ) : onChoose ? (
+                <button type="button" onClick={onChoose} className={`btn mt-4 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>اشترك في {p.name}</button>
               ) : null}
               <div className="mt-4 flex-1"><Features limits={p.limits} order={catalog.feature_order} hideMissing /></div>
             </div>

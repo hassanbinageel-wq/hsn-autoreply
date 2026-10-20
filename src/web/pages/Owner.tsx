@@ -456,7 +456,7 @@ function PlansTab() {
 }
 
 function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onSaved: () => void }) {
-  const [f, setF] = useState(() => ({ ...plan, card_price: plan.card_price_halalas ? plan.card_price_halalas / 100 : "", limits: { ...plan.limits } }));
+  const [f, setF] = useState(() => ({ ...plan, card_price: plan.card_price_halalas == null ? "" : plan.card_price_halalas / 100, limits: { ...plan.limits } }));
   const [busy, setBusy] = useState(false);
   const setL = (k: string, v: unknown) => setF((x: any) => ({ ...x, limits: { ...x.limits, [k]: v } }));
   const save = async () => {
@@ -491,8 +491,8 @@ function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onS
             </select>
           </div>
         </Field>
-        <Field label={<Tip text="سعر ثابت بالريال السعودي يدفعه العميل ببطاقة (مدى / فيزا / ماستركارد / Apple Pay) عن طريق ميسّر، وتتفعّل الباقة تلقائيًا بعد الدفع لمدة الباقة (شهر 30 يوم، 3 أشهر 90، سنة 365). فارغ = لا يظهر زر الدفع بالبطاقة لهذي الباقة.">💳 سعر الدفع بالبطاقة (ر.س)</Tip>} hint={f.price_period === "once" ? "الدفع بالبطاقة يحتاج مدة (شهر / 3 أشهر / سنة) — مو «مرة واحدة»" : f.card_price === "" || f.card_price == null ? "فارغ = بدون دفع بالبطاقة" : `العميل يدفع ${Number(f.card_price).toLocaleString("en-US")} ر.س`}>
-          <input className="input" type="number" min={1} step="any" dir="ltr" value={f.card_price ?? ""} onChange={(e) => setF({ ...f, card_price: e.target.value })} placeholder="مثل 99" />
+        <Field label={<Tip text="سعر ثابت بالريال السعودي يدفعه العميل ببطاقة (مدى / فيزا / ماستركارد / Apple Pay) عن طريق ميسّر، وتتفعّل الباقة تلقائيًا بعد الدفع لمدة الباقة (شهر 30 يوم، 3 أشهر 90، سنة 365). فارغ = نفس سعر الباقة إذا كان بالريال السعودي. 0 = بدون دفع بالبطاقة لهذي الباقة.">💳 سعر الدفع بالبطاقة (ر.س)</Tip>} hint={f.price_period === "once" ? "الدفع بالبطاقة يحتاج مدة (شهر / 3 أشهر / سنة) — مو «مرة واحدة»" : f.card_price === "" || f.card_price == null ? ((f.price_currency || "SAR") === "SAR" && f.price_amount ? `فارغ = نفس سعر الباقة (${Number(f.price_amount).toLocaleString("en-US")} ر.س)` : "فارغ والسعر مو بالريال = بدون دفع بالبطاقة") : Number(f.card_price) === 0 ? "بدون دفع بالبطاقة" : `العميل يدفع ${Number(f.card_price).toLocaleString("en-US")} ر.س`}>
+          <input className="input" type="number" min={0} step="any" dir="ltr" value={f.card_price ?? ""} onChange={(e) => setF({ ...f, card_price: e.target.value })} placeholder="مثل 99" />
         </Field>
         <Field label="وصف قصير"><input className="input" value={f.description ?? ""} onChange={(e) => setF({ ...f, description: e.target.value })} maxLength={200} /></Field>
         {LIMIT_FIELDS.map(([k, label]) => (

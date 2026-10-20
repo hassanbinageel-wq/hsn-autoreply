@@ -1,7 +1,7 @@
 import { Icon } from "../components/Icon";
 import { Suspense, lazy, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, setCsrf } from "../api";
-import { API_BASE, deviceToken, isNative } from "../platform";
+import { API_BASE, deviceToken, isNative, openExternal } from "../platform";
 import { Alert, Field } from "../components/ui";
 import type { Catalog } from "../components/PlansShowcase";
 
@@ -40,6 +40,23 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   }, []);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
+  // Sign-up from a plan's card button (#/register?plan=pro): no code, the card payment page opens right after.
+  const planOf = () => (location.hash.startsWith("#/register") ? new URLSearchParams(location.hash.split("?")[1] ?? "").get("plan") : null);
+  const [payPlanId, setPayPlanId] = useState<string | null>(planOf);
+  const [payPlan, setPayPlan] = useState<{ id: string; name: string; card_price: number } | null>(null);
+  useEffect(() => {
+    const on = () => setPayPlanId(planOf());
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  useEffect(() => {
+    if (!payPlanId) return setPayPlan(null);
+    api<Catalog>("/api/public/plans").then((c) => {
+      const p = c.plans.find((x) => x.id === payPlanId && x.card_price);
+      setPayPlan(p ? { id: p.id, name: p.name, card_price: p.card_price! } : null);
+    }, () => setPayPlan(null));
+  }, [payPlanId]);
+  const cardSignup = register && !!payPlan;
   const [email, setEmail] = useState("");
   useEffect(() => {
     document.title = `${plans ? "الباقات" : register ? "إنشاء حساب" : "تسجيل الدخول"} · HSN AutoReply`;
@@ -109,15 +126,30 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         } catch {
           /* private mode */
         }
-        await api("/api/auth/register", { body: { name: name.trim(), username: username.trim(), password, code, ref, email: email.trim() || undefined } });
+        await api("/api/auth/register", { body: { name: name.trim(), username: username.trim(), password, code: cardSignup ? undefined : code, plan_id: cardSignup ? payPlan!.id : undefined, ref, email: email.trim() || undefined } });
         try {
           localStorage.removeItem("hsn_ref");
         } catch {
           /* private mode */
         }
-        location.hash = "#/";
+        if (!cardSignup) location.hash = "#/";
       }
       await signIn(username, password);
+      if (register && cardSignup) {
+        // New account without a code: straight to the card payment page; the plan activates when it is paid.
+        try {
+          const r = await api<{ id: number; url: string }>("/api/subscription/pay", { body: { plan_id: payPlan!.id } });
+          if (isNative) {
+            await openExternal(r.url);
+            location.hash = `#/subscription?paid=${r.id}`;
+          } else {
+            location.href = r.url;
+            return;
+          }
+        } catch {
+          location.hash = "#/subscription";
+        }
+      }
       // Sign-in is done here; fingerprint sign-in is offered afterwards in the app (never blocks this step).
       offerBioLater(username, password);
       setPassword("");
@@ -152,7 +184,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           <div>
             <h1 className="text-[28px] font-extrabold leading-tight">{status?.needs_setup ? "إعداد حساب الإدارة" : register ? "أنشئ حسابك ✨" : "أهلًا بعودتك 👋"}</h1>
             <p className="muted mt-1.5 text-sm">
-              {status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : register ? "عندك كود تفعيل؟ أنشئ حسابك وابدأ مباشرة." : "سجّل دخولك لإدارة حملاتك ورسائلك وسحوباتك."}
+              {status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : cardSignup ? "أنشئ حسابك، وبعدها تنتقل مباشرة لصفحة الدفع الآمنة." : register ? "عندك كود تفعيل؟ أنشئ حسابك وابدأ مباشرة." : "سجّل دخولك لإدارة حملاتك ورسائلك وسحوباتك."}
             </p>
           </div>
           {isNative && !API_BASE && <Alert tone="bad">لم يُحدَّد عنوان الخادم في هذا الإصدار (VITE_API_BASE).</Alert>}
@@ -165,7 +197,14 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               <input className="input" type="password" autoComplete="off" value={setupToken} onChange={(e) => setSetupToken(e.target.value)} required />
             </Field>
           )}
-          {register && !status?.needs_setup && (
+          {cardSignup && !status?.needs_setup && (
+            <div className="flex items-center gap-3 rounded-2xl border border-violet-500/30 bg-violet-500/[0.06] p-3.5">
+              <span className="text-2xl">💳</span>
+              <span className="flex-1 leading-tight"><b className="block text-sm">{payPlan!.name} — {payPlan!.card_price.toLocaleString("en-US")} ر.س</b><span className="muted text-xs">تدفع بالبطاقة بعد إنشاء الحساب، وتتفعّل الباقة فورًا — بدون كود</span></span>
+              <a href="#/plans" className="text-xs font-semibold text-violet-700 underline dark:text-violet-300">تغيير</a>
+            </div>
+          )}
+          {register && !cardSignup && !status?.needs_setup && (
             <>
               <Field label="كود التفعيل" hint="يصلك بعد الاشتراك، مثل: HSN-XXXX-XXXX-XXXX">
                 <input className="input" dir="ltr" autoComplete="off" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="HSN-XXXX-XXXX-XXXX" required />
@@ -206,7 +245,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             </button>
           )}
           <button type="submit" className="btn btn-primary min-h-12 w-full text-[15px]" disabled={busy || !status}>
-            {busy ? "…" : status?.needs_setup ? "إنشاء حساب الإدارة والدخول" : register ? "إنشاء الحساب والدخول" : "تسجيل الدخول"}
+            {busy ? "…" : status?.needs_setup ? "إنشاء حساب الإدارة والدخول" : cardSignup ? "إنشاء الحساب والانتقال للدفع" : register ? "إنشاء الحساب والدخول" : "تسجيل الدخول"}
           </button>
           {!status?.needs_setup &&
             (register ? (
@@ -229,10 +268,10 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             <span>هذا حساب إدارة التطبيق فقط — لا نطلب كلمة مرور إنستقرام أبدًا. الربط يتم عبر Meta الرسمي.</span>
           </div>
           {download && <AppDownloadBox className="lg:hidden" tone="light" url={download.url} icon={download.icon} />}
-          {register && !status?.needs_setup && (
+          {register && !cardSignup && !status?.needs_setup && (
             <a href="#/plans" className="flex items-center gap-3 rounded-2xl border border-red-500/25 bg-red-500/[0.06] p-3.5 transition hover:bg-red-500/10">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-600 dark:text-red-400"><Icon name="zap" size={20} /></span>
-              <span className="flex-1 leading-tight"><b className="block text-sm">ما عندك كود؟</b><span className="muted text-xs">شوف الباقات والأسعار وطرق الدفع</span></span>
+              <span className="flex-1 leading-tight"><b className="block text-sm">ما عندك كود؟</b><span className="muted text-xs">اختر باقة وادفع بالبطاقة، أو شوف طرق الدفع الأخرى</span></span>
               <Icon name="arrowL" size={18} className="text-red-600 dark:text-red-400" />
             </a>
           )}
@@ -279,7 +318,7 @@ function PublicPlansPage() {
           <h1 className="font-display mt-3 text-[28px] font-extrabold leading-tight sm:text-4xl">اختر الباقة المناسبة لحسابك</h1>
           <p className="muted mx-auto mt-2 max-w-xl text-sm leading-relaxed">ردود تلقائية على تعليقات وستوري إنستقرام عبر واجهة Meta الرسمية — بدون كلمة مرور، وبدون أي أدوات غير رسمية.</p>
         </div>
-        {error ? <p className="text-center text-red-600">{error}</p> : !data ? <Spinner /> : <Suspense fallback={<Spinner />}><PlansShowcase catalog={data} /></Suspense>}
+        {error ? <p className="text-center text-red-600">{error}</p> : !data ? <Spinner /> : <Suspense fallback={<Spinner />}><PlansShowcase catalog={data} onCardPay={(id) => { location.hash = `#/register?plan=${encodeURIComponent(id)}`; }} /></Suspense>}
         <p className="muted text-center text-[11px] leading-relaxed">
           خدمة تقدّمها شركة ارقام المستديرة للدعاية والاعلان — الرقم الوطني الموحد 7042872536
           <br />

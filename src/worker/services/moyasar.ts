@@ -18,6 +18,17 @@ const API = "https://api.moyasar.com/v1";
 export const cardEnabled = (env: Env) => !!env.MOYASAR_SECRET_KEY;
 export const isTestKey = (env: Env) => !!env.MOYASAR_SECRET_KEY?.startsWith("sk_test_");
 
+/**
+ * The card price of a plan in halalas, or null when it cannot be paid by card: the owner's fixed card price,
+ * else the plan's own price when it is in SAR; 0 means the owner switched card payment off for the plan.
+ * Needs a period (month / quarter / year) and Moyasar's minimum of 1 SAR.
+ */
+export function cardPriceHalalas(p: { card_price_halalas: number | null; price_amount: number | null; price_currency: string; price_period: string }): number | null {
+  if (!PERIOD_DAYS[p.price_period]) return null;
+  const v = p.card_price_halalas ?? (p.price_currency === "SAR" && p.price_amount ? Math.round(p.price_amount * 100) : null);
+  return v && v >= 100 ? v : null;
+}
+
 export type Invoice = { id: string; status: string; amount: number; currency: string; url?: string; metadata?: Record<string, string> | null };
 
 export class PayError extends Error {
@@ -41,14 +52,9 @@ async function moyasar(env: Env, path: string, init: { method: "GET" | "POST"; b
 /** Creates an invoice for one period of a plan and returns the payment page the customer is sent to. */
 export async function startCardPayment(env: Env, tenantId: number, planId: string, actor: string, siteOrigin?: string, now = Date.now()): Promise<{ id: number; url: string }> {
   if (!cardEnabled(env)) throw new PayError("card_off", "الدفع بالبطاقة غير متاح حاليًا — استخدم طرق الدفع الأخرى", 409);
-  const plan = await first<{ id: string; name: string; active: number; card_price_halalas: number | null; price_period: string }>(
-    env.DB,
-    "SELECT id, name, active, card_price_halalas, price_period FROM plans WHERE id = ?",
-    planId,
-  );
-  const days = plan ? PERIOD_DAYS[plan.price_period] : undefined;
-  if (!plan || !plan.active || !plan.card_price_halalas || plan.card_price_halalas < 100 || !days) throw new PayError("not_payable", "هذي الباقة ما تندفع بالبطاقة — استخدم طرق الدفع الأخرى");
-  const amount = plan.card_price_halalas;
+  const plan = await payablePlan(env, planId);
+  if (!plan) throw new PayError("not_payable", "هذي الباقة ما تندفع بالبطاقة — استخدم طرق الدفع الأخرى");
+  const { amount, days } = plan;
   const row = await run(
     env.DB,
     "INSERT INTO card_payments (tenant_id, plan_id, days, amount, currency, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'SAR', ?, ?, ?)",
@@ -81,6 +87,18 @@ export async function startCardPayment(env: Env, tenantId: number, planId: strin
     if (e instanceof PayError && e.code !== "gateway") throw e;
     throw new PayError("gateway", "تعذر فتح صفحة الدفع الحين — جرّب بعد شوي", 502);
   }
+}
+
+/** An active plan that can be paid by card now, with its price and the days it buys. */
+export async function payablePlan(env: Env, planId: string): Promise<{ id: string; name: string; amount: number; days: number } | null> {
+  if (!cardEnabled(env)) return null;
+  const p = await first<{ id: string; name: string; active: number; card_price_halalas: number | null; price_amount: number | null; price_currency: string; price_period: string }>(
+    env.DB,
+    "SELECT id, name, active, card_price_halalas, price_amount, price_currency, price_period FROM plans WHERE id = ?",
+    planId,
+  );
+  const amount = p?.active ? cardPriceHalalas(p) : null;
+  return p && amount ? { id: p.id, name: p.name, amount, days: PERIOD_DAYS[p.price_period] } : null;
 }
 
 const FINAL = ["failed", "canceled", "expired", "voided", "refunded"];
