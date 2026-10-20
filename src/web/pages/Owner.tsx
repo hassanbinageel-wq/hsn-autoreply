@@ -746,7 +746,7 @@ const CARD_STATUS: Record<string, [string, string]> = {
   paid: ["مدفوع ✅", "text-emerald-700 dark:text-emerald-300"],
   initiated: ["بانتظار الدفع", "muted"],
   failed: ["فشل", "text-red-600"],
-  expired: ["انتهت المهلة", "muted"],
+  expired: ["لم يكتمل (انتهت المهلة)", "muted"],
   canceled: ["ألغاه العميل", "muted"],
   error: ["خطأ في البوابة", "text-red-600"],
   mismatch: ["مبلغ غير مطابق ⚠️", "text-red-600"],
@@ -775,7 +775,7 @@ function CardPaymentsCard() {
               <table className="w-full text-sm">
                 <thead><tr className="muted text-right text-xs"><th className="p-2">#</th><th className="p-2">العميل</th><th className="p-2">الباقة</th><th className="p-2">المبلغ</th><th className="p-2">الحالة</th><th className="p-2">التاريخ</th></tr></thead>
                 <tbody>
-                  {data.payments.map((p: any) => (
+                  {data.payments.map((p: any) => ({ ...p, status: p.status === "initiated" && Date.now() - p.created_at > 2 * 3_600_000 ? "expired" : p.status })).map((p: any) => (
                     <tr key={p.id} className="border-t border-[var(--border)]">
                       <td className="p-2" dir="ltr">{p.id}</td>
                       <td className="p-2">{p.tenant_name ?? `#${p.tenant_id}`}</td>
