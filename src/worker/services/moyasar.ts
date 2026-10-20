@@ -39,7 +39,7 @@ async function moyasar(env: Env, path: string, init: { method: "GET" | "POST"; b
 }
 
 /** Creates an invoice for one period of a plan and returns the payment page the customer is sent to. */
-export async function startCardPayment(env: Env, tenantId: number, planId: string, actor: string, now = Date.now()): Promise<{ id: number; url: string }> {
+export async function startCardPayment(env: Env, tenantId: number, planId: string, actor: string, siteOrigin?: string, now = Date.now()): Promise<{ id: number; url: string }> {
   if (!cardEnabled(env)) throw new PayError("card_off", "الدفع بالبطاقة غير متاح حاليًا — استخدم طرق الدفع الأخرى", 409);
   const plan = await first<{ id: string; name: string; active: number; card_price_halalas: number | null; price_period: string }>(
     env.DB,
@@ -56,6 +56,8 @@ export async function startCardPayment(env: Env, tenantId: number, planId: strin
   );
   const id = Number(row.meta.last_row_id);
   const base = env.PUBLIC_BASE_URL.replace(/\/+$/, "");
+  // The customer comes back to the domain they paid from (their session cookie lives there).
+  const site = (siteOrigin || base).replace(/\/+$/, "");
   try {
     const inv = await moyasar(env, "/invoices", {
       method: "POST",
@@ -64,8 +66,8 @@ export async function startCardPayment(env: Env, tenantId: number, planId: strin
         currency: "SAR",
         description: `HSN AutoReply — ${plan.name} (${days} يوم)`,
         callback_url: `${base}/webhooks/moyasar`,
-        success_url: `${base}/#/subscription?paid=${id}`,
-        back_url: `${base}/#/subscription`,
+        success_url: `${site}/#/subscription?paid=${id}`,
+        back_url: `${site}/#/subscription`,
         expired_at: new Date(now + 2 * 3_600_000).toISOString(),
         metadata: { payment_id: String(id), tenant_id: String(tenantId), plan_id: plan.id },
       },

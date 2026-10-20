@@ -1026,7 +1026,8 @@ export function createApp() {
     if (!p.ok) return p.res;
     if (!(await rateLimit(c.env.DB, `card_pay:${T(c)}`, 10, 3_600_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
     try {
-      const r = await startCardPayment(c.env, T(c), p.data.plan_id, c.get("session").username);
+      // Back to the domain the API was called on (the web app's own domain, where its session cookie lives).
+      const r = await startCardPayment(c.env, T(c), p.data.plan_id, c.get("session").username, new URL(c.req.url).origin);
       await audit(c.env.DB, T(c), c.get("session").username, "subscription.card_started", p.data.plan_id, { payment: r.id });
       return c.json({ ok: true, ...r });
     } catch (e) {
