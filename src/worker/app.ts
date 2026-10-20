@@ -91,9 +91,10 @@ import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp }
 import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
-import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
+import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, PERIOD_DAYS, redeemCode, RedeemError } from "./services/plans";
+import { cardEnabled, isTestKey, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
-import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, termsPage } from "./pages";
+import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, refundPage, termsPage } from "./pages";
 
 type C = Context<AppEnv>;
 
@@ -215,7 +216,12 @@ async function publicCatalog(c: C) {
   return {
     plans: plans
       .filter((p) => p.active)
-      .map(({ id, name, price_label, price_amount, price_currency, price_period, description, limits }) => ({ id, name, price_label, price_amount, price_currency, price_period, description, limits })),
+      .map(({ id, name, price_label, price_amount, price_currency, price_period, card_price_halalas, description, limits }) => ({
+        id, name, price_label, price_amount, price_currency, price_period, description, limits,
+        // Fixed SAR price for card payment (Moyasar), only when card payments are on and the period has a length.
+        card_price: cardEnabled(c.env) && card_price_halalas && card_price_halalas >= 100 && PERIOD_DAYS[price_period] ? card_price_halalas / 100 : null,
+      })),
+    card_payments: cardEnabled(c.env),
     rates: { ...DEFAULT_RATES, ...rates, USD: 1 },
     // A bank / office with no account yet would show buyers an empty box.
     payment_methods: payment_methods.filter((p) => p.accounts.length > 0),
@@ -334,6 +340,7 @@ export function createApp() {
   // The plans page lives in the app now (works for visitors without an account).
   app.get("/pricing", (c) => c.redirect("/#/plans", 302));
   app.get("/terms", (c) => html(c, termsPage()));
+  app.get("/refund", (c) => html(c, refundPage()));
   app.get("/data-deletion", (c) => html(c, dataDeletionPage()));
   app.get("/meta/deletion-status", (c) => html(c, deletionStatusPage(c.req.query("code") ?? "")));
 
@@ -404,6 +411,25 @@ export function createApp() {
       return c.json({ ok: false }, 400);
     }
     const out = await handleSallaWebhook(c.env, body).catch((e) => (console.error("salla webhook", sanitize(String(e))), "error"));
+    return c.json({ ok: out !== "error", result: out }, out === "error" ? 500 : 200);
+  });
+
+  // Moyasar calls this when an invoice is paid. The body is only a hint: the invoice is fetched again with the
+  // secret key before anything is activated (syncInvoice), so a forged call cannot activate a plan.
+  app.post("/webhooks/moyasar", async (c) => {
+    if (!cardEnabled(c.env)) return c.json({ ok: false }, 404);
+    const raw = await c.req.text();
+    if (raw.length > 100_000) return c.json({ ok: false }, 413);
+    let body: any;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      return c.json({ ok: false }, 400);
+    }
+    const id = String(body?.invoice_id ?? body?.data?.invoice_id ?? body?.id ?? body?.data?.id ?? "");
+    if (!/^[\w-]{8,64}$/.test(id)) return c.json({ ok: false }, 400);
+    if (!(await rateLimit(c.env.DB, "moyasar_webhook", 300, 3_600_000))) return c.json({ ok: false }, 429);
+    const out = await syncInvoice(c.env, id).catch((e) => (console.error("moyasar webhook", sanitize(String(e))), "error"));
     return c.json({ ok: out !== "error", result: out }, out === "error" ? 500 : 200);
   });
 
@@ -992,6 +1018,36 @@ export function createApp() {
     }
   });
 
+  // Card payment (Moyasar): the account holder opens a payment page for one period of a plan.
+  api.post("/subscription/pay", async (c) => {
+    if (c.get("session").is_owner) return apiError(c, 409, "owner", "حساب المالك لا يحتاج اشتراكًا");
+    if (c.get("session").role !== "owner") return apiError(c, 403, "holder_only", "الدفع لصاحب الحساب فقط");
+    const p = await parseBody(c, z.object({ plan_id: z.string().max(20) }));
+    if (!p.ok) return p.res;
+    if (!(await rateLimit(c.env.DB, `card_pay:${T(c)}`, 10, 3_600_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
+    try {
+      const r = await startCardPayment(c.env, T(c), p.data.plan_id, c.get("session").username);
+      await audit(c.env.DB, T(c), c.get("session").username, "subscription.card_started", p.data.plan_id, { payment: r.id });
+      return c.json({ ok: true, ...r });
+    } catch (e) {
+      if (e instanceof PayError) return apiError(c, e.status as any, e.code, e.message);
+      throw e;
+    }
+  });
+  // After returning from the payment page: re-checks that payment with Moyasar (own payments only).
+  api.get("/subscription/pay/:id", async (c) => {
+    const pay = await first<{ id: number; invoice_id: string | null; status: string; plan_id: string; amount: number; days: number }>(
+      c.env.DB,
+      "SELECT id, invoice_id, status, plan_id, amount, days FROM card_payments WHERE id = ? AND tenant_id = ?",
+      Number(c.req.param("id")) || 0, T(c),
+    );
+    if (!pay) return apiError(c, 404, "not_found", "الدفعة غير موجودة");
+    let status = pay.status;
+    if (status === "initiated" && pay.invoice_id && cardEnabled(c.env) && (await rateLimit(c.env.DB, `card_check:${T(c)}`, 60, 3_600_000)))
+      status = await syncInvoice(c.env, pay.invoice_id).catch(() => status);
+    return c.json({ id: pay.id, status, plan_id: pay.plan_id, amount: pay.amount / 100, days: pay.days });
+  });
+
   // ---- Owner panel (customers). Owner tenant only.
   const owner = new Hono<AppEnv>();
   owner.use("*", async (c, next) => {
@@ -1329,6 +1385,17 @@ export function createApp() {
   });
 
   owner.get("/plans", async (c) => c.json(await listPlans(c.env.DB)));
+  // Card payments (Moyasar), newest first, with the paid total.
+  owner.get("/card-payments", async (c) => {
+    const rows = await all(
+      c.env.DB,
+      `SELECT k.id, k.tenant_id, t.name AS tenant_name, k.plan_id, p.name AS plan_name, k.days, k.amount, k.status, k.invoice_id, k.paid_at, k.created_at
+         FROM card_payments k LEFT JOIN tenants t ON t.id = k.tenant_id LEFT JOIN plans p ON p.id = k.plan_id
+        ORDER BY k.id DESC LIMIT 200`,
+    );
+    const total = await first<{ n: number; sum: number | null }>(c.env.DB, "SELECT COUNT(*) AS n, SUM(amount) AS sum FROM card_payments WHERE status = 'paid'");
+    return c.json({ enabled: cardEnabled(c.env), test_mode: isTestKey(c.env), payments: rows, paid_count: total?.n ?? 0, paid_total: (total?.sum ?? 0) / 100 });
+  });
   owner.put("/plans/:pid", async (c) => {
     const pid = c.req.param("pid");
     if (!(await first(c.env.DB, "SELECT 1 FROM plans WHERE id = ?", pid))) return apiError(c, 404, "not_found", "الباقة غير موجودة");
@@ -1339,10 +1406,11 @@ export function createApp() {
     const amount = p.data.price_amount ?? null;
     // A structured price wins; otherwise the free-text label (or nothing → "تواصل معنا").
     const label = amount !== null ? formatPrice(amount, currency, period) : (p.data.price_label ?? null);
+    const card = p.data.card_price_sar ? Math.round(p.data.card_price_sar * 100) : null;
     await run(
       c.env.DB,
-      "UPDATE plans SET name = ?, price_label = ?, price_amount = ?, price_currency = ?, price_period = ?, description = ?, limits = ?, active = ?, updated_at = ? WHERE id = ?",
-      p.data.name, label, amount, currency, period, p.data.description ?? null, JSON.stringify(p.data.limits), p.data.active ? 1 : 0, Date.now(), pid,
+      "UPDATE plans SET name = ?, price_label = ?, price_amount = ?, price_currency = ?, price_period = ?, card_price_halalas = ?, description = ?, limits = ?, active = ?, updated_at = ? WHERE id = ?",
+      p.data.name, label, amount, currency, period, card, p.data.description ?? null, JSON.stringify(p.data.limits), p.data.active ? 1 : 0, Date.now(), pid,
     );
     await audit(c.env.DB, T(c), c.get("session").username, "plan.updated", pid);
     return c.json({ ok: true });

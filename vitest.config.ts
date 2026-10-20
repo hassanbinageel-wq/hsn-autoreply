@@ -30,6 +30,7 @@ export default defineConfig(async () => {
             SALLA_CLIENT_SECRET: "salla_test_secret",
             SALLA_WEBHOOK_SECRET: "salla_webhook_secret_test",
             RESEND_API_KEY: "re_test_key",
+            MOYASAR_SECRET_KEY: "sk_test_moyasar",
           },
         },
       }),

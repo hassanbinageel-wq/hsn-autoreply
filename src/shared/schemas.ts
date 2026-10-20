@@ -152,6 +152,8 @@ export const planUpdateSchema = z.object({
   price_amount: z.number().min(0).max(1_000_000).nullable().optional(),
   price_currency: z.enum(["USD", "SAR", "YER", "YER_SAN"]).optional(),
   price_period: z.enum(["month", "quarter", "year", "once"]).optional(),
+  /** Fixed card price in SAR (Moyasar); empty = no card payment for this plan. */
+  card_price_sar: z.number().min(1).max(100_000).nullable().optional(),
   description: text(200).optional(),
   active: z.boolean().default(true),
   limits: z.object({

@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { askConfirm } from "../components/Confirm";
+import { isStaff } from "../lib/me";
+import { isNative, openExternal } from "../platform";
 import { api } from "../api";
 import { Icon } from "../components/Icon";
 import { PlansShowcase } from "../components/PlansShowcase";
@@ -36,6 +39,50 @@ export function SubscriptionPage() {
       setBusy(false);
     }
   };
+  // Back from the card payment page (#/subscription?paid=<id>): re-check that payment with the gateway.
+  const [paidId, setPaidId] = useState(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("paid"));
+  const [checkKey, setCheckKey] = useState(0);
+  const [payResult, setPayResult] = useState<{ status: string; amount?: number; days?: number } | null>(null);
+  useEffect(() => {
+    if (!paidId) return;
+    let stop = false;
+    let tries = 0;
+    const check = async () => {
+      try {
+        const r = await api<{ status: string; amount: number; days: number }>(`/api/subscription/pay/${encodeURIComponent(paidId)}`);
+        if (stop) return;
+        setPayResult(r);
+        if (r.status === "paid") return reload();
+        // The callback can arrive a few seconds after the customer is sent back.
+        if (r.status === "initiated" && ++tries < 6) setTimeout(check, 4000);
+      } catch (e: any) {
+        if (!stop) setPayResult({ status: "error" });
+      }
+    };
+    check();
+    return () => { stop = true; };
+  }, [paidId, checkKey]);
+  const payCard = async (planId: string) => {
+    const plan = data?.plans?.find((p: any) => p.id === planId);
+    if (!plan?.card_price) return;
+    const ok = await askConfirm({
+      title: `الدفع بالبطاقة — ${plan.name}`,
+      message: `راح تنتقل لصفحة الدفع الآمنة (ميسّر) وتدفع ${plan.card_price.toLocaleString("en-US")} ر.س بمدى أو فيزا أو ماستركارد أو Apple Pay. بعد الدفع تتفعّل الباقة تلقائيًا${data.active && data.plan?.id === planId ? "، والمدة الجديدة تنضاف بعد تاريخ انتهاء اشتراكك الحالي" : data.active ? " — تنبيه: باقتك الحالية تتغيّر لهذي الباقة، والأيام المتبقية تنضاف لها" : ""}. أكواد الخصم ما تنطبق على الدفع بالبطاقة.`,
+      confirmLabel: "انتقل للدفع",
+    });
+    if (!ok) return;
+    try {
+      const r = await api<{ id: number; url: string }>("/api/subscription/pay", { body: { plan_id: planId } });
+      // In the Android app the payment page opens in the browser; back in the app, this page checks the payment.
+      if (isNative) {
+        await openExternal(r.url);
+        setPaidId(String(r.id));
+        setPayResult({ status: "initiated" });
+      } else location.href = r.url;
+    } catch (e: any) {
+      toast(e.message, "bad");
+    }
+  };
   if (loading && !data) return <Spinner />;
   if (error) return <Alert tone="bad">{error}</Alert>;
   if (data.owner) return <Alert tone="info">حساب المالك يعمل بكل المزايا بدون اشتراك.</Alert>;
@@ -46,6 +93,11 @@ export function SubscriptionPage() {
         <h1 className="text-2xl font-extrabold leading-tight sm:text-[26px]">اشتراكي</h1>
         <p className="muted mt-1 text-sm">باقتك الحالية واستهلاكك هذا الشهر، وتفعيل الكود.</p>
       </header>
+      {payResult && (
+        payResult.status === "paid" ? <Alert tone="good">✅ تم الدفع وتفعّلت باقتك{payResult.days ? ` (${payResult.days} يوم)` : ""}. شكرًا لك!</Alert>
+        : payResult.status === "initiated" ? <Alert tone="info">ننتظر تأكيد الدفع… إذا دفعت، تتفعّل الباقة تلقائيًا خلال دقائق ويوصلك إشعار. <button className="font-bold underline" onClick={() => setCheckKey((k) => k + 1)}>تحقق الحين</button></Alert>
+        : <Alert tone="bad">ما اكتمل الدفع ({payResult.status === "failed" ? "رُفضت البطاقة" : payResult.status === "expired" ? "انتهت مهلة الصفحة" : payResult.status === "canceled" ? "أُلغي" : "تعذر التأكد"}). ما انخصم منك شي إذا ما اكتمل — جرّب مرة ثانية أو استخدم طريقة دفع ثانية.</Alert>
+      )}
       {!data.active ? (
         <Alert tone="bad">
           {data.reason === "expired" ? `انتهى اشتراكك${data.expires_at ? ` في ${fmtTime(data.expires_at)}` : ""}` : "لا يوجد اشتراك فعّال"} — الردود التلقائية متوقفة حتى تُدخل كود تفعيل. بياناتك وحملاتك محفوظة.
@@ -78,7 +130,7 @@ export function SubscriptionPage() {
       </div>
       <ReferralCard />
       <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
-      <PlansShowcase catalog={data} currentPlanId={data.plan?.id} />
+      <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
     </div>
   );
 }

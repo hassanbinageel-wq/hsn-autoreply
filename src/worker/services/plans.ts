@@ -9,6 +9,7 @@ export interface PlanRow {
   price_amount: number | null;
   price_currency: string;
   price_period: string;
+  card_price_halalas: number | null;
   description: string | null;
   sort: number;
   limits: PlanLimits;
@@ -140,13 +141,24 @@ export async function redeemCode(db: D1Database, tenantId: number, raw: string, 
     now, tenantId, tenantId, tenantId, code.id,
   );
   if (!claimed.meta.changes) throw new RedeemError("used", "هذا الكود مستخدم مسبقًا");
+  return extendPlan(db, tenantId, code.plan_id, code.days, now);
+}
+
+/** Days a paid period buys (a one-time price has no fixed period, so it cannot be paid by card). */
+export const PERIOD_DAYS: Record<string, number> = { month: 30, quarter: 90, year: 365 };
+
+/**
+ * Puts a customer on a plan for `days` more days: added after the current expiry when it is still valid
+ * (renewing early never loses days), otherwise from now.
+ */
+export async function extendPlan(db: D1Database, tenantId: number, planId: string, days: number, now = Date.now()): Promise<{ plan_id: string; expires_at: number }> {
   const t = await first<{ plan_expires_at: number | null; plan_started_at: number | null }>(db, "SELECT plan_expires_at, plan_started_at FROM tenants WHERE id = ?", tenantId);
   const running = !!t?.plan_expires_at && t.plan_expires_at > now;
   const from = running ? t!.plan_expires_at! : now;
-  const expires = from + code.days * 86_400_000;
+  const expires = from + days * 86_400_000;
   const started = running ? (t!.plan_started_at ?? now) : now;
-  await run(db, "UPDATE tenants SET plan_id = ?, plan_expires_at = ?, plan_started_at = ?, expiry_notice_at = NULL, updated_at = ? WHERE id = ?", code.plan_id, expires, started, now, tenantId);
-  return { plan_id: code.plan_id, expires_at: expires };
+  await run(db, "UPDATE tenants SET plan_id = ?, plan_expires_at = ?, plan_started_at = ?, expiry_notice_at = NULL, updated_at = ? WHERE id = ?", planId, expires, started, now, tenantId);
+  return { plan_id: planId, expires_at: expires };
 }
 
 /** Removes a customer and everything that belongs to it (irreversible). Never the owner. */

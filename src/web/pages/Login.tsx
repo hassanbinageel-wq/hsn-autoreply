@@ -239,7 +239,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           <p className="muted text-center text-[11px] leading-relaxed">
             خدمة تقدّمها شركة ارقام المستديرة للدعاية والاعلان — الرقم الوطني الموحد 7042872536
             <br />
-            <a className="inline-block py-1 underline" href={`${API_BASE || ""}/privacy`} target="_blank" rel="noopener">الخصوصية</a> · <a className="inline-block py-1 underline" href={`${API_BASE || ""}/terms`} target="_blank" rel="noopener">الشروط</a>
+            <a className="inline-block py-1 underline" href={`${API_BASE || ""}/privacy`} target="_blank" rel="noopener">الخصوصية</a> · <a className="inline-block py-1 underline" href={`${API_BASE || ""}/terms`} target="_blank" rel="noopener">الشروط</a> · <a className="inline-block py-1 underline" href={`${API_BASE || ""}/refund`} target="_blank" rel="noopener">الاسترجاع</a>
           </p>
         </form>
       </div>
@@ -283,7 +283,7 @@ function PublicPlansPage() {
         <p className="muted text-center text-[11px] leading-relaxed">
           خدمة تقدّمها شركة ارقام المستديرة للدعاية والاعلان — الرقم الوطني الموحد 7042872536
           <br />
-          <a className="underline" href={`${API_BASE || ""}/privacy`} target="_blank" rel="noopener">الخصوصية</a> · <a className="underline" href={`${API_BASE || ""}/terms`} target="_blank" rel="noopener">الشروط</a>
+          <a className="underline" href={`${API_BASE || ""}/privacy`} target="_blank" rel="noopener">الخصوصية</a> · <a className="underline" href={`${API_BASE || ""}/terms`} target="_blank" rel="noopener">الشروط</a> · <a className="underline" href={`${API_BASE || ""}/refund`} target="_blank" rel="noopener">الاسترجاع</a>
         </p>
       </main>
     </div>

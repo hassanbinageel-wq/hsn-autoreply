@@ -13,7 +13,7 @@ import { Icon } from "../components/Icon";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, LIMIT_ROW_LABELS, PRICE_PERIODS, formatPrice, orderFeatures } from "../../shared/plans";
 
-const TABS = [["customers", "العملاء"], ["health", "صحة العملاء"], ["support", "الدعم"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["coupons", "الكوبونات والإحالة"], ["payments", "الحسابات البنكية"], ["branding", "صفحة الدخول"]] as const;
+const TABS = [["customers", "العملاء"], ["health", "صحة العملاء"], ["support", "الدعم"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["coupons", "الكوبونات والإحالة"], ["payments", "الدفع والحسابات"], ["branding", "صفحة الدخول"]] as const;
 /** Which staff section opens each tab (the account holder sees all). */
 const TAB_PERM: Record<(typeof TABS)[number][0], string> = { customers: "owner_customers", health: "owner_customers", support: "owner_support", plans: "owner_plans", codes: "owner_plans", coupons: "owner_plans", payments: "owner_payments", branding: "owner_branding" };
 
@@ -456,16 +456,17 @@ function PlansTab() {
 }
 
 function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onSaved: () => void }) {
-  const [f, setF] = useState(() => ({ ...plan, limits: { ...plan.limits } }));
+  const [f, setF] = useState(() => ({ ...plan, card_price: plan.card_price_halalas ? plan.card_price_halalas / 100 : "", limits: { ...plan.limits } }));
   const [busy, setBusy] = useState(false);
   const setL = (k: string, v: unknown) => setF((x: any) => ({ ...x, limits: { ...x.limits, [k]: v } }));
   const save = async () => {
     setBusy(true);
     try {
       const amount = f.price_amount === "" || f.price_amount === null || f.price_amount === undefined ? null : Number(f.price_amount);
+      const cardSar = f.card_price === "" || f.card_price == null ? null : Number(f.card_price);
       await api(`/api/owner/plans/${plan.id}`, {
         method: "PUT",
-        body: { name: f.name, price_amount: amount, price_currency: f.price_currency || "SAR", price_period: f.price_period || "month", description: f.description || undefined, active: !!f.active, limits: f.limits },
+        body: { name: f.name, price_amount: amount, price_currency: f.price_currency || "SAR", price_period: f.price_period || "month", card_price_sar: cardSar, description: f.description || undefined, active: !!f.active, limits: f.limits },
       });
       toast(`تم حفظ باقة «${f.name}»`);
       onSaved();
@@ -489,6 +490,9 @@ function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onS
               {Object.entries(PRICE_PERIODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
+        </Field>
+        <Field label={<Tip text="سعر ثابت بالريال السعودي يدفعه العميل ببطاقة (مدى / فيزا / ماستركارد / Apple Pay) عن طريق ميسّر، وتتفعّل الباقة تلقائيًا بعد الدفع لمدة الباقة (شهر 30 يوم، 3 أشهر 90، سنة 365). فارغ = لا يظهر زر الدفع بالبطاقة لهذي الباقة.">💳 سعر الدفع بالبطاقة (ر.س)</Tip>} hint={f.price_period === "once" ? "الدفع بالبطاقة يحتاج مدة (شهر / 3 أشهر / سنة) — مو «مرة واحدة»" : f.card_price === "" || f.card_price == null ? "فارغ = بدون دفع بالبطاقة" : `العميل يدفع ${Number(f.card_price).toLocaleString("en-US")} ر.س`}>
+          <input className="input" type="number" min={1} step="any" dir="ltr" value={f.card_price ?? ""} onChange={(e) => setF({ ...f, card_price: e.target.value })} placeholder="مثل 99" />
         </Field>
         <Field label="وصف قصير"><input className="input" value={f.description ?? ""} onChange={(e) => setF({ ...f, description: e.target.value })} maxLength={200} /></Field>
         {LIMIT_FIELDS.map(([k, label]) => (
@@ -549,7 +553,7 @@ export function OwnerPage() {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <PaymentsTab /> : <BrandingTab />}
+      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <><CardPaymentsCard /><PaymentsTab /></> : <BrandingTab />}
     </div>
   );
 }
@@ -733,6 +737,59 @@ function ProviderCard({ p, first, last, reload }: { p: any; first: boolean; last
         </div>
       ) : (
         <button className="btn btn-ghost mt-3 w-full text-xs" onClick={() => setAdding(true)}><Icon name="plus" size={15} />إضافة حساب آخر</button>
+      )}
+    </Card>
+  );
+}
+
+const CARD_STATUS: Record<string, [string, string]> = {
+  paid: ["مدفوع ✅", "text-emerald-700 dark:text-emerald-300"],
+  initiated: ["بانتظار الدفع", "muted"],
+  failed: ["فشل", "text-red-600"],
+  expired: ["انتهت المهلة", "muted"],
+  canceled: ["ألغاه العميل", "muted"],
+  error: ["خطأ في البوابة", "text-red-600"],
+  mismatch: ["مبلغ غير مطابق ⚠️", "text-red-600"],
+  refunded: ["مسترجع", "text-amber-600"],
+};
+
+/** Card payments through Moyasar: on/off state, the paid total and the latest attempts. */
+function CardPaymentsCard() {
+  const { data } = useAsync(() => api<any>("/api/owner/card-payments"), []);
+  if (!data) return null;
+  return (
+    <Card title="💳 الدفع بالبطاقة (ميسّر)" className="mb-5">
+      {!data.enabled ? (
+        <Alert tone="info">غير مفعّل. أضف المفتاح السري من لوحة ميسّر كـ GitHub Secret باسم <b dir="ltr">MOYASAR_SECRET_KEY</b> ثم انشر، وبعدها حط «سعر الدفع بالبطاقة» لكل باقة في تبويب الباقات.</Alert>
+      ) : (
+        <div className="space-y-3">
+          {data.test_mode && <Alert tone="warn">وضع تجريبي (sk_test) — المدفوعات وهمية وما توصل فلوس حقيقية. بدّله بالمفتاح الحي (sk_live) بعد ما يتفعّل حسابك في ميسّر.</Alert>}
+          <div className="flex flex-wrap gap-4 text-sm">
+            <span>المدفوع: <b>{data.paid_count}</b> دفعة</span>
+            <span>الإجمالي: <b>{Number(data.paid_total).toLocaleString("en-US")} ر.س</b> <span className="muted">(قبل عمولة ميسّر)</span></span>
+          </div>
+          {data.payments.length === 0 ? (
+            <p className="muted text-sm">ما فيه دفعات بعد.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="muted text-right text-xs"><th className="p-2">#</th><th className="p-2">العميل</th><th className="p-2">الباقة</th><th className="p-2">المبلغ</th><th className="p-2">الحالة</th><th className="p-2">التاريخ</th></tr></thead>
+                <tbody>
+                  {data.payments.map((p: any) => (
+                    <tr key={p.id} className="border-t border-[var(--border)]">
+                      <td className="p-2" dir="ltr">{p.id}</td>
+                      <td className="p-2">{p.tenant_name ?? `#${p.tenant_id}`}</td>
+                      <td className="p-2">{p.plan_name ?? p.plan_id} · {p.days} يوم</td>
+                      <td className="p-2 font-bold" dir="ltr">{(p.amount / 100).toLocaleString("en-US")} SAR</td>
+                      <td className={`p-2 ${CARD_STATUS[p.status]?.[1] ?? ""}`}>{CARD_STATUS[p.status]?.[0] ?? p.status}</td>
+                      <td className="muted p-2">{fmtTime(p.paid_at ?? p.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
     </Card>
   );

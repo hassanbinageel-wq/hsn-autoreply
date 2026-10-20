@@ -50,7 +50,7 @@ export default defineConfig(({ mode }) => {
             globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
             navigateFallback: "/index.html",
             // Server routes: tracked campaign links (/l/), media (/m/), card links (/c/) — never the app shell.
-            navigateFallbackDenylist: [/^\/api\//, /^\/l\//, /^\/m\//, /^\/c\//, /^\/webhooks\//, /^\/oauth\//, /^\/meta\//, /^\/privacy/, /^\/terms/, /^\/data-deletion/, /^\/healthz/, /^\/app\.apk/, /^\/pricing/],
+            navigateFallbackDenylist: [/^\/api\//, /^\/l\//, /^\/m\//, /^\/c\//, /^\/webhooks\//, /^\/oauth\//, /^\/meta\//, /^\/privacy/, /^\/terms/, /^\/refund/, /^\/data-deletion/, /^\/healthz/, /^\/app\.apk/, /^\/pricing/],
             runtimeCaching: [],
             cleanupOutdatedCaches: true,
           },

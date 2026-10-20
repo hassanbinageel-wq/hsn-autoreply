@@ -5,7 +5,7 @@ import { Field, Modal, Tip, toast } from "./ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, convertPrice, formatAmount, orderFeatures, type ExchangeRates, type PlanLimits } from "../../shared/plans";
 
 export interface Catalog {
-  plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits }>;
+  plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits; card_price?: number | null }>;
   rates: ExchangeRates;
   featured?: { plan_id: string | null; label: string };
   feature_order?: string[];
@@ -247,7 +247,7 @@ function CurrencySwitch({ cur, setCur }: { cur: string; setCur: (c: string) => v
  * Plan cards, prices converted with the owner's exchange rates. On phones they are a swipeable carousel
  * (first plan shown first, an arrow and dots to move to the next); from md up a three-column grid.
  */
-export function PlanCards({ catalog, cur, currentPlanId, onChoose, coupon = null }: { catalog: Catalog; cur: string; currentPlanId?: string | null; onChoose?: () => void; coupon?: Coupon }) {
+export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, coupon = null }: { catalog: Catalog; cur: string; currentPlanId?: string | null; onChoose?: () => void; onCardPay?: (planId: string) => void; coupon?: Coupon }) {
   const featured = catalog.featured ? catalog.featured.plan_id : catalog.plans.length >= 3 ? catalog.plans[1].id : null;
   const badge = catalog.featured?.label || "الأكثر طلبًا";
   const track = useRef<HTMLDivElement>(null);
@@ -294,8 +294,13 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, coupon = null
                 )}
               </div>
               {onChoose && (
-                <button type="button" onClick={onChoose} className={`btn mt-4 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>اشترك في {p.name}</button>
+                <button type="button" onClick={onChoose} className={`btn mt-4 w-full ${isFeatured && !(onCardPay && p.card_price) ? "btn-primary" : "btn-ghost"}`}>{onCardPay && p.card_price ? "تحويل بنكي / صرافة" : `اشترك في ${p.name}`}</button>
               )}
+              {onCardPay && p.card_price ? (
+                <button type="button" onClick={() => onCardPay(p.id)} className={`btn w-full ${onChoose ? "mt-2" : "mt-4"} ${isFeatured ? "btn-primary" : "btn-ghost"}`}>
+                  💳 ادفع بالبطاقة — {p.card_price.toLocaleString("en-US")} ر.س
+                </button>
+              ) : null}
               <div className="mt-4 flex-1"><Features limits={p.limits} order={catalog.feature_order} hideMissing /></div>
             </div>
           );
@@ -322,7 +327,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, coupon = null
   );
 }
 
-export function PlansShowcase({ catalog, currentPlanId }: { catalog: Catalog; currentPlanId?: string | null }) {
+export function PlansShowcase({ catalog, currentPlanId, onCardPay }: { catalog: Catalog; currentPlanId?: string | null; onCardPay?: (planId: string) => void }) {
   const [cur, setCur] = useState(() => catalog.plans.find((p) => p.price_amount !== null)?.price_currency ?? "SAR");
   const [coupon, setCoupon] = useState<Coupon>(null);
   const toPayment = () => document.getElementById("payment")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -333,7 +338,7 @@ export function PlansShowcase({ catalog, currentPlanId }: { catalog: Catalog; cu
       <div className="space-y-4">
         {anyPrice && <CurrencySwitch cur={cur} setCur={setCur} />}
         {anyPrice && <CouponBox coupon={coupon} setCoupon={setCoupon} />}
-        <PlanCards catalog={catalog} cur={cur} currentPlanId={currentPlanId} onChoose={hasPayment ? toPayment : undefined} coupon={coupon} />
+        <PlanCards catalog={catalog} cur={cur} currentPlanId={currentPlanId} onChoose={hasPayment ? toPayment : undefined} onCardPay={onCardPay} coupon={coupon} />
       </div>
       <PaymentMethods catalog={catalog} cur={cur} coupon={coupon} />
     </div>

@@ -185,6 +185,7 @@ export async function resetDb() {
     DB.prepare("DELETE FROM payment_accounts"),
     DB.prepare("DELETE FROM payment_providers"),
     DB.prepare("DELETE FROM usage_counters"),
+    DB.prepare("DELETE FROM card_payments"),
     DB.prepare("UPDATE tenants SET status = 'active' WHERE id = 1"),
     DB.prepare("DELETE FROM app_settings WHERE key LIKE 't%:%' OR key IN ('sales_contact', 'app_download_url', 'exchange_rates', 'login_banner', 'login_banner_at', 'login_banner_mobile', 'login_banner_mobile_at', 'login_texts', 'login_logo', 'featured_plan', 'login_app_icon', 'feature_order')"),
   ]);
