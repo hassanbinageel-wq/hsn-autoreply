@@ -89,7 +89,7 @@ function ScopeControl({ mode, onChanged }: { mode: "off" | "owner" | "all"; onCh
   const set = async (m: "off" | "owner" | "all") => {
     if (m !== "off" && !(await askConfirm({
       title: "طلب صلاحية النشر عند الربط؟",
-      message: "لازم تكون صلاحية instagram_business_content_publish مضافة لتطبيقك في لوحة Meta، وإلا بيفشل الربط.\n\nقبل موافقة Meta في مراجعة التطبيق، تشتغل فقط للحسابات اللي لها دور في التطبيق (مثل حسابك). لا تختار «كل العملاء» قبل الموافقة.\n\nبعد التفعيل: صفحة الربط ← «إعادة الاتصال» ← فعّل كل الصلاحيات ← السماح.",
+      message: "لازم تكون صلاحية instagram_business_content_publish مضافة لتطبيقك في لوحة Meta، وإلا بيفشل الربط.\n\nقبل موافقة Meta في مراجعة التطبيق، تشتغل فقط للحسابات اللي لها دور في التطبيق (مثل حسابك). لا تختار «تلقائي لمشتركي الباقة» إذا كان التطبيق Live والصلاحية ما انقبلت بعد.\n\nبعد التفعيل: صفحة الربط ← «إعادة الاتصال» ← فعّل كل الصلاحيات ← السماح.",
       confirmLabel: "فعّل",
     }))) return;
     try {
@@ -100,10 +100,11 @@ function ScopeControl({ mode, onChanged }: { mode: "off" | "owner" | "all"; onCh
       toast(e.message, "bad");
     }
   };
-  const opts: Array<[typeof mode, string]> = [["off", "إيقاف"], ["owner", "حسابي فقط"], ["all", "كل العملاء"]];
+  const opts: Array<[typeof mode, string]> = [["off", "إيقاف"], ["owner", "حسابي فقط"], ["all", "تلقائي لمشتركي الباقة"]];
   return (
     <div className="rounded-2xl border border-dashed border-[var(--border)] p-3">
       <div className="mb-2 font-semibold">لإدارة الخدمة: طلب صلاحية النشر عند ربط الحساب</div>
+      <p className="muted mb-2 text-xs">«تلقائي لمشتركي الباقة»: كل عميل باقته فيها الجدولة تنطلب منه الصلاحية عند الربط. قبل موافقة Meta على الصلاحية يشتغل فقط للحسابات المضافة كمختبرين — وإذا حوّلت التطبيق لوضع Live قبل الموافقة، ارجعه «حسابي فقط».</p>
       <div className="seg" role="group" aria-label="طلب صلاحية النشر">
         {opts.map(([k, l]) => <button key={k} type="button" aria-pressed={mode === k} className={mode === k ? "on" : ""} onClick={() => mode !== k && set(k)}>{l}</button>)}
       </div>

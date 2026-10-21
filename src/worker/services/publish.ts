@@ -83,9 +83,17 @@ export async function publishScopeMode(db: D1Database): Promise<ScopeMode> {
   const m = await getSetting<string>(db, OWNER_TENANT, "publish_scope", "off");
   return m === "owner" || m === "all" ? m : "off";
 }
+/**
+ * "all" = automatic by plan: every customer whose plan includes scheduling is asked for the permission when
+ * connecting (the owner always). "owner" = the owner's account only (before Meta approves the permission).
+ */
 export async function wantsPublishScope(db: D1Database, tenantId: number): Promise<boolean> {
   const mode = await publishScopeMode(db);
-  return mode === "all" || (mode === "owner" && tenantId === OWNER_TENANT);
+  if (mode === "off") return false;
+  if (tenantId === OWNER_TENANT) return true;
+  if (mode !== "all") return false;
+  const e = await getEntitlement(db, tenantId);
+  return e.owner || (e.active && !!e.limits.scheduling);
 }
 /** The optional permissions to request when this customer connects. */
 export async function optionalScopes(db: D1Database, tenantId: number): Promise<string[]> {
