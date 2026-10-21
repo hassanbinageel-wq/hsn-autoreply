@@ -161,3 +161,82 @@ describe("support center: FAQ, canned replies, response time, incident banner", 
     expect((await call("/api/owner/support-faq", A, "POST", { question: "اختراق؟", answer: "x" })).status).toBe(403);
   });
 });
+
+const PASTED = `**البداية والربط**
+
+**س: كيف أربط حساب إنستقرام؟**
+ج: افتح صفحة «الربط» واضغط «ربط عبر Instagram».
+فيديو: https://youtu.be/abc123
+
+**س: هل لازم يكون حسابي احترافي؟**
+ج: نعم، الحساب لازم يكون احترافي.
+
+---
+
+**الحملات والردود**
+
+**س: ليش الحملة ما ترد على التعليقات؟**
+ج: تأكد من هالنقاط:
+1) الحملة شغّالة.
+2) التعليق فيه كلمة تشغيل.
+
+---
+
+**أسئلة يناسبها فيديو:** الربط والحملة.`;
+
+describe("FAQ sections and import from text", () => {
+  it("parses sections, multi-line answers and video links; notes after «---» are left out", async () => {
+    const { parseFaqText } = await import("../src/shared/support");
+    const r = parseFaqText(PASTED);
+    expect(r.sections.map((s) => [s.title, s.items.length])).toEqual([["البداية والربط", 2], ["الحملات والردود", 1]]);
+    expect(r.sections[0].items[0]).toMatchObject({ question: "كيف أربط حساب إنستقرام؟", video_url: "https://youtu.be/abc123" });
+    expect(r.sections[1].items[0].answer).toBe("تأكد من هالنقاط:\n1) الحملة شغّالة.\n2) التعليق فيه كلمة تشغيل.");
+    expect(r.ignored.join(" ")).toContain("أسئلة يناسبها فيديو");
+  });
+
+  it("imports once (no duplicates), into sections the widget shows in order; sections can be renamed, reordered and deleted", async () => {
+    const first = await call("/api/owner/support-faq/import", OWNER, "POST", { text: PASTED });
+    expect(first.body).toMatchObject({ added: 3, updated: 0 });
+    expect((await call("/api/owner/support-faq/import", OWNER, "POST", { text: PASTED })).body).toMatchObject({ added: 0, updated: 3 });
+    expect((await call("/api/owner/support-faq/import", OWNER, "POST", { text: "كلام بدون أسئلة" })).status).toBe(422);
+    let pub = (await call("/api/public/support")).body;
+    expect(pub.sections.map((s: any) => s.title)).toEqual(["البداية والربط", "الحملات والردود"]);
+    const [s1, s2] = pub.sections;
+    expect(pub.faq.filter((f: any) => f.section_id === s1.id)).toHaveLength(2);
+    expect(pub.faq.find((f: any) => f.question.startsWith("كيف أربط")).video_url).toBe("https://youtu.be/abc123");
+    // reorder + rename + move a question + delete a section (its questions stay, without a section)
+    await call("/api/owner/support-faq-sections/order", OWNER, "PUT", { ids: [s2.id, s1.id] });
+    await call(`/api/owner/support-faq-sections/${s2.id}`, OWNER, "PUT", { title: "الحملات" });
+    const q = pub.faq.find((f: any) => f.section_id === s1.id);
+    expect((await call(`/api/owner/support-faq/${q.id}/move`, OWNER, "POST", { section_id: s2.id })).status).toBe(200);
+    expect((await call(`/api/owner/support-faq/${q.id}/move`, OWNER, "POST", { section_id: 99999 })).status).toBe(422);
+    pub = (await call("/api/public/support")).body;
+    expect(pub.sections.map((s: any) => s.title)).toEqual(["الحملات", "البداية والربط"]);
+    expect(pub.faq.find((f: any) => f.id === q.id).section_id).toBe(s2.id);
+    await call(`/api/owner/support-faq-sections/${s1.id}`, OWNER, "DELETE");
+    pub = (await call("/api/public/support")).body;
+    expect(pub.sections).toHaveLength(1);
+    expect(pub.faq).toHaveLength(3);
+    expect(pub.faq.filter((f: any) => f.section_id === null)).toHaveLength(1);
+    // the owner list has both
+    const own = (await call("/api/owner/support-faq", OWNER)).body;
+    expect(own.sections).toHaveLength(1);
+    expect(own.items).toHaveLength(3);
+  });
+
+  it("questions added one by one before move into the pasted sections (no duplicates); the emptied section goes away", async () => {
+    const gen = (await call("/api/owner/support-faq-sections", OWNER, "POST", { title: "عام" })).body.id;
+    await call("/api/owner/support-faq", OWNER, "POST", { question: "كيف أربط حساب إنستقرام ؟", answer: "قديم", section_id: gen });
+    expect((await call("/api/owner/support-faq/import", OWNER, "POST", { text: PASTED })).body).toMatchObject({ added: 2, updated: 1 });
+    const own = (await call("/api/owner/support-faq", OWNER)).body;
+    expect(own.items).toHaveLength(3);
+    expect(own.sections.map((s: any) => s.title)).toEqual(["البداية والربط", "الحملات والردود"]);
+    expect(own.items.find((i: any) => i.question.startsWith("كيف أربط")).answer).toContain("ربط عبر Instagram");
+  });
+
+  it("customers cannot manage sections or import", async () => {
+    const A = await customer("shop_a");
+    expect((await call("/api/owner/support-faq/import", A, "POST", { text: PASTED })).status).toBe(403);
+    expect((await call("/api/owner/support-faq-sections", A, "POST", { title: "x" })).status).toBe(403);
+  });
+});

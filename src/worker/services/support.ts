@@ -49,12 +49,13 @@ export const DEFAULT_RESPONSE_TIME = "نرد عادةً خلال 24 ساعة ف�
 
 /** What the help widget needs: the FAQ, the expected response time and the incident banner. */
 export async function supportCenter(db: D1Database) {
-  const [faq, responseTime, incident] = await Promise.all([
-    all<{ id: number; question: string; answer: string; video_url: string | null }>(db, "SELECT id, question, answer, video_url FROM support_faq WHERE active = 1 ORDER BY sort, id LIMIT 200"),
+  const [sections, faq, responseTime, incident] = await Promise.all([
+    all<{ id: number; title: string }>(db, "SELECT id, title FROM support_faq_sections ORDER BY sort, id LIMIT 50"),
+    all<{ id: number; question: string; answer: string; video_url: string | null; section_id: number | null }>(db, "SELECT id, question, answer, video_url, section_id FROM support_faq WHERE active = 1 ORDER BY sort, id LIMIT 300"),
     getSetting<string>(db, OWNER_TENANT, "support_response_time", ""),
     getSetting<Incident | null>(db, OWNER_TENANT, "support_incident", null),
   ]);
-  return { faq, response_time: responseTime || DEFAULT_RESPONSE_TIME, incident: incident?.active && incident.text ? incident : null };
+  return { sections, faq, response_time: responseTime || DEFAULT_RESPONSE_TIME, incident: incident?.active && incident.text ? incident : null };
 }
 
 /** Removes the files of tickets resolved more than 30 days ago (daily). Returns how many were removed. */

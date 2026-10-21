@@ -6,7 +6,8 @@ import { Icon } from "./Icon";
 import { Alert } from "./ui";
 
 export interface SupportCenter {
-  faq: Array<{ id: number; question: string; answer: string; video_url: string | null }>;
+  sections?: Array<{ id: number; title: string }>;
+  faq: Array<{ id: number; question: string; answer: string; video_url: string | null; section_id?: number | null }>;
   response_time: string;
   incident: { text: string; tone: "info" | "warn" | "bad" } | null;
 }
@@ -55,6 +56,13 @@ export function HelpWidget({ center, isOwner }: { center: SupportCenter | null; 
       return words.every((w) => hay.includes(w));
     });
   }, [faq, q]);
+  // Questions under their section titles (in the owner's order); questions without a section come last.
+  const grouped = useMemo(() => {
+    const secs = center?.sections ?? [];
+    const out = secs.map((sec) => ({ key: String(sec.id), title: sec.title, items: results.filter((f) => f.section_id === sec.id) }));
+    out.push({ key: "rest", title: secs.length ? "أخرى" : "", items: results.filter((f) => !f.section_id || !secs.some((x) => x.id === f.section_id)) });
+    return out.filter((g) => g.items.length);
+  }, [center, results]);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
@@ -94,7 +102,10 @@ export function HelpWidget({ center, isOwner }: { center: SupportCenter | null; 
             ) : !results.length ? (
               <p className="muted p-4 text-center text-sm">{faq.length ? "ما لقينا سؤال مطابق — افتح طلب دعم ونرد عليك." : "افتح طلب دعم ونرد عليك."}</p>
             ) : (
-              results.map((f) => (
+              grouped.map((g) => (
+                <div key={g.key} className="mb-1">
+                  {g.title && <div className="muted px-2.5 pb-1 pt-2 text-[11px] font-extrabold">{g.title}</div>}
+                  {g.items.map((f) => (
                 <div key={f.id} className="rounded-xl">
                   <button type="button" onClick={() => setShown(shown === f.id ? null : f.id)} aria-expanded={shown === f.id} className="flex w-full items-start gap-2 rounded-xl px-2.5 py-2.5 text-right text-sm font-bold hover:bg-[var(--surface-2)]">
                     <Icon name="chev" size={14} className={`mt-1 shrink-0 transition ${shown === f.id ? "rotate-180" : ""}`} />
@@ -111,6 +122,8 @@ export function HelpWidget({ center, isOwner }: { center: SupportCenter | null; 
                       )}
                     </div>
                   )}
+                </div>
+                  ))}
                 </div>
               ))
             )}

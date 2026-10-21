@@ -82,23 +82,54 @@ export async function getEntitlement(db: D1Database, tenantId: number, now = Dat
 
 export const monthKey = (now = Date.now()) => new Date(now).toISOString().slice(0, 7);
 
+/** Length of a usage cycle: the plan's monthly limits renew every 30 days of the subscription. */
+export const CYCLE_MS = 30 * 86_400_000;
+
+export interface UsageCycle {
+  /** Key of the counter row (usage_counters.month). */
+  key: string;
+  start: number;
+  end: number;
+  /** When the counter starts again; null when the subscription ends first (it starts again with the renewal). */
+  resets_at: number | null;
+}
+
+/**
+ * The customer's current usage cycle: 30-day periods counted from the day the subscription started (renewing early
+ * keeps the same start, so the counter is not reset early; a new subscription after expiry starts a new cycle).
+ */
+export async function usageCycle(db: D1Database, tenantId: number, now = Date.now()): Promise<UsageCycle> {
+  const t = await first<{ plan_started_at: number | null; plan_expires_at: number | null; created_at: number }>(db, "SELECT plan_started_at, plan_expires_at, created_at FROM tenants WHERE id = ?", tenantId);
+  return cycleOf(t?.plan_started_at ?? t?.created_at ?? 0, t?.plan_expires_at ?? null, now);
+}
+export function cycleOf(anchor: number, expiresAt: number | null, now = Date.now()): UsageCycle {
+  const n = Math.max(0, Math.floor((now - anchor) / CYCLE_MS));
+  const start = anchor + n * CYCLE_MS;
+  const end = start + CYCLE_MS;
+  return { key: `c${anchor}-${n}`, start, end, resets_at: expiresAt && end < expiresAt ? end : null };
+}
+
+/** Messages sent in the current cycle. */
 export async function monthlyMessages(db: D1Database, tenantId: number, now = Date.now()): Promise<number> {
-  return (await first<{ messages: number }>(db, "SELECT messages FROM usage_counters WHERE tenant_id = ? AND month = ?", tenantId, monthKey(now)))?.messages ?? 0;
+  const cy = await usageCycle(db, tenantId, now);
+  return (await first<{ messages: number }>(db, "SELECT messages FROM usage_counters WHERE tenant_id = ? AND month = ?", tenantId, cy.key))?.messages ?? 0;
 }
 
 /** One message (DM, private or public reply) accepted by Meta for a customer. */
 export async function countMessage(db: D1Database, tenantId: number, now = Date.now()): Promise<void> {
+  const cy = await usageCycle(db, tenantId, now);
   await run(
     db,
     "INSERT INTO usage_counters (tenant_id, month, messages) VALUES (?, ?, 1) ON CONFLICT(tenant_id, month) DO UPDATE SET messages = messages + 1",
     tenantId,
-    monthKey(now),
+    cy.key,
   );
 }
 
+/** Draws created in the current cycle. */
 export async function drawsThisMonth(db: D1Database, tenantId: number, now = Date.now()): Promise<number> {
-  const start = Date.parse(`${monthKey(now)}-01T00:00:00Z`);
-  return (await first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM draws WHERE tenant_id = ? AND created_at >= ?", tenantId, start))?.n ?? 0;
+  const cy = await usageCycle(db, tenantId, now);
+  return (await first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM draws WHERE tenant_id = ? AND created_at >= ? AND created_at < ?", tenantId, cy.start, cy.end))?.n ?? 0;
 }
 
 /** A new activation code, e.g. HSN-7KQ2-M9XA-TR4D (shown once; only its hash is stored). */

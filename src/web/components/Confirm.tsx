@@ -9,7 +9,7 @@ type Choice = { label: string; value: string; danger?: boolean };
 type Request =
   | { kind: "confirm"; title: string; message?: string; confirmLabel: string; cancelLabel?: string; danger?: boolean; resolve: (v: boolean) => void }
   | { kind: "choice"; title: string; message?: string; choices: Choice[]; cancelLabel?: string; resolve: (v: string | null) => void }
-  | { kind: "text"; title: string; message?: string; label: string; expect?: string; confirmLabel: string; danger?: boolean; resolve: (v: string | null) => void }
+  | { kind: "text"; title: string; message?: string; label: string; expect?: string; initial?: string; confirmLabel: string; danger?: boolean; resolve: (v: string | null) => void }
   | { kind: "copy"; title: string; message?: string; text: string; resolve: () => void };
 
 let push: ((r: Request) => void) | null = null;
@@ -25,7 +25,7 @@ export function askChoice(o: { title: string; message?: string; choices: Choice[
   return new Promise((resolve) => push!({ kind: "choice", ...o, resolve }));
 }
 /** Typed confirmation: the action button stays disabled until the person types `expect` exactly. */
-export function askText(o: { title: string; message?: string; label: string; expect?: string; confirmLabel: string; danger?: boolean }): Promise<string | null> {
+export function askText(o: { title: string; message?: string; label: string; expect?: string; initial?: string; confirmLabel: string; danger?: boolean }): Promise<string | null> {
   if (!push) return fallback(window.prompt([o.title, o.message].filter(Boolean).join("\n\n")));
   return new Promise((resolve) => push!({ kind: "text", ...o, resolve }));
 }
@@ -42,7 +42,7 @@ export function ConfirmHost() {
   const first = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     push = (req) => {
-      setText("");
+      setText(req.kind === "text" ? (req.initial ?? "") : "");
       setCopied(false);
       setR(req);
     };

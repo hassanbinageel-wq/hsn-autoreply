@@ -155,6 +155,7 @@ const TABLES = [
   "owner_messages",
   "support_messages",
   "support_faq",
+  "support_faq_sections",
   "support_canned",
   "support_threads",
   "sub_coupons",

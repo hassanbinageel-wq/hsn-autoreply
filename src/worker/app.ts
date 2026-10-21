@@ -91,8 +91,9 @@ import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp }
 import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
+import { parseFaqText } from "../shared/support";
 import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
-import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
+import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { cardEnabled, cardPriceHalalas, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, refundPage, termsPage } from "./pages";
@@ -119,6 +120,9 @@ async function parseBody<T extends z.ZodTypeAny>(c: C, schema: T): Promise<{ ok:
   }
   return { ok: true, data: r.data };
 }
+
+/** FAQ text compared without case, diacritics, punctuation or extra spaces (to skip duplicates on import). */
+const normFaq = (v: string) => v.toLowerCase().replace(/[\u064B-\u0652\u0640]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/[؟?!.,،:«»"'()\s]+/g, " ").trim();
 
 const idParam = (c: C) => {
   const n = Number(c.req.param("id"));
@@ -1000,14 +1004,16 @@ export function createApp() {
   // ---- Subscription of the logged-in customer
   api.get("/subscription", async (c) => {
     const e = await ENT(c);
-    const [messages, activeCampaigns, draws] = await Promise.all([
+    const [messages, activeCampaigns, draws, cycle] = await Promise.all([
       monthlyMessages(c.env.DB, T(c)),
       first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM campaigns WHERE tenant_id = ? AND status = 'active' AND deleted_at IS NULL", T(c)),
       drawsThisMonth(c.env.DB, T(c)),
+      usageCycle(c.env.DB, T(c)),
     ]);
     return c.json({
       ...e,
-      usage: { messages, active_campaigns: activeCampaigns?.n ?? 0, draws_this_month: draws },
+      // Monthly limits renew every 30 days of the subscription (resets_at null = with the next renewal).
+      usage: { messages, active_campaigns: activeCampaigns?.n ?? 0, draws_this_month: draws, cycle_start: cycle.start, resets_at: cycle.resets_at },
       ...(await publicCatalog(c)),
       app_download_url: await appDownloadUrl(c),
     });
@@ -1231,22 +1237,113 @@ export function createApp() {
     .trim()
     .max(300)
     .refine((v) => v === "" || /^https:\/\/((www\.|m\.)?youtube\.com|youtu\.be|(www\.)?instagram\.com)\//i.test(v), "رابط الفيديو لازم يكون من يوتيوب أو إنستقرام ويبدأ بـ https://");
-  const faqSchema = z.object({ question: z.string().trim().min(3).max(200), answer: z.string().trim().min(1).max(3000), video_url: videoUrl.optional(), sort: z.number().int().min(0).max(10_000).optional(), active: z.boolean().optional() });
-  owner.get("/support-faq", async (c) => c.json(await all(c.env.DB, "SELECT id, question, answer, video_url, sort, active FROM support_faq ORDER BY sort, id LIMIT 300")));
+  const faqSchema = z.object({ question: z.string().trim().min(3).max(200), answer: z.string().trim().min(1).max(3000), video_url: videoUrl.optional(), section_id: z.number().int().positive().nullable().optional(), sort: z.number().int().min(0).max(10_000).optional(), active: z.boolean().optional() });
+  const sectionOk = async (c: C, id: number | null | undefined) => !id || !!(await first(c.env.DB, "SELECT 1 FROM support_faq_sections WHERE id = ?", id));
+  owner.get("/support-faq", async (c) =>
+    c.json({
+      sections: await all(c.env.DB, "SELECT id, title, sort FROM support_faq_sections ORDER BY sort, id LIMIT 50"),
+      items: await all(c.env.DB, "SELECT id, question, answer, video_url, section_id, sort, active FROM support_faq ORDER BY sort, id LIMIT 300"),
+    }),
+  );
   owner.post("/support-faq", async (c) => {
     const p = await parseBody(c, faqSchema);
     if (!p.ok) return p.res;
+    if (!(await sectionOk(c, p.data.section_id))) return apiError(c, 422, "validation", "القسم غير موجود");
     const now = Date.now();
     const sort = p.data.sort ?? ((await first<{ n: number | null }>(c.env.DB, "SELECT MAX(sort) AS n FROM support_faq"))?.n ?? 0) + 1;
-    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO support_faq (question, answer, video_url, sort, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id", p.data.question, p.data.answer, p.data.video_url || null, sort, p.data.active === false ? 0 : 1, now, now);
+    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO support_faq (question, answer, video_url, section_id, sort, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id", p.data.question, p.data.answer, p.data.video_url || null, p.data.section_id ?? null, sort, p.data.active === false ? 0 : 1, now, now);
     return c.json({ id: r!.id });
   });
   owner.put("/support-faq/:id", async (c) => {
     const p = await parseBody(c, faqSchema);
     if (!p.ok) return p.res;
-    const r = await run(c.env.DB, "UPDATE support_faq SET question = ?, answer = ?, video_url = ?, sort = COALESCE(?, sort), active = ?, updated_at = ? WHERE id = ?", p.data.question, p.data.answer, p.data.video_url || null, p.data.sort ?? null, p.data.active === false ? 0 : 1, Date.now(), idParam(c));
+    if (!(await sectionOk(c, p.data.section_id))) return apiError(c, 422, "validation", "القسم غير موجود");
+    const r = await run(
+      c.env.DB,
+      "UPDATE support_faq SET question = ?, answer = ?, video_url = ?, section_id = CASE WHEN ? THEN ? ELSE section_id END, sort = COALESCE(?, sort), active = ?, updated_at = ? WHERE id = ?",
+      p.data.question, p.data.answer, p.data.video_url || null, p.data.section_id !== undefined ? 1 : 0, p.data.section_id ?? null, p.data.sort ?? null, p.data.active === false ? 0 : 1, Date.now(), idParam(c),
+    );
     if (!r.meta.changes) return apiError(c, 404, "not_found", "السؤال غير موجود");
     return c.json({ ok: true });
+  });
+  // Moves a question to a section (null = no section) and/or a new place in the order.
+  owner.post("/support-faq/:id/move", async (c) => {
+    const p = await parseBody(c, z.object({ section_id: z.number().int().positive().nullable().optional(), sort: z.number().int().min(0).max(10_000).optional() }));
+    if (!p.ok) return p.res;
+    if (!(await sectionOk(c, p.data.section_id))) return apiError(c, 422, "validation", "القسم غير موجود");
+    await run(c.env.DB, "UPDATE support_faq SET section_id = CASE WHEN ? THEN ? ELSE section_id END, sort = COALESCE(?, sort), updated_at = ? WHERE id = ?", p.data.section_id !== undefined ? 1 : 0, p.data.section_id ?? null, p.data.sort ?? null, Date.now(), idParam(c));
+    return c.json({ ok: true });
+  });
+  // Sections of the FAQ.
+  const sectionSchema = z.object({ title: z.string().trim().min(1).max(80) });
+  owner.post("/support-faq-sections", async (c) => {
+    const p = await parseBody(c, sectionSchema);
+    if (!p.ok) return p.res;
+    if (((await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM support_faq_sections"))?.n ?? 0) >= 50) return apiError(c, 409, "too_many", "الحد 50 قسم");
+    const sort = ((await first<{ n: number | null }>(c.env.DB, "SELECT MAX(sort) AS n FROM support_faq_sections"))?.n ?? 0) + 1;
+    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO support_faq_sections (title, sort, created_at) VALUES (?, ?, ?) RETURNING id", p.data.title, sort, Date.now());
+    return c.json({ id: r!.id });
+  });
+  owner.put("/support-faq-sections/order", async (c) => {
+    const p = await parseBody(c, z.object({ ids: z.array(z.number().int().positive()).max(50) }));
+    if (!p.ok) return p.res;
+    await c.env.DB.batch(p.data.ids.map((id, i) => c.env.DB.prepare("UPDATE support_faq_sections SET sort = ? WHERE id = ?").bind(i, id)));
+    return c.json({ ok: true });
+  });
+  owner.put("/support-faq-sections/:id", async (c) => {
+    const p = await parseBody(c, sectionSchema);
+    if (!p.ok) return p.res;
+    await run(c.env.DB, "UPDATE support_faq_sections SET title = ? WHERE id = ?", p.data.title, idParam(c));
+    return c.json({ ok: true });
+  });
+  // Deleting a section keeps its questions (they move to «بدون قسم»).
+  owner.delete("/support-faq-sections/:id", async (c) => {
+    await run(c.env.DB, "UPDATE support_faq SET section_id = NULL WHERE section_id = ?", idParam(c));
+    await run(c.env.DB, "DELETE FROM support_faq_sections WHERE id = ?", idParam(c));
+    return c.json({ ok: true });
+  });
+  // Many questions at once from pasted text (sections created by title; a question already there is skipped).
+  owner.post("/support-faq/import", async (c) => {
+    const p = await parseBody(c, z.object({ text: z.string().max(100_000) }));
+    if (!p.ok) return p.res;
+    const parsed = parseFaqText(p.data.text);
+    if (!parsed.sections.length) return apiError(c, 422, "validation", "ما لقينا أسئلة — كل سؤال يبدأ بـ «س:» وجوابه بـ «ج:»");
+    // A question already there (same text) is moved to the pasted section and gets the pasted answer — not duplicated.
+    const rows = await all<{ id: number; question: string; section_id: number | null }>(c.env.DB, "SELECT id, question, section_id FROM support_faq");
+    const existing = new Map(rows.map((r) => [normFaq(r.question), r.id]));
+    const left = new Set<number>();
+    const sections = await all<{ id: number; title: string }>(c.env.DB, "SELECT id, title FROM support_faq_sections");
+    let sSort = ((await first<{ n: number | null }>(c.env.DB, "SELECT MAX(sort) AS n FROM support_faq_sections"))?.n ?? 0) + 1;
+    let qSort = ((await first<{ n: number | null }>(c.env.DB, "SELECT MAX(sort) AS n FROM support_faq"))?.n ?? 0) + 1;
+    const now = Date.now();
+    let added = 0;
+    let updated = 0;
+    for (const sec of parsed.sections) {
+      let sid = sections.find((s) => normFaq(s.title) === normFaq(sec.title))?.id;
+      if (!sid) {
+        if (sections.length >= 50) return apiError(c, 409, "too_many", "الحد 50 قسم");
+        sid = (await first<{ id: number }>(c.env.DB, "INSERT INTO support_faq_sections (title, sort, created_at) VALUES (?, ?, ?) RETURNING id", sec.title, sSort++, now))!.id;
+        sections.push({ id: sid, title: sec.title });
+      }
+      for (const it of sec.items) {
+        const video = it.video_url && /^https:\/\/((www\.|m\.)?youtube\.com|youtu\.be|(www\.)?instagram\.com)\//i.test(it.video_url) ? it.video_url : null;
+        const known = existing.get(normFaq(it.question));
+        if (known) {
+          const was = rows.find((r) => r.id === known)?.section_id;
+          if (was && was !== sid) left.add(was);
+          await run(c.env.DB, "UPDATE support_faq SET answer = ?, video_url = COALESCE(?, video_url), section_id = ?, sort = ?, updated_at = ? WHERE id = ?", it.answer, video, sid, qSort++, now, known);
+          updated++;
+          continue;
+        }
+        const r = await first<{ id: number }>(c.env.DB, "INSERT INTO support_faq (question, answer, video_url, section_id, sort, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?) RETURNING id", it.question, it.answer, video, sid, qSort++, now, now);
+        existing.set(normFaq(it.question), r!.id);
+        added++;
+      }
+    }
+    // A section the import emptied (e.g. «عام») is removed; sections the owner left empty on purpose stay.
+    for (const id of left) await run(c.env.DB, "DELETE FROM support_faq_sections WHERE id = ? AND NOT EXISTS (SELECT 1 FROM support_faq f WHERE f.section_id = ?)", id, id);
+    await audit(c.env.DB, T(c), c.get("session").username, "support.faq_import", String(added), { updated });
+    return c.json({ ok: true, added, updated });
   });
   owner.delete("/support-faq/:id", async (c) => {
     await run(c.env.DB, "DELETE FROM support_faq WHERE id = ?", idParam(c));
@@ -1355,7 +1452,8 @@ export function createApp() {
       c.env.DB,
       `SELECT t.id, t.name, t.is_owner, t.status, t.notes, t.created_at, t.plan_id, t.plan_expires_at, t.plan_started_at,
               (SELECT p.name FROM plans p WHERE p.id = t.plan_id) AS plan_name,
-              (SELECT u.messages FROM usage_counters u WHERE u.tenant_id = t.id AND u.month = ?) AS messages_month,
+              (SELECT u.messages FROM usage_counters u WHERE u.tenant_id = t.id
+                  AND u.month = 'c' || COALESCE(t.plan_started_at, t.created_at) || '-' || MAX(0, (? - COALESCE(t.plan_started_at, t.created_at)) / ${CYCLE_MS})) AS messages_month,
               (SELECT json_extract(p.limits, '$.monthly_messages') FROM plans p WHERE p.id = t.plan_id) AS messages_limit,
               (SELECT u.username FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS username,
               (SELECT u.email FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email,
@@ -1369,7 +1467,7 @@ export function createApp() {
               (SELECT COUNT(*) FROM conversation_flows f WHERE f.is_demo = 0 AND f.created_at > ? AND f.account_id IN (SELECT id FROM instagram_accounts WHERE tenant_id = t.id)) AS flows_30d,
               (SELECT MAX(s.last_seen_at) FROM sessions s JOIN admin_users u ON u.id = s.user_id WHERE u.tenant_id = t.id) AS last_seen_at
          FROM tenants t ORDER BY t.is_owner DESC, t.id DESC`,
-      new Date().toISOString().slice(0, 7),
+      Date.now(),
       since,
     );
     return c.json(rows);

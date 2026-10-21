@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, authedObjectUrl, uploadFile } from "../api";
-import { askConfirm } from "../components/Confirm";
+import { askConfirm, askText } from "../components/Confirm";
 import { Icon } from "../components/Icon";
-import { Alert, Card, Field, PageHeader, Spinner, Toggle, fmtTime, toast, useAsync } from "../components/ui";
+import { Alert, Card, Field, Modal, PageHeader, Spinner, Toggle, fmtTime, toast, useAsync } from "../components/ui";
 import { normText } from "../lib/text";
-import { ATTACH_IMAGE, ATTACH_IMAGE_BYTES, ATTACH_VIDEO, ATTACH_VIDEO_BYTES, CATEGORIES, PRIORITIES, STATES, ticketNo, type TicketCategory, type TicketPriority, type TicketState } from "../../shared/support";
+import { ATTACH_IMAGE, ATTACH_IMAGE_BYTES, ATTACH_VIDEO, ATTACH_VIDEO_BYTES, CATEGORIES, parseFaqText, PRIORITIES, STATES, ticketNo, type TicketCategory, type TicketPriority, type TicketState } from "../../shared/support";
 
 /**
  * Support center. Customers: their tickets with the service owner (type, number, state, replies, one image or
@@ -382,43 +382,162 @@ export function OwnerSupportTab() {
   );
 }
 
+type FaqItem = { id: number; question: string; answer: string; video_url: string | null; section_id: number | null; sort: number; active: number };
+type FaqSection = { id: number; title: string; sort: number };
+
+/** FAQ in sections: add / rename / order / delete sections, move questions between them, import many from text. */
 function FaqManager() {
-  const { data, reload } = useAsync(() => api<any[]>("/api/owner/support-faq"), []);
+  const { data, reload } = useAsync(() => api<{ sections: FaqSection[]; items: FaqItem[] }>("/api/owner/support-faq"), []);
   const [edit, setEdit] = useState<any | null>(null);
+  const [importing, setImporting] = useState(false);
   if (!data) return <Spinner />;
+  const { sections, items } = data;
+  const groups: Array<{ section: FaqSection | null; items: FaqItem[] }> = [
+    ...sections.map((s) => ({ section: s, items: items.filter((i) => i.section_id === s.id) })),
+    { section: null, items: items.filter((i) => !i.section_id || !sections.some((s) => s.id === i.section_id)) },
+  ];
+  const run = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+      reload();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    }
+  };
+  const addSection = async () => {
+    const title = await askText({ title: "قسم جديد", label: "اسم القسم (مثل: البداية والربط)", confirmLabel: "إضافة" });
+    if (title?.trim()) run(() => api("/api/owner/support-faq-sections", { body: { title: title.trim() } }));
+  };
+  const moveSection = (i: number, d: -1 | 1) => {
+    const ids = sections.map((s) => s.id);
+    [ids[i], ids[i + d]] = [ids[i + d], ids[i]];
+    run(() => api("/api/owner/support-faq-sections/order", { method: "PUT", body: { ids } }));
+  };
+  const moveItem = (list: FaqItem[], i: number, d: -1 | 1) => {
+    const a = list[i];
+    const b = list[i + d];
+    const sa = a.sort === b.sort ? b.sort + d : b.sort;
+    run(async () => {
+      await api(`/api/owner/support-faq/${a.id}/move`, { body: { sort: Math.max(0, sa) } });
+      await api(`/api/owner/support-faq/${b.id}/move`, { body: { sort: a.sort } });
+    });
+  };
   return (
-    <Card title="الأسئلة الشائعة" action={!edit && <button className="btn btn-primary min-h-9 text-xs" onClick={() => setEdit({ question: "", answer: "", video_url: "", active: true })}><Icon name="plus" size={14} />سؤال جديد</button>}>
-      <p className="muted mb-3 text-sm">تظهر في أيقونة المساعدة أسفل الشاشة مع البحث. تقدر تضيف رابط فيديو شرح من يوتيوب أو إنستقرام.</p>
-      {edit && <FaqForm item={edit} onDone={() => { setEdit(null); reload(); }} />}
-      {!data.length && !edit ? (
-        <p className="muted py-4 text-center text-sm">ما فيه أسئلة بعد.</p>
+    <Card
+      title="الأسئلة الشائعة"
+      action={
+        <div className="flex flex-wrap gap-1.5">
+          <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setImporting(true)}><Icon name="upload" size={14} />استيراد من نص</button>
+          <button className="btn btn-ghost min-h-9 text-xs" onClick={addSection}><Icon name="plus" size={14} />قسم</button>
+          {!edit && <button className="btn btn-primary min-h-9 text-xs" onClick={() => setEdit({ question: "", answer: "", video_url: "", active: true, section_id: sections[0]?.id ?? null })}><Icon name="plus" size={14} />سؤال</button>}
+        </div>
+      }
+    >
+      <p className="muted mb-3 text-sm">تظهر في أيقونة «؟» مجمّعة حسب الأقسام، مع البحث. تقدر تضيف رابط فيديو شرح من يوتيوب أو إنستقرام لأي سؤال.</p>
+      {edit && <FaqForm item={edit} sections={sections} onDone={() => { setEdit(null); reload(); }} />}
+      {importing && <FaqImport onClose={() => setImporting(false)} onDone={() => { setImporting(false); reload(); }} />}
+      {!items.length && !sections.length && !edit ? (
+        <p className="muted py-4 text-center text-sm">ما فيه أسئلة بعد — أضف سؤال أو استورد مجموعة من نص.</p>
       ) : (
-        <div className="divide-y divide-[var(--border)]">
-          {data.map((f, i) => (
-            <div key={f.id} className="flex items-start gap-2 py-2.5">
-              <div className="min-w-0 flex-1">
-                <b className={`block text-sm ${f.active ? "" : "muted line-through"}`}>{f.question}</b>
-                <p className="muted line-clamp-2 text-xs">{f.answer}</p>
-                {f.video_url && <span className="text-[11px] text-violet-700 dark:text-violet-300">🎬 فيديو مرفق</span>}
+        <div className="space-y-4">
+          {groups.map(({ section, items: list }, gi) =>
+            !section && !list.length ? null : (
+              <div key={section?.id ?? "none"} className="rounded-2xl border border-[var(--border)]">
+                <div className="flex items-center gap-1.5 border-b border-[var(--border)] bg-[var(--surface-2)] px-3 py-2">
+                  <b className="flex-1 text-sm">{section ? section.title : "بدون قسم"} <span className="muted text-xs font-normal">({list.length})</span></b>
+                  {section && (
+                    <>
+                      <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={gi === 0} aria-label="القسم لفوق" onClick={() => moveSection(gi, -1)}>▲</button>
+                      <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={gi === sections.length - 1} aria-label="القسم لتحت" onClick={() => moveSection(gi, 1)}>▼</button>
+                      <button className="btn btn-ghost min-h-8 text-xs" onClick={async () => { const t = await askText({ title: "اسم القسم", label: "الاسم", initial: section.title, confirmLabel: "حفظ" }); if (t?.trim()) run(() => api(`/api/owner/support-faq-sections/${section.id}`, { method: "PUT", body: { title: t.trim() } })); }}>تسمية</button>
+                      <button className="btn btn-ghost min-h-8 text-xs text-red-600" onClick={async () => { if (await askConfirm({ title: `حذف قسم «${section.title}»؟`, message: "أسئلته ما تنحذف — تنتقل إلى «بدون قسم».", confirmLabel: "حذف القسم", danger: true })) run(() => api(`/api/owner/support-faq-sections/${section.id}`, { method: "DELETE" })); }}>حذف</button>
+                    </>
+                  )}
+                </div>
+                <div className="divide-y divide-[var(--border)] px-3">
+                  {!list.length && <p className="muted py-3 text-xs">ما فيه أسئلة في هذا القسم.</p>}
+                  {list.map((f, i) => (
+                    <div key={f.id} className="flex flex-wrap items-start gap-2 py-2.5">
+                      <div className="min-w-0 flex-1 basis-60">
+                        <b className={`block text-sm ${f.active ? "" : "muted line-through"}`}>{f.question}</b>
+                        <p className="muted line-clamp-2 whitespace-pre-line text-xs">{f.answer}</p>
+                        {f.video_url && <span className="text-[11px] text-violet-700 dark:text-violet-300">🎬 فيديو مرفق</span>}
+                      </div>
+                      <select className="input min-h-8 w-auto max-w-[150px] px-2 py-1 text-xs" value={f.section_id ?? ""} aria-label="نقل إلى قسم" onChange={(e) => run(() => api(`/api/owner/support-faq/${f.id}/move`, { body: { section_id: e.target.value ? Number(e.target.value) : null } }))}>
+                        <option value="">بدون قسم</option>
+                        {sections.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
+                      </select>
+                      <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={i === 0} aria-label="لفوق" onClick={() => moveItem(list, i, -1)}>▲</button>
+                      <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={i === list.length - 1} aria-label="لتحت" onClick={() => moveItem(list, i, 1)}>▼</button>
+                      <button className="btn btn-ghost min-h-8 text-xs" onClick={() => setEdit({ ...f, video_url: f.video_url ?? "", active: !!f.active })}>تعديل</button>
+                      <button className="btn btn-ghost min-h-8 text-xs text-red-600" onClick={async () => { if (await askConfirm({ title: "حذف السؤال؟", message: f.question, confirmLabel: "حذف", danger: true })) run(() => api(`/api/owner/support-faq/${f.id}`, { method: "DELETE" })); }}>حذف</button>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={i === 0} aria-label="لفوق" onClick={async () => { const prev = data[i - 1]; await api(`/api/owner/support-faq/${f.id}`, { method: "PUT", body: { ...f, video_url: f.video_url ?? "", active: !!f.active, sort: prev.sort } }); await api(`/api/owner/support-faq/${prev.id}`, { method: "PUT", body: { ...prev, video_url: prev.video_url ?? "", active: !!prev.active, sort: f.sort === prev.sort ? f.sort + 1 : f.sort } }); reload(); }}>▲</button>
-              <button className="btn btn-ghost min-h-8 text-xs" onClick={() => setEdit({ ...f, video_url: f.video_url ?? "", active: !!f.active })}>تعديل</button>
-              <button className="btn btn-ghost min-h-8 text-xs text-red-600" onClick={async () => { if (await askConfirm({ title: "حذف السؤال؟", message: f.question, confirmLabel: "حذف", danger: true })) { await api(`/api/owner/support-faq/${f.id}`, { method: "DELETE" }); reload(); } }}>حذف</button>
-            </div>
-          ))}
+            ),
+          )}
         </div>
       )}
     </Card>
   );
 }
 
-function FaqForm({ item, onDone }: { item: any; onDone: () => void }) {
+/** Paste many questions at once; a preview shows what will be added before saving. */
+function FaqImport({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const parsed = useMemo(() => parseFaqText(text), [text]);
+  const count = parsed.sections.reduce((n, s) => n + s.items.length, 0);
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ added: number; updated: number }>("/api/owner/support-faq/import", { body: { text } });
+      toast(`انضاف ${r.added} سؤال${r.updated ? ` — وانتقل ${r.updated} موجود من قبل لقسمه` : ""}`);
+      onDone();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title="استيراد أسئلة من نص">
+      <div className="space-y-3">
+        <p className="muted text-sm leading-relaxed">
+          الصق الأسئلة بهذا الشكل: اسم القسم في سطر لحاله، وتحته كل سؤال يبدأ بـ <b>«س:»</b> وجوابه بـ <b>«ج:»</b> (الجواب يقدر يكون أكثر من سطر). لرابط فيديو اكتب سطر <b dir="ltr">فيديو: https://…</b> تحت الجواب. السطر <b>---</b> ينهي الجواب. السؤال الموجود من قبل بنفس النص ما يتكرر — ينتقل للقسم الجديد ويتحدّث جوابه.
+        </p>
+        <textarea className="input min-h-[14rem] text-sm" value={text} onChange={(e) => setText(e.target.value)} placeholder={"البداية والربط\n\nس: كيف أربط حساب إنستقرام؟\nج: افتح صفحة «الربط» واضغط «ربط عبر Instagram».\n\nس: هل لازم يكون حسابي احترافي؟\nج: نعم…"} />
+        {text.trim() && (
+          <div className="rounded-2xl border border-[var(--border)] p-3 text-sm">
+            <b>المعاينة: {parsed.sections.length} قسم · {count} سؤال</b>
+            <ul className="mt-2 space-y-1">
+              {parsed.sections.map((s, i) => (
+                <li key={i}>
+                  <b>{s.title}</b> <span className="muted">({s.items.length})</span>
+                  <ul className="muted mr-4 list-disc text-xs">{s.items.map((it, j) => <li key={j}>{it.question}{it.video_url ? " 🎬" : ""}</li>)}</ul>
+                </li>
+              ))}
+            </ul>
+            {parsed.ignored.length > 0 && <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">أسطر ما تنضاف ({parsed.ignored.length}): {parsed.ignored.slice(0, 3).join(" · ").slice(0, 160)}{parsed.ignored.length > 3 ? "…" : ""}</p>}
+          </div>
+        )}
+        <div className="flex gap-2">
+          <button className="btn btn-primary" disabled={busy || !count} onClick={save}>{busy ? "…" : `استيراد ${count || ""} سؤال`}</button>
+          <button className="btn btn-ghost" onClick={onClose}>إلغاء</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function FaqForm({ item, sections, onDone }: { item: any; sections: FaqSection[]; onDone: () => void }) {
   const [f, setF] = useState(item);
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
     try {
-      const body = { question: f.question, answer: f.answer, video_url: f.video_url.trim(), active: f.active };
+      const body = { question: f.question, answer: f.answer, video_url: f.video_url.trim(), active: f.active, section_id: f.section_id ?? null };
       if (f.id) await api(`/api/owner/support-faq/${f.id}`, { method: "PUT", body: { ...body, sort: f.sort } });
       else await api("/api/owner/support-faq", { body });
       toast("تم الحفظ");
@@ -431,6 +550,12 @@ function FaqForm({ item, onDone }: { item: any; onDone: () => void }) {
   };
   return (
     <div className="mb-4 space-y-3 rounded-2xl border border-violet-300 p-3 dark:border-violet-800">
+      <Field label="القسم">
+        <select className="input" value={f.section_id ?? ""} onChange={(e) => setF({ ...f, section_id: e.target.value ? Number(e.target.value) : null })}>
+          <option value="">بدون قسم</option>
+          {sections.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
+        </select>
+      </Field>
       <Field label="السؤال"><input className="input" maxLength={200} value={f.question} onChange={(e) => setF({ ...f, question: e.target.value })} /></Field>
       <Field label="الجواب"><textarea className="input min-h-[7rem]" maxLength={3000} value={f.answer} onChange={(e) => setF({ ...f, answer: e.target.value })} /></Field>
       <Field label="رابط فيديو الشرح (اختياري)" hint="يوتيوب أو إنستقرام — يبدأ بـ https://"><input className="input" dir="ltr" maxLength={300} value={f.video_url} onChange={(e) => setF({ ...f, video_url: e.target.value })} /></Field>

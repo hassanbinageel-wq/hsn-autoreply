@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DB, resetDb, seedAccount, TEST_ENV } from "./helpers";
 import { broadcastNotice, runPlanAlerts } from "../src/worker/services/notify";
-import { monthKey } from "../src/worker/services/plans";
+import { usageCycle } from "../src/worker/services/plans";
 
 // a cron minute on which the plan check runs (minute % 10 === 3)
 const AT = Date.UTC(2026, 9, 18, 12, 3);
@@ -13,8 +13,8 @@ async function customer(name: string, plan = "basic") {
   return t.id as number;
 }
 const notes = async (t: number) => (await DB.prepare("SELECT kind, title, link FROM app_notifications WHERE tenant_id = ? ORDER BY id").bind(t).all<any>()).results;
-const setUsage = (t: number, n: number) =>
-  DB.prepare("INSERT INTO usage_counters (tenant_id, month, messages) VALUES (?, ?, ?) ON CONFLICT(tenant_id, month) DO UPDATE SET messages = excluded.messages").bind(t, monthKey(AT), n).run();
+const setUsage = async (t: number, n: number) =>
+  DB.prepare("INSERT INTO usage_counters (tenant_id, month, messages) VALUES (?, ?, ?) ON CONFLICT(tenant_id, month) DO UPDATE SET messages = excluded.messages").bind(t, (await usageCycle(DB, t, AT)).key, n).run();
 
 beforeEach(async () => {
   await resetDb();

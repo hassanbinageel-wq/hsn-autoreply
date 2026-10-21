@@ -255,7 +255,7 @@ function MessagesMeter({ used, limit }: { used: number; limit: number | null }) 
   return (
     <div className="mt-2.5">
       <div className="flex justify-between text-[11px]">
-        <span className="font-semibold">رسائل الشهر</span>
+        <span className="font-semibold">رسائل الدورة (30 يوم)</span>
         <span className="muted" dir="ltr">{used.toLocaleString("en-US")} / {limit === null ? "∞" : limit.toLocaleString("en-US")}</span>
       </div>
       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-label="رسائل الشهر" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>

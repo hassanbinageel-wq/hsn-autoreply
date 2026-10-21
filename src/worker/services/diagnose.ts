@@ -37,7 +37,7 @@ export async function diagnoseTenant(db: D1Database, tenantId: number, appVersio
   else if (!ent.active) add("الاشتراك", "bad", "الاشتراك منتهي — الردود التلقائية متوقفة", "جدّد له بكود تفعيل أو أضف أيام من «الباقة».");
   else if (daysLeft !== null && daysLeft <= 5) add("الاشتراك", "warn", `الاشتراك ينتهي بعد ${daysLeft} يوم`);
   else add("الاشتراك", "ok", `الاشتراك فعّال${daysLeft !== null ? ` — باقي ${daysLeft} يوم` : ""}`);
-  if (limit && used >= limit) add("الاشتراك", "bad", `خلصت رسائل الشهر (${used} من ${limit}) — الردود متوقفة لين الشهر الجاي`, "رقّ باقته أو انتظر بداية الشهر.");
+  if (limit && used >= limit) add("الاشتراك", "bad", `خلصت رسائل الدورة (${used} من ${limit}) — الردود متوقفة لين يتجدد العدّاد`, "رقّ باقته أو انتظر تجدد العدّاد (كل 30 يوم من بداية الاشتراك).");
   else if (limit && used / limit >= 0.8) add("الاشتراك", "warn", `استهلك ${Math.round((used / limit) * 100)}% من رسائل الشهر (${used} من ${limit})`);
 
   // ---- Instagram

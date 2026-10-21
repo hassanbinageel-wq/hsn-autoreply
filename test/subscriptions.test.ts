@@ -1,3 +1,4 @@
+import { usageCycle } from "../src/worker/services/plans";
 import { exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { commentPayload, DB, deliver, MockMeta, resetDb, seedAccount, uid } from "./helpers";
@@ -134,7 +135,7 @@ describe("plan limits", () => {
     await call(`/api/owner/tenants/${tid}/plan`, OWNER, "POST", { plan_id: "basic", days: 30 });
     const c = await call("/api/campaigns", h, "POST", campaign("a"));
     await call(`/api/campaigns/${c.body.id}/status`, h, "POST", { status: "active" });
-    await DB.prepare("INSERT INTO usage_counters (tenant_id, month, messages) VALUES (?, ?, 1000)").bind(tid, new Date().toISOString().slice(0, 7)).run();
+    await DB.prepare("INSERT INTO usage_counters (tenant_id, month, messages) VALUES (?, ?, 1000)").bind(tid, (await usageCycle(DB, tid)).key).run();
     const meta = new MockMeta();
     await deliver(commentOnB(), meta);
     expect(meta.sends()).toHaveLength(0);
