@@ -271,7 +271,7 @@ function GettingStarted({ connected, total, active }: { connected: boolean; tota
   if (connected && active > 0) return null;
   const storeConnected = !!stores?.stores?.some((s: any) => s.status === "active");
   const steps: Array<{ done: boolean; title: string; text: string; to: string; cta: string }> = [
-    { done: connected, title: "اربط حساب إنستقرام حقك", text: "دقيقة وحدة عبر Meta الرسمي، بدون كلمة مرور إنستقرام.", to: "/connection", cta: "اربط حسابي" },
+    { done: connected, title: "اربط حساب إنستقرام حقك", text: "دقيقة وحدة عبر Meta الرسمي، بدون كلمة مرور إنستقرام. لازم يكون الحساب «احترافي» (أعمال أو صانع محتوى) — التحويل مجاني من إعدادات إنستقرام.", to: "/connection", cta: "اربط حسابي" },
     { done: total > 0, title: "أنشئ أول حملة", text: "اختر المنشور، والكلمة اللي يكتبها المتابع، والرسالة اللي توصله.", to: "/campaigns/new", cta: "حملة جديدة" },
     { done: active > 0, title: "جرّبها ثم فعّلها", text: "المحاكاة تبيّن لك وش يصير بالضبط، بدون إرسال أي رسالة حقيقية.", to: total > 0 ? "/campaigns" : "/simulator", cta: total > 0 ? "الحملات" : "المحاكاة" },
   ];

@@ -48,7 +48,7 @@ export function ConnectionPage() {
     <div className="space-y-4">
       <PageHeader title="الربط" subtitle={`١) حساب إنستقرام — أساسي لتشغيل الحملات · ٢) متجرك في سلة — اختياري لتحليل المبيعات والربح · Instagram API ${data.api_version}`} />
       {status === "ok" && <Alert tone="good">عاد المتصفح من Meta. الحالة أدناه مقروءة من الخادم مباشرة.</Alert>}
-      {status === "error" && <Alert tone="bad">لم يكتمل الربط. أعد المحاولة أو راجع دليل إعداد Meta.</Alert>}
+      {status === "error" && <Alert tone="bad">لم يكتمل الربط. أكثر سبب شائع: حساب إنستقرام <b>شخصي</b> — حوّله إلى «احترافي» (الإعدادات ← نوع الحساب والأدوات ← التبديل إلى حساب احترافي) ثم أعد المحاولة.</Alert>}
       {!data.configured && <Alert tone="warn">لم تُضبط بيانات تطبيق Meta على الخادم (INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET).</Alert>}
 
       <Card title={<span className="flex items-center gap-2"><StepNo n={1} />حساب إنستقرام</span>}>
@@ -90,7 +90,13 @@ export function ConnectionPage() {
             {a.last_error && <Alert tone="warn">آخر خطأ: {a.last_error}</Alert>}
           </div>
         ) : (
+          <div className="space-y-2">
+          <Alert tone="warn">
+            <b>حسابك في إنستقرام لازم يكون «احترافي»</b> (أعمال أو صانع محتوى) — الحساب الشخصي ما يقدر يرتبط.
+            <span className="mt-1 block text-xs leading-relaxed">من تطبيق إنستقرام: الإعدادات ← نوع الحساب والأدوات ← «التبديل إلى حساب احترافي» ← اختر «أعمال». مجاني، وتقدر ترجع عنه وقت ما تبغى.</span>
+          </Alert>
           <Alert tone="info">لا يوجد حساب متصل. سيُفتح تسجيل الدخول الرسمي من Meta في متصفح النظام — لا نطلب كلمة المرور داخل التطبيق.</Alert>
+          </div>
         )}
         <div className="mt-4 flex flex-wrap gap-2">
           <button className="btn btn-primary" onClick={connect} disabled={!!busy || !data.configured}>

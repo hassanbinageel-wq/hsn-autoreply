@@ -12,6 +12,7 @@ import { remindExpiringSubscriptions, runNotifications, runPlanAlerts } from "./
 import { autoRecover } from "./services/recover";
 import { runRestock } from "./services/restock";
 import { runSystemWatch } from "./services/watch";
+import { runWelcomeMessages } from "./services/welcome";
 
 const app = createApp();
 
@@ -131,6 +132,8 @@ export default {
     used += await runRestock(env, 44 - used).catch((e) => (console.error("restock", sanitize(String(e))), 0));
     await runNotifications(env).catch((e) => console.error("notifications", sanitize(String(e))));
     await runPlanAlerts(env).catch((e) => console.error("plan alerts", sanitize(String(e))));
+    // A thank-you message on the bell ~5 minutes after a customer signs up.
+    await runWelcomeMessages(env).catch((e) => console.error("welcome", sanitize(String(e))));
     // Every 10 minutes: problems hitting the whole service → the owner (bell + Telegram).
     await runSystemWatch(env).catch((e) => console.error("system watch", sanitize(String(e))));
     await run(env.DB, "DELETE FROM rate_limits WHERE window_start < ?", Date.now() - 86_400_000).catch(() => undefined);

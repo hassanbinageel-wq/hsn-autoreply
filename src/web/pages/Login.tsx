@@ -197,6 +197,12 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               <input className="input" type="password" autoComplete="off" value={setupToken} onChange={(e) => setSetupToken(e.target.value)} required />
             </Field>
           )}
+          {register && !status?.needs_setup && (
+            <p className="flex items-start gap-2 rounded-xl border border-amber-300/60 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-800/60 dark:text-amber-300">
+              <Icon name="instagram" size={16} />
+              <span>يلزم أن يكون حسابك في إنستقرام <b>احترافيًا</b> (أعمال أو صانع محتوى) عشان تربطه بعد التسجيل — التحويل مجاني من إعدادات إنستقرام.</span>
+            </p>
+          )}
           {cardSignup && !status?.needs_setup && (
             <div className="flex items-center gap-3 rounded-2xl border border-violet-500/30 bg-violet-500/[0.06] p-3.5">
               <span className="text-2xl">💳</span>

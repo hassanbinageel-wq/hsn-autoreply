@@ -211,15 +211,15 @@ function KeywordEditor({ kind, keywords, onChange }: { kind: "include" | "exclud
   };
   return (
     <div className="space-y-2">
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <input className="input" value={kw} onChange={(e) => setKw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add())} onBlur={add} placeholder={kind === "include" ? "مثال: كورس، دورة، course" : "مثال: سعر، كم"} aria-label={kind === "include" ? "كلمة تشغيل" : "كلمة استثناء"} />
-        <select className="input sm:w-48" value={mt} onChange={(e) => setMt(e.target.value as Keyword["match_type"])} aria-label="نوع المطابقة">
-          <option value="contains">يحتوي على (عبارة جزئية)</option>
-          <option value="word">كلمة/عبارة كاملة</option>
-          <option value="exact">مطابقة كاملة للنص</option>
-        </select>
-        <button type="button" className="btn btn-ghost" onClick={add}>إضافة</button>
+      <div className="flex gap-2">
+        <input className="input min-h-12 flex-1" value={kw} onChange={(e) => setKw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add())} onBlur={add} aria-label={kind === "include" ? "كلمة تشغيل" : "كلمة استثناء"} />
+        <button type="button" className="btn btn-ghost shrink-0" onClick={add}>إضافة</button>
       </div>
+      <select className="input sm:max-w-xs" value={mt} onChange={(e) => setMt(e.target.value as Keyword["match_type"])} aria-label="نوع المطابقة">
+        <option value="contains">يحتوي على (عبارة جزئية)</option>
+        <option value="word">كلمة/عبارة كاملة</option>
+        <option value="exact">مطابقة كاملة للنص</option>
+      </select>
       <div className="flex flex-wrap gap-2">
         {list.map((k) => (
           <span key={k.i} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-bold ${kind === "include" ? "border-violet-300 bg-violet-500/10 text-violet-700 dark:border-violet-700 dark:text-violet-200" : "border-red-300 bg-red-500/10 text-red-700 dark:border-red-800 dark:text-red-300"}`}>
@@ -408,7 +408,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
       case 0:
         return (
           <Field label="اسم الحملة" hint="اسم داخلي يساعدك على التمييز بين الحملات.">
-            <input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="مثال: ريلز الكورس — كلمة كورس" />
+            <input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} />
           </Field>
         );
       case 1:
@@ -508,11 +508,6 @@ export function CampaignWizard({ id }: { id: number | null }) {
               <div className="rounded-2xl border border-[var(--border)] px-4 py-1">
                 <Toggle checked={form.unify_alef} onChange={(v) => set("unify_alef", v)} label="توحيد أشكال الألف" description="أ إ آ → ا" />
               </div>
-              {isComment && (
-                <div className="rounded-2xl border border-[var(--border)] px-4 py-1">
-                  <Toggle checked={form.include_replies} onChange={(v) => set("include_replies", v)} label="تشمل الردود المتفرعة" description="افتراضيًا تُتجاهل الردود على تعليقات أخرى" />
-                </div>
-              )}
             </div>
           </div>
         );
@@ -912,7 +907,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
         </div>
         <div className="flex flex-wrap gap-2">
           <button className="btn btn-ghost" onClick={save} disabled={saving}>{saving ? "جارٍ الحفظ…" : "حفظ كمسودة"}</button>
-          <button className="btn btn-ghost" onClick={tryInSimulator} disabled={saving}><Icon name="flask" size={18} />جرّب في المحاكاة</button>
+          <span className="inline-flex items-center gap-1"><button className="btn btn-ghost" onClick={tryInSimulator} disabled={saving}><Icon name="flask" size={18} />جرّب في المحاكاة</button><InfoDot text="يحفظ الحملة أولًا، ثم يفتح المحاكاة: تكتب تعليقًا تجريبيًا وتشوف بالضبط شكل الرد العلني والرسالة الخاصة اللي بتوصل للعميل — بدون ما يوصل شي حقيقي لأي أحد." /></span>
           {step < labels.length - 1 ? (
             <button className="btn btn-primary max-lg:!hidden" onClick={next}>التالي<Icon name="arrowL" size={18} /></button>
           ) : null}

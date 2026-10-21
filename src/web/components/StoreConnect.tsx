@@ -37,7 +37,7 @@ export function StoreConnect() {
     <Card title={<span className="flex items-center gap-2"><span className="grad grid size-6 shrink-0 place-items-center rounded-full text-xs font-extrabold text-white" aria-hidden>2</span>ربط المتجر <span className="muted text-xs font-normal">(اختياري)</span></span>} action={salla ? <Link to="/store" className="btn btn-ghost min-h-9 text-xs"><Icon name="chart" size={15} />تحليل المتجر</Link> : undefined}>
       <p className="muted mb-4 text-sm">بعد ربط إنستقرام، اربط متجرك عشان تعرف كم طلب ومبيعات وربح جابت كل حملة ومنشور. الربط رسمي من المنصة بصلاحيات <b>قراءة فقط</b> (الطلبات والمنتجات)، وما نحفظ بيانات المشترين الشخصية.</p>
       {!data.plan && <Alert tone="warn">باقتك لا تشمل ربط المتجر — رقِّ باقتك من صفحة «اشتراكي».</Alert>}
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {/* Salla */}
         <section className={`rounded-2xl border p-4 ${salla ? (active ? "border-emerald-500/40" : "border-amber-500/50") : "border-[var(--border)]"}`} aria-label="سلة">
           <header className="flex items-center gap-3">
@@ -99,6 +99,20 @@ export function StoreConnect() {
           </header>
           <p className="muted mt-3 text-xs leading-relaxed">ربط متاجر زد بنفس الطريقة: موافقة رسمية، قراءة فقط، وتحليل الطلبات والربح لكل حملة.</p>
           <button className="btn btn-ghost mt-3 w-full" disabled>ربط متجر زد (قريبًا)</button>
+        </section>
+
+        {/* Done (دن) — next */}
+        <section className="rounded-2xl border border-dashed border-[var(--border)] p-4" aria-label="دن">
+          <header className="flex items-center gap-3">
+            <img src="/integrations/done.png" alt="" className="size-12 shrink-0 rounded-2xl" />
+            <div className="min-w-0 flex-1">
+              <div className="font-display text-base font-extrabold">دن</div>
+              <div className="muted text-xs" dir="ltr" style={{ textAlign: "right" }}>Done</div>
+            </div>
+            <span className="chip bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300">قريبًا</span>
+          </header>
+          <p className="muted mt-3 text-xs leading-relaxed">الربط مع دن قريبًا.</p>
+          <button className="btn btn-ghost mt-3 w-full" disabled>ربط دن (قريبًا)</button>
         </section>
       </div>
     </Card>

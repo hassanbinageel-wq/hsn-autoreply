@@ -13,7 +13,7 @@ import { Icon } from "../components/Icon";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, LIMIT_ROW_LABELS, PRICE_PERIODS, formatPrice, orderFeatures } from "../../shared/plans";
 
-const TABS = [["customers", "العملاء"], ["health", "صحة العملاء"], ["support", "الدعم"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["coupons", "الكوبونات والإحالة"], ["payments", "الدفع والحسابات"], ["branding", "صفحة الدخول"]] as const;
+const TABS = [["customers", "العملاء"], ["health", "صحة العملاء"], ["support", "الدعم"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["coupons", "الكوبونات والإحالة"], ["payments", "الدفع"], ["branding", "صفحة الدخول"]] as const;
 /** Which staff section opens each tab (the account holder sees all). */
 const TAB_PERM: Record<(typeof TABS)[number][0], string> = { customers: "owner_customers", health: "owner_customers", support: "owner_support", plans: "owner_plans", codes: "owner_plans", coupons: "owner_plans", payments: "owner_payments", branding: "owner_branding" };
 
@@ -78,6 +78,9 @@ function NewCustomer({ onClose, onDone }: { onClose: () => void; onDone: () => v
   );
 }
 
+/** Loose match for search: case, Arabic diacritics and alef / ya / ta-marbuta variants ignored. */
+const normText = (v: string) => v.toLowerCase().replace(/[\u064B-\u0652\u0640]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/^@/, "").trim();
+
 function CustomersTab() {
   const { data, loading, error, reload } = useAsync(() => api<any[]>("/api/owner/tenants"), []);
   const { data: plans } = useAsync(() => api<any[]>("/api/owner/plans"), []);
@@ -85,6 +88,10 @@ function CustomersTab() {
   const [messageFor, setMessageFor] = useState<any | null>(null);
   const [diagnoseFor, setDiagnoseFor] = useState<any | null>(null);
   const [adding, setAdding] = useState(false);
+  // Search by store (login) name, user name, email or Instagram handle; each card's details open on demand.
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState<Set<number>>(() => new Set());
+  const toggle = (id: number) => setOpen((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const act = async (fn: () => Promise<unknown>, msg: string) => {
     try {
       await fn();
@@ -94,7 +101,9 @@ function CustomersTab() {
       toast(e.message, "bad");
     }
   };
-  const customers = (data ?? []).filter((t) => !t.is_owner);
+  const all = (data ?? []).filter((t) => !t.is_owner);
+  const nq = normText(q);
+  const customers = nq ? all.filter((t) => [t.name, t.username, t.email, t.ig_username].some((v) => v && normText(String(v)).includes(nq))) : all;
   return (
     <div className="space-y-5">
       {adding && <NewCustomer onClose={() => setAdding(false)} onDone={reload} />}
@@ -102,15 +111,20 @@ function CustomersTab() {
       {diagnoseFor && <DiagnoseModal tenant={diagnoseFor} onClose={() => setDiagnoseFor(null)} />}
       {planFor && <SetPlan t={planFor} plans={plans ?? []} onClose={() => setPlanFor(null)} onDone={() => { setPlanFor(null); reload(); }} />}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="muted text-sm">{data ? `${customers.length} عميل · ${customers.filter((t) => t.status === "active" && t.plan_expires_at > Date.now()).length} باشتراك فعّال` : ""}</p>
+        <p className="muted text-sm">{data ? `${all.length} عميل · ${all.filter((t) => t.status === "active" && t.plan_expires_at > Date.now()).length} باشتراك فعّال` : ""}</p>
         <button className="btn btn-primary" onClick={() => setAdding(true)}><Icon name="plus" size={18} />عميل جديد</button>
       </div>
-      {loading && !data ? <Spinner /> : error ? <Alert tone="bad">{error}</Alert> : !customers.length ? (
+      <div className="relative max-w-md">
+        <span className="muted pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"><Icon name="search" size={18} /></span>
+        <input className="input pr-10" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث باسم المتجر أو اسم المستخدم" aria-label="بحث في العملاء" />
+      </div>
+      {q && data && <p className="muted text-sm">{customers.length ? `${customers.length} نتيجة` : "ما فيه عميل بهذا الاسم"}</p>}
+      {loading && !data ? <Spinner /> : error ? <Alert tone="bad">{error}</Alert> : !all.length ? (
         <Empty title="لا يوجد عملاء بعد">اضغط «عميل جديد» لإنشاء أول حساب.</Empty>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {customers.map((t) => (
-            <Card key={t.id} className={t.status !== "active" ? "opacity-70" : ""}>
+            <Card key={t.id} className={`self-start ${t.status !== "active" ? "opacity-70" : ""}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <b className="font-display block truncate text-base">{t.name}</b>
@@ -137,12 +151,16 @@ function CustomersTab() {
                   <span className="h-1.5 w-1.5 rounded-full bg-current" />{t.status === "active" ? "نشط" : "موقوف"}
                 </span>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                <div><b className="font-display block text-base">{t.ig_username ? `@${t.ig_username}` : "—"}</b><span className="muted">{t.ig_status === "active" ? "إنستقرام متصل" : t.ig_username ? "غير متصل" : "لم يربط بعد"}</span></div>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-xs [&>div]:min-w-0">
+                <div><b className="font-display block truncate text-sm" dir="ltr" title={t.ig_username ? `@${t.ig_username}` : undefined} style={{ textAlign: "right" }}>{t.ig_username ? `@${t.ig_username}` : "—"}</b><span className="muted">{t.ig_status === "active" ? "إنستقرام متصل" : t.ig_username ? "غير متصل" : "لم يربط بعد"}</span></div>
                 <div><b className="font-display block text-base">{t.active_campaigns}/{t.campaigns}</b><span className="muted">حملات نشطة</span></div>
                 <div><b className="font-display block text-base">{t.flows_30d}</b><span className="muted">تفاعل (30 يوم)</span></div>
               </div>
               <SubscriptionBar t={t} onEdit={() => setPlanFor(t)} />
+              <button type="button" className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl py-1.5 text-sm font-semibold text-violet-700 hover:bg-violet-500/5 dark:text-violet-300" aria-expanded={open.has(t.id)} onClick={() => toggle(t.id)}>
+                التفاصيل <Icon name="chev" size={16} className={`transition ${open.has(t.id) ? "rotate-180" : ""}`} />
+              </button>
+              {open.has(t.id) && (<>
               {t.notes && <p className="muted mt-2 text-xs">📝 {t.notes}</p>}
               <p className="muted mt-2 text-[11px]">أُنشئ {fmtTime(t.created_at)} · آخر دخول {t.last_seen_at ? fmtTime(t.last_seen_at) : "لم يدخل بعد"}</p>
               {t.ig_username && (
@@ -192,6 +210,7 @@ function CustomersTab() {
                   <Icon name="x" size={15} />حذف
                 </button>
               </div>
+              </>)}
             </Card>
           ))}
         </div>
@@ -553,7 +572,7 @@ export function OwnerPage() {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <><CardPaymentsCard /><PaymentsTab /></> : <BrandingTab />}
+      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <CardPaymentsCard /> : <BrandingTab />}
     </div>
   );
 }
@@ -792,52 +811,6 @@ function CardPaymentsCard() {
         </div>
       )}
     </Card>
-  );
-}
-
-function PaymentsTab() {
-  const { data, reload } = useAsync(() => api<any[]>("/api/owner/payment-methods"), []);
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState("bank");
-  const [logo, setLogo] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const add = async () => {
-    setBusy(true);
-    try {
-      await api("/api/owner/payment-providers", { body: { name: name.trim(), kind, logo } });
-      toast("تمت الإضافة — أضف حساباته الآن");
-      setName("");
-      setLogo(null);
-      reload();
-    } catch (e: any) {
-      toast(e.message, "bad");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
-      <div className="space-y-4">
-        <Card title="إضافة بنك أو صرافة أو محفظة">
-          <div className="space-y-3">
-            <Field label="الاسم"><input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="مثل: بنك الكريمي" /></Field>
-            <Field label="النوع">
-              <div className="flex gap-2">
-                {([["bank", "بنك"], ["exchange", "صرافة"], ["wallet", "محفظة"]] as const).map(([k, l]) => (
-                  <button key={k} type="button" className={`flex-1 rounded-xl border px-3 py-2 text-sm font-bold ${kind === k ? "border-violet-500 bg-violet-500/10" : "border-[var(--border)]"}`} onClick={() => setKind(k)}>{l}</button>
-                ))}
-              </div>
-            </Field>
-            <Field label="الشعار (اختياري)"><LogoPicker value={logo} onChange={setLogo} /></Field>
-            <button className="btn btn-primary w-full" disabled={busy || !name.trim()} onClick={add}>{busy ? "…" : "إضافة"}</button>
-          </div>
-        </Card>
-        <Alert tone="info">تظهر هذه الحسابات للزوار في صفحة الباقات قبل التسجيل، مع زر «أرسل السند هنا» اللي يوديهم لرابط التواصل للشراء (من تبويب الباقات).</Alert>
-      </div>
-      <div className="space-y-4">
-        {!data ? <Spinner /> : !data.length ? <Empty title="لا توجد بنوك أو صرافات أو محافظ بعد" /> : data.map((p, i) => <ProviderCard key={p.id} p={p} first={i === 0} last={i === data.length - 1} reload={reload} />)}
-      </div>
-    </div>
   );
 }
 
