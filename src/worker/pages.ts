@@ -12,9 +12,9 @@ export const OPERATOR = { name: "شركة ارقام المستديرة للدع
 const operatorFooter = () =>
   `<footer style="margin-top:32px;padding-top:14px;border-top:1px solid rgba(127,127,127,.25);font-size:.85rem;opacity:.75;text-align:center">HSN AutoReply خدمة تقدّمها ${esc(OPERATOR.name)} — الرقم الوطني الموحد (السجل التجاري): ${esc(OPERATOR.cr)} — ${esc(OPERATOR.country)}</footer>`;
 
-function layout(title: string, body: string): string {
+function layout(title: string, body: string, extraHead = ""): string {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<title>${esc(title)} — HSN AutoReply</title>
+<title>${esc(title)} — HSN AutoReply</title>${extraHead}
 <style>body{font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;max-width:760px;margin:0 auto;padding:24px 16px;line-height:1.8;background:#fff;color:#111}
 @media (prefers-color-scheme:dark){body{background:#0b0f14;color:#e7ecf2}a{color:#7cc4ff}}
 h1{font-size:1.5rem}.btn{display:inline-block;padding:14px 22px;border-radius:12px;background:#6d28d9;color:#fff;text-decoration:none;font-weight:700}
@@ -94,7 +94,10 @@ export function oauthResultPage(ok: boolean, message: string, client: "web" | "a
     `<h1>${ok ? "✅ تم ربط الحساب" : "⚠️ تعذر ربط الحساب"}</h1>
 <p>${esc(message)}</p>
 <p><a class="btn" href="${esc(target)}">${client === "app" ? "العودة إلى التطبيق" : "العودة إلى لوحة التحكم"}</a></p>
-<p class="muted">لا تُمرَّر أي بيانات حساسة عبر هذا الرابط؛ التطبيق يتحقق من حالة الربط من الخادم مباشرة.</p>`,
+<p class="muted">${client === "app" ? "ترجع للتطبيق تلقائيًا خلال ثوانٍ — إذا ما رجعت، اضغط الزر. " : ""}لا تُمرَّر أي بيانات حساسة عبر هذا الرابط؛ التطبيق يتحقق من حالة الربط من الخادم مباشرة.</p>`,
+    // Back to the app (or the dashboard) on its own after a moment; the button stays for browsers that block it.
+    // (A meta refresh, since the page's CSP allows no scripts.)
+    `<meta http-equiv="refresh" content="2;url=${esc(target)}">`,
   );
 }
 

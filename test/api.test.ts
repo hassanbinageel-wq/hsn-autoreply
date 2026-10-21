@@ -172,7 +172,9 @@ describe("OAuth", () => {
     // user cancels → state consumed
     const cancelled = await call(`/oauth/instagram/callback?state=${state}&error=access_denied`);
     expect(cancelled.status).toBe(400);
-    expect(await cancelled.text()).toContain("com.hsn.autoreply://oauth-done?status=error");
+    const cancelledHtml = await cancelled.text();
+    expect(cancelledHtml).toContain("com.hsn.autoreply://oauth-done?status=error");
+    expect(cancelledHtml).toContain('<meta http-equiv="refresh" content="2;url=com.hsn.autoreply://oauth-done?status=error">');
     const reused = await call(`/oauth/instagram/callback?state=${state}&code=x`);
     expect(reused.status).toBe(400);
     expect(await reused.text()).toContain("غير صالح");
