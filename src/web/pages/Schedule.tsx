@@ -50,6 +50,7 @@ export function SchedulePage() {
     <div className="space-y-5">
       <PageHeader title="الجدولة" subtitle="جدولة نشر المنشورات والريلز والستوري على حسابك، وجدولة الحملات." />
       {!meta ? <Spinner /> : ready ? <Planner meta={meta} /> : <PublishSetup meta={meta} onChanged={reloadMeta} />}
+      {ready && meta.scope_mode !== undefined && <Card title="صلاحية النشر للعملاء"><ScopeControl mode={meta.scope_mode} onChanged={reloadMeta} /></Card>}
       <ScheduledCampaigns />
     </div>
   );
