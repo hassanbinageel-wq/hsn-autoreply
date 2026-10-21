@@ -7,6 +7,7 @@ export interface PlanRow {
   name: string;
   price_label: string | null;
   price_amount: number | null;
+  price_before: number | null;
   price_currency: string;
   price_period: string;
   card_price_halalas: number | null;

@@ -3,6 +3,7 @@ import { audit, first, OWNER_TENANT, run } from "../lib/db";
 import { sanitize } from "../meta/client";
 import { notify } from "./notify";
 import { extendPlan, PERIOD_DAYS } from "./plans";
+import { withSchedulingNotice } from "./publish";
 
 /**
  * Card payments (Mada / Visa / Mastercard / Apple Pay) through Moyasar's hosted invoice page, at a fixed SAR price
@@ -125,7 +126,7 @@ export async function syncInvoice(env: Env, invoiceId: string, now = Date.now())
     }
     const claimed = await run(env.DB, "UPDATE card_payments SET status = 'paid', paid_at = ?, updated_at = ? WHERE id = ? AND status != 'paid'", now, now, pay.id);
     if (!claimed.meta.changes) return "paid";
-    const r = await extendPlan(env.DB, pay.tenant_id, pay.plan_id, pay.days, now);
+    const r = await withSchedulingNotice(env, pay.tenant_id, () => extendPlan(env.DB, pay.tenant_id, pay.plan_id, pay.days, now));
     const t = await first<{ name: string }>(env.DB, "SELECT name FROM tenants WHERE id = ?", pay.tenant_id);
     const plan = await first<{ name: string }>(env.DB, "SELECT name FROM plans WHERE id = ?", pay.plan_id);
     const sar = (pay.amount / 100).toLocaleString("en-US");

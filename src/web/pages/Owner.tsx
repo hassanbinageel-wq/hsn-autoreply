@@ -3,12 +3,14 @@ import { OwnerSupportTab } from "./Support";
 import { PlaceholderChips, TemplateBar } from "../components/MessageTemplates";
 import { DiagnoseModal } from "../components/Diagnose";
 import { hasPerm } from "../lib/me";
+import { normText } from "../lib/text";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DateTimeField } from "../components/DateTimeField";
 import { askConfirm, askText, showCopy } from "../components/Confirm";
 import { api } from "../api";
 import { API_BASE } from "../platform";
-import { BANNER_SIZES, DEFAULT_TEXTS, DesktopBanner, MobileBanner, toCm, type BannerTexts, type Branding } from "../components/LoginBanner";
+import { BANNER_SIZES, DEFAULT_TEXTS, DesktopBanner, MobileBanner, PointIcon, toCm, type BannerTexts, type Branding } from "../components/LoginBanner";
+import { remixExists, remixName } from "../components/RemixIcon";
 import { Icon } from "../components/Icon";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, LIMIT_ROW_LABELS, PRICE_PERIODS, formatPrice, orderFeatures } from "../../shared/plans";
@@ -79,7 +81,6 @@ function NewCustomer({ onClose, onDone }: { onClose: () => void; onDone: () => v
 }
 
 /** Loose match for search: case, Arabic diacritics and alef / ya / ta-marbuta variants ignored. */
-const normText = (v: string) => v.toLowerCase().replace(/[\u064B-\u0652\u0640]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/^@/, "").trim();
 
 function CustomersTab() {
   const { data, loading, error, reload } = useAsync(() => api<any[]>("/api/owner/tenants"), []);
@@ -242,11 +243,25 @@ function SubscriptionBar({ t, onEdit }: { t: any; onEdit: () => void }) {
       <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-label="المدة المتبقية من الاشتراك" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
         <div className={`h-full rounded-full ${tone} transition-all`} style={{ width: `${pct}%` }} />
       </div>
-      <div className="muted mt-1.5 flex justify-between text-[11px]">
-        <span>{exp ? `${active ? "ينتهي" : "انتهى"} ${fmtDate(exp)}` : "اضغط لتعيين باقة"}</span>
-        <span>رسائل الشهر: {(t.messages_month ?? 0).toLocaleString("en-US")}</span>
-      </div>
+      <div className="muted mt-1.5 text-[11px]">{exp ? `${active ? "ينتهي" : "انتهى"} ${fmtDate(exp)}` : "اضغط لتعيين باقة"}</div>
+      <MessagesMeter used={t.messages_month ?? 0} limit={t.plan_id ? (t.messages_limit ?? null) : 0} />
     </button>
+  );
+}
+
+/** This month's messages against the plan's limit (null = unlimited). */
+function MessagesMeter({ used, limit }: { used: number; limit: number | null }) {
+  const pct = limit === null ? 0 : limit === 0 ? 100 : Math.min(100, Math.round((used / limit) * 100));
+  return (
+    <div className="mt-2.5">
+      <div className="flex justify-between text-[11px]">
+        <span className="font-semibold">رسائل الشهر</span>
+        <span className="muted" dir="ltr">{used.toLocaleString("en-US")} / {limit === null ? "∞" : limit.toLocaleString("en-US")}</span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-label="رسائل الشهر" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+        <div className={`h-full rounded-full ${pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-violet-500"}`} style={{ width: `${limit === null ? 3 : Math.max(2, pct)}%` }} />
+      </div>
+    </div>
   );
 }
 
@@ -429,9 +444,10 @@ const LIMIT_FIELDS: Array<[string, string]> = [
 function PlansTab() {
   const { data, reload } = useAsync(() => api<any[]>("/api/owner/plans"), []);
   const { data: catalog, reload: reloadCatalog } = useAsync(() => api<any>("/api/public/plans"), []);
-  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string; exchange_rates: Record<string, number> }>("/api/owner/settings"), []);
+  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string; card_button_label: string; exchange_rates: Record<string, number> }>("/api/owner/settings"), []);
   const [contact, setContact] = useState<string | null>(null);
   const [download, setDownload] = useState<string | null>(null);
+  const [cardLabel, setCardLabel] = useState<string | null>(null);
   if (!data || !settings) return <Spinner />;
   const saveSetting = async (body: Record<string, string>) => {
     try {
@@ -463,6 +479,14 @@ function PlansTab() {
             </div>
           </Field>
         </div>
+        <div className="mt-4">
+          <Field label="نص زر الدفع بالبطاقة" hint="يظهر على زر كل باقة (بدون السعر والعملة). فارغ = «اشترك الآن»">
+            <div className="flex gap-2">
+              <input className="input" value={cardLabel ?? settings.card_button_label} onChange={(e) => setCardLabel(e.target.value)} maxLength={40} placeholder="اشترك الآن" />
+              <button className="btn btn-primary shrink-0" onClick={() => saveSetting({ card_button_label: (cardLabel ?? settings.card_button_label).trim() })}>حفظ</button>
+            </div>
+          </Field>
+        </div>
       </Card>
       <RatesCard rates={settings.exchange_rates} onSaved={reloadSettings} />
       <FeaturedCard plans={data} />
@@ -475,7 +499,7 @@ function PlansTab() {
 }
 
 function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onSaved: () => void }) {
-  const [f, setF] = useState(() => ({ ...plan, card_price: plan.card_price_halalas == null ? "" : plan.card_price_halalas / 100, limits: { ...plan.limits } }));
+  const [f, setF] = useState(() => ({ ...plan, price_before: plan.price_before ?? "", card_price: plan.card_price_halalas == null ? "" : plan.card_price_halalas / 100, limits: { ...plan.limits } }));
   const [busy, setBusy] = useState(false);
   const setL = (k: string, v: unknown) => setF((x: any) => ({ ...x, limits: { ...x.limits, [k]: v } }));
   const save = async () => {
@@ -483,9 +507,10 @@ function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onS
     try {
       const amount = f.price_amount === "" || f.price_amount === null || f.price_amount === undefined ? null : Number(f.price_amount);
       const cardSar = f.card_price === "" || f.card_price == null ? null : Number(f.card_price);
+      const before = f.price_before === "" || f.price_before == null ? null : Number(f.price_before);
       await api(`/api/owner/plans/${plan.id}`, {
         method: "PUT",
-        body: { name: f.name, price_amount: amount, price_currency: f.price_currency || "SAR", price_period: f.price_period || "month", card_price_sar: cardSar, description: f.description || undefined, active: !!f.active, limits: f.limits },
+        body: { name: f.name, price_amount: amount, price_before: before, price_currency: f.price_currency || "SAR", price_period: f.price_period || "month", card_price_sar: cardSar, description: f.description || undefined, active: !!f.active, limits: f.limits },
       });
       toast(`تم حفظ باقة «${f.name}»`);
       onSaved();
@@ -509,6 +534,9 @@ function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onS
               {Object.entries(PRICE_PERIODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </div>
+        </Field>
+        <Field label={<Tip text="السعر القديم بنفس العملة، يظهر مشطوبًا بجانب السعر مع نسبة الخصم. لازم يكون أعلى من السعر الحالي.">السعر قبل الخصم</Tip>} hint={f.price_before === "" || f.price_before == null ? "فارغ = بدون سعر مشطوب" : f.price_amount !== "" && f.price_amount != null && Number(f.price_before) > Number(f.price_amount) ? `يظهر مشطوبًا: ${Number(f.price_before).toLocaleString("en-US")} — خصم ${Math.round((1 - Number(f.price_amount) / Number(f.price_before)) * 100)}%` : "لازم يكون أعلى من السعر عشان يظهر"}>
+          <input className="input" type="number" min={0} step="any" dir="ltr" value={f.price_before ?? ""} onChange={(e) => setF({ ...f, price_before: e.target.value })} />
         </Field>
         <Field label={<Tip text="سعر ثابت بالريال السعودي يدفعه العميل ببطاقة (مدى / فيزا / ماستركارد / Apple Pay) عن طريق ميسّر، وتتفعّل الباقة تلقائيًا بعد الدفع لمدة الباقة (شهر 30 يوم، 3 أشهر 90، سنة 365). فارغ = نفس سعر الباقة إذا كان بالريال السعودي. 0 = بدون دفع بالبطاقة لهذي الباقة.">💳 سعر الدفع بالبطاقة (ر.س)</Tip>} hint={f.price_period === "once" ? "الدفع بالبطاقة يحتاج مدة (شهر / 3 أشهر / سنة) — مو «مرة واحدة»" : f.card_price === "" || f.card_price == null ? ((f.price_currency || "SAR") === "SAR" && f.price_amount ? `فارغ = نفس سعر الباقة (${Number(f.price_amount).toLocaleString("en-US")} ر.س)` : "فارغ والسعر مو بالريال = بدون دفع بالبطاقة") : Number(f.card_price) === 0 ? "بدون دفع بالبطاقة" : `العميل يدفع ${Number(f.card_price).toLocaleString("en-US")} ر.س`}>
           <input className="input" type="number" min={0} step="any" dir="ltr" value={f.card_price ?? ""} onChange={(e) => setF({ ...f, card_price: e.target.value })} placeholder="مثل 99" />
@@ -1033,7 +1061,6 @@ function BrandingTab() {
   const abs = (p: string | null) => (p ? `${API_BASE || ""}${p}` : null);
   const t = texts ?? data.texts ?? DEFAULT_TEXTS;
   const lg = logo === undefined ? data.logo : logo;
-  const setPoint = (i: number, k: "title" | "desc", v: string) => setTexts({ ...t, points: t.points.map((p, j) => (j === i ? { ...p, [k]: v } : p)) });
   const save = async (body: { texts: BannerTexts | null; logo: string | null; app_icon?: string | null }, msg: string) => {
     setBusy(true);
     try {
@@ -1067,12 +1094,27 @@ function BrandingTab() {
               <textarea className="input min-h-[72px]" value={t.title} onChange={(e) => setTexts({ ...t, title: e.target.value })} maxLength={120} />
             </Field>
             <Field label="الوصف"><textarea className="input min-h-[72px]" value={t.subtitle} onChange={(e) => setTexts({ ...t, subtitle: e.target.value })} maxLength={300} /></Field>
+            <div className="font-display text-[13px] font-bold text-[var(--text-2)]">النقاط ({t.points.length} من 6)</div>
             {t.points.map((p, i) => (
-              <div key={i} className="grid gap-2 rounded-2xl border border-[var(--border)] p-3 sm:grid-cols-[1fr_1.4fr]">
-                <input className="input" value={p.title} onChange={(e) => setPoint(i, "title", e.target.value)} maxLength={60} placeholder={`النقطة ${i + 1} — العنوان (فارغ = تختفي)`} aria-label={`النقطة ${i + 1}`} />
-                <input className="input" value={p.desc} onChange={(e) => setPoint(i, "desc", e.target.value)} maxLength={120} placeholder="الوصف" aria-label={`وصف النقطة ${i + 1}`} />
-              </div>
+              <PointEditor
+                key={i}
+                i={i}
+                point={p}
+                count={t.points.length}
+                onChange={(v) => setTexts({ ...t, points: t.points.map((x, j) => (j === i ? v : x)) })}
+                onRemove={() => setTexts({ ...t, points: t.points.filter((_, j) => j !== i) })}
+                onMove={(d) => {
+                  const pts = [...t.points];
+                  [pts[i], pts[i + d]] = [pts[i + d], pts[i]];
+                  setTexts({ ...t, points: pts });
+                }}
+              />
             ))}
+            {t.points.length < 6 && (
+              <button type="button" className="btn btn-ghost w-full" onClick={() => setTexts({ ...t, points: [...t.points, { title: "", desc: "", icon: "" }] })}>
+                <Icon name="plus" size={15} />إضافة نقطة
+              </button>
+            )}
             <Field label="أيقونة زر «تنزيل التطبيق للأندرويد»" hint="تظهر جنب النص في أسفل البنر — PNG بدون خلفية. الزر يحمّل التطبيق مباشرة.">
               <LogoPicker value={icon} onChange={setAppIcon} />
             </Field>
@@ -1103,6 +1145,70 @@ function BrandingTab() {
           </div>
         </div>
       </Card>
+    </div>
+  );
+}
+
+/** A small transparent PNG for a banner point (96px, kept as PNG so the transparency stays). */
+async function pointPng(file: File): Promise<string> {
+  if (file.type !== "image/png") throw new Error("الأيقونة لازم تكون PNG");
+  if (file.size > 5 * 1024 * 1024) throw new Error("الصورة كبيرة جدًا");
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error("تعذّر قراءة الصورة"));
+      i.src = url;
+    });
+    const scale = Math.min(1, 96 / img.width, 96 / img.height);
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.width * scale));
+    c.height = Math.max(1, Math.round(img.height * scale));
+    c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** One banner point: title, description, and its icon (built-in / uploaded PNG / Remix Icon name). */
+function PointEditor({ i, point, count, onChange, onRemove, onMove }: { i: number; point: BannerTexts["points"][number]; count: number; onChange: (p: BannerTexts["points"][number]) => void; onRemove: () => void; onMove: (d: -1 | 1) => void }) {
+  const icon = point.icon ?? "";
+  const kind = icon.startsWith("data:") ? "png" : icon.startsWith("ri:") ? "remix" : "default";
+  const [name, setName] = useState(kind === "remix" ? icon.slice(3) : "");
+  const [bad, setBad] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const applyName = async (v: string) => {
+    setName(v);
+    const n = remixName(v);
+    if (!n) return setBad(false);
+    const ok = /^[a-z0-9-]{1,60}$/.test(n) && (await remixExists(n));
+    setBad(!ok);
+    if (ok) onChange({ ...point, icon: `ri:${n}` });
+  };
+  return (
+    <div className="space-y-2 rounded-2xl border border-[var(--border)] p-3">
+      <div className="flex items-center gap-2">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white" style={{ background: "linear-gradient(160deg,#4c1d95,#86198f)" }}><PointIcon icon={icon} i={i} size={20} /></span>
+        <b className="flex-1 text-sm">النقطة {i + 1}</b>
+        <button type="button" className="btn btn-ghost min-h-8 px-2 text-xs" disabled={i === 0} onClick={() => onMove(-1)} aria-label="لفوق">▲</button>
+        <button type="button" className="btn btn-ghost min-h-8 px-2 text-xs" disabled={i === count - 1} onClick={() => onMove(1)} aria-label="لتحت">▼</button>
+        <button type="button" className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" disabled={count <= 1} onClick={onRemove}>حذف</button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-[1fr_1.4fr]">
+        <input className="input" value={point.title} onChange={(e) => onChange({ ...point, title: e.target.value })} maxLength={60} aria-label={`عنوان النقطة ${i + 1}`} />
+        <input className="input" value={point.desc} onChange={(e) => onChange({ ...point, desc: e.target.value })} maxLength={120} aria-label={`وصف النقطة ${i + 1}`} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="muted">الأيقونة:</span>
+        <button type="button" className={`rounded-lg border px-2.5 py-1 font-bold ${kind === "default" ? "border-violet-500 bg-violet-500/10" : "border-[var(--border)] muted"}`} onClick={() => onChange({ ...point, icon: "" })}>الأساسية</button>
+        <button type="button" className={`rounded-lg border px-2.5 py-1 font-bold ${kind === "png" ? "border-violet-500 bg-violet-500/10" : "border-[var(--border)] muted"}`} onClick={() => fileRef.current?.click()}>رفع PNG</button>
+        <input ref={fileRef} type="file" accept="image/png" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return; try { onChange({ ...point, icon: await pointPng(f) }); } catch (err: any) { toast(err.message, "bad"); } }} />
+        <input className={`input min-h-8 max-w-[210px] py-1 text-xs ${bad ? "border-red-500" : ""}`} dir="ltr" value={name} onChange={(e) => applyName(e.target.value)} placeholder="Remix Icon: rocket-line" aria-label="اسم أيقونة Remix Icon" />
+        <a className="font-semibold text-violet-700 underline dark:text-violet-300" href="https://remixicon.com" target="_blank" rel="noopener">تصفّح الأيقونات</a>
+      </div>
+      {bad && <p className="text-xs text-red-600">ما لقينا أيقونة بهذا الاسم — انسخ الاسم من remixicon.com (مثل rocket-line)</p>}
     </div>
   );
 }

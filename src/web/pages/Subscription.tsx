@@ -5,11 +5,11 @@ import { isNative, openExternal } from "../platform";
 import { api } from "../api";
 import { Icon } from "../components/Icon";
 import { PlansShowcase } from "../components/PlansShowcase";
-import { Alert, Card, Spinner, fmtTime, toast, useAsync } from "../components/ui";
+import { Alert, Card, InfoDot, Spinner, fmtTime, toast, useAsync } from "../components/ui";
 
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
 
-function Meter({ label, used, max }: { label: string; used: number; max: number | null }) {
+function Meter({ label, used, max }: { label: React.ReactNode; used: number; max: number | null }) {
   const pct = max === null ? 0 : max === 0 ? 100 : Math.min(100, Math.round((used / max) * 100));
   return (
     <div>
@@ -111,7 +111,7 @@ export function SubscriptionPage() {
           <p className="muted mt-1 text-sm">{data.expires_at ? `صالح حتى ${fmtTime(data.expires_at)}${daysLeft !== null && daysLeft > 0 ? ` (${daysLeft} يوم)` : ""}` : "لم يُفعَّل بعد"}</p>
           {data.active && (
             <div className="mt-4 space-y-3">
-              <Meter label="الرسائل هذا الشهر" used={data.usage.messages} max={data.limits.monthly_messages} />
+              <Meter label={<span className="inline-flex items-center gap-1">الرسائل هذا الشهر <InfoDot text="كل رسالة يرسلها النظام تلقائيًا وتقبلها إنستقرام تنحسب وحدة: الرد العلني على التعليق، والرد الخاص على التعليق، والرسائل في الخاص (مثل رسالة الرابط والمتابعة). ما تنحسب: تجارب المحاكاة، والردود اللي ترسلها بيدك من صندوق الرسائل. العدّاد يبدأ من الصفر أول كل شهر." /></span>} used={data.usage.messages} max={data.limits.monthly_messages} />
               <Meter label="الحملات النشطة" used={data.usage.active_campaigns} max={data.limits.active_campaigns} />
               {data.limits.draws_per_month !== 0 && <Meter label="السحوبات هذا الشهر" used={data.usage.draws_this_month} max={data.limits.draws_per_month} />}
             </div>

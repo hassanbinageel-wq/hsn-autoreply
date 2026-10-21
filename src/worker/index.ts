@@ -13,6 +13,7 @@ import { autoRecover } from "./services/recover";
 import { runRestock } from "./services/restock";
 import { runSystemWatch } from "./services/watch";
 import { runWelcomeMessages } from "./services/welcome";
+import { cleanupSupportFiles } from "./services/support";
 
 const app = createApp();
 
@@ -102,6 +103,7 @@ export default {
           await cleanup(env.DB).catch((e) => console.error("cleanup", sanitize(String(e))));
           await refreshStoreTokens(env).catch((e) => console.error("store tokens", sanitize(String(e))));
           await cleanupScheduledFiles(env).catch((e) => console.error("schedule files", sanitize(String(e))));
+          await cleanupSupportFiles(env).catch((e) => console.error("support files", sanitize(String(e))));
           await remindExpiringSubscriptions(env).catch((e) => console.error("expiry reminders", sanitize(String(e))));
         })(),
       );

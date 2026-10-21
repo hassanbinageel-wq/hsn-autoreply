@@ -44,7 +44,7 @@ describe("owner tools: support, coupons, referrals, health; UTM", () => {
     const t = await call("/api/support", a.h, "POST", { subject: "الحملة ما ترد", body: "جربت أعلق وما وصلني شي" });
     expect(t.status).toBe(200);
     const ownerNote = (await call("/api/app-notifications", OWNER)).body.items[0];
-    expect(ownerNote).toMatchObject({ kind: "support", link: "/owner?tab=support" });
+    expect(ownerNote).toMatchObject({ kind: "support", link: `/owner?tab=support&thread=${t.body.id}` });
     expect(ownerNote.title).toContain("متجر shop_a");
     // another customer cannot see or answer it
     expect((await call(`/api/support/${t.body.id}`, b.h)).status).toBe(404);

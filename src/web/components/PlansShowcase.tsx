@@ -5,12 +5,13 @@ import { Field, Modal, Tip, toast } from "./ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, convertPrice, formatAmount, orderFeatures, type ExchangeRates, type PlanLimits } from "../../shared/plans";
 
 export interface Catalog {
-  plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits; card_price?: number | null }>;
+  plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_before?: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits; card_price?: number | null }>;
   rates: ExchangeRates;
   featured?: { plan_id: string | null; label: string };
   feature_order?: string[];
   payment_methods: Array<{ id: number; name: string; kind: "bank" | "exchange" | "wallet"; logo: string | null; accounts: Array<{ id: number; holder: string; number: string; currency: string | null; note: string | null }> }>;
   sales_contact: string | null;
+  card_button_label?: string;
 }
 
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
@@ -96,6 +97,8 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
           const before = p.price_amount !== null ? convertPrice(p.price_amount, p.price_currency, cur, catalog.rates) : null;
           const pct = off(coupon, p.id);
           const price = before === null ? null : discounted(before, pct);
+          // The owner's "price before" (struck through), or the price before the coupon.
+          const old = pct > 0 ? before : p.price_before ? convertPrice(p.price_before, p.price_currency, cur, catalog.rates) : null;
           const isFeatured = p.id === featured;
           const isCurrent = p.id === currentPlanId;
           return (
@@ -111,7 +114,9 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
                   <div className="flex flex-wrap items-baseline gap-1.5">
                     <span className={`font-display font-extrabold text-violet-600 dark:text-violet-300 ${cur.startsWith("YER") ? "text-2xl" : "text-3xl"}`}>{formatAmount(price, cur)}</span>
                     <span className="muted text-sm">/ {PRICE_PERIODS[p.price_period] ?? PRICE_PERIODS.month}</span>
-                    {pct > 0 && before !== null && <span className="w-full text-xs"><s className="muted">{formatAmount(before, cur)}</s> <b className="text-emerald-600">خصم {pct}%</b></span>}
+                    {old !== null && price !== null && old > price && (
+                      <span className="w-full text-xs"><s className="muted text-sm">{formatAmount(old, cur)}</s> <b className="text-emerald-600">خصم {pct > 0 ? pct : Math.round((1 - price / old) * 100)}%</b></span>
+                    )}
                   </div>
                 ) : (
                   <span className="font-display text-2xl font-extrabold text-violet-600 dark:text-violet-300">{p.price_label || "تواصل معنا"}</span>
@@ -120,7 +125,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
               {onCardPay && p.card_price ? (
                 <>
                   <button type="button" onClick={() => onCardPay(p.id)} className={`btn mt-4 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>
-                    💳 اشترك وادفع بالبطاقة — {p.card_price.toLocaleString("en-US")} ر.س
+                    {catalog.card_button_label || "اشترك الآن"}
                   </button>
                   <div className="muted mt-1 text-center text-[11px]">مدى · فيزا · ماستركارد · Apple Pay — تتفعّل فورًا</div>
                   {onChoose && <button type="button" onClick={onChoose} className="mt-1 w-full text-center text-xs font-semibold text-violet-700 underline dark:text-violet-300">أو تواصل معنا</button>}

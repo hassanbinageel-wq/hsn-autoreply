@@ -334,6 +334,13 @@ describe("owner tools", () => {
     expect((await call("/api/owner/branding", OWNER, "PUT", { texts, logo: png, app_icon: png })).status).toBe(200);
     expect((await call("/api/public/branding")).body).toMatchObject({ texts, logo: png, app_icon: png, app_download_url: `${BASE}/app.apk` });
     expect((await call("/api/owner/branding", OWNER, "PUT", { texts: { ...texts, points: [] }, logo: null })).status).toBe(422);
+    // 1–6 points, each icon a Remix Icon name or an uploaded PNG
+    const six = Array.from({ length: 6 }, (_, i) => ({ title: `ن${i}`, desc: "", icon: i % 2 ? "ri:rocket-line" : png }));
+    expect((await call("/api/owner/branding", OWNER, "PUT", { texts: { ...texts, points: six }, logo: null })).status).toBe(200);
+    expect((await call("/api/public/branding")).body.texts.points[1].icon).toBe("ri:rocket-line");
+    expect((await call("/api/owner/branding", OWNER, "PUT", { texts: { ...texts, points: [...six, six[0]] }, logo: null })).status).toBe(422);
+    for (const icon of ["https://evil.example/x.png", "ri:Bad Name", "data:image/svg+xml;base64,PHN2Zz4="])
+      expect((await call("/api/owner/branding", OWNER, "PUT", { texts: { ...texts, points: [{ title: "أ", desc: "", icon }] }, logo: null })).status).toBe(422);
     await call("/api/owner/branding", OWNER, "PUT", { texts: null, logo: null });
     expect((await call("/api/public/branding")).body).toMatchObject({ texts: null, logo: null });
     await call("/api/owner/login-banner", OWNER, "PUT", { image: null });

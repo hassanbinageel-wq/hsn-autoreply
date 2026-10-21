@@ -176,3 +176,21 @@ describe("card payments (Moyasar)", () => {
     expect(await r.text()).toContain("سياسة الاسترجاع");
   });
 });
+
+describe("plan page: price before the discount and the card button text", () => {
+  it("the owner sets a struck-through old price per plan and the button text; buyers see them", async () => {
+    const plan = (await call("/api/owner/plans", OWNER)).body.find((p: any) => p.id === "basic");
+    const body = { name: plan.name, price_amount: 79, price_before: 120, price_currency: "SAR", price_period: "month", active: true, limits: plan.limits };
+    expect((await call("/api/owner/plans/basic", OWNER, "PUT", body)).status).toBe(200);
+    expect((await call("/api/owner/settings", OWNER, "PUT", { card_button_label: "ابدأ الحين" })).status).toBe(200);
+    let pub = (await call("/api/public/plans")).body;
+    expect(pub.plans.find((p: any) => p.id === "basic").price_before).toBe(120);
+    expect(pub.card_button_label).toBe("ابدأ الحين");
+    // an old price at or below the price is not shown; an empty label falls back to «اشترك الآن»
+    expect((await call("/api/owner/plans/basic", OWNER, "PUT", { ...body, price_before: 70 })).status).toBe(200);
+    expect((await call("/api/owner/settings", OWNER, "PUT", { card_button_label: "" })).status).toBe(200);
+    pub = (await call("/api/public/plans")).body;
+    expect(pub.plans.find((p: any) => p.id === "basic").price_before).toBeNull();
+    expect(pub.card_button_label).toBe("اشترك الآن");
+  });
+});

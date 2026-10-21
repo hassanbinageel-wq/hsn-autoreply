@@ -111,7 +111,7 @@ export function StoreConnect() {
             </div>
             <span className="chip bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300">قريبًا</span>
           </header>
-          <p className="muted mt-3 text-xs leading-relaxed">الربط مع دن قريبًا.</p>
+          <p className="muted mt-3 text-xs leading-relaxed">ربط متاجر دن بنفس الطريقة: موافقة رسمية، قراءة فقط، وتحليل الطلبات والربح لكل حملة.</p>
           <button className="btn btn-ghost mt-3 w-full" disabled>ربط دن (قريبًا)</button>
         </section>
       </div>

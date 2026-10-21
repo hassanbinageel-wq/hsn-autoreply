@@ -501,7 +501,7 @@ export function CampaignWizard({ id }: { id: number | null }) {
               </div>
               {form.match_all && <p className="muted mt-2 text-[13px]">أي نص يطابق، مع احترام كلمات الاستثناء.</p>}
             </div>
-            {!form.match_all && <div className="font-display -mb-1 text-[15px] font-bold">كلمات التشغيل</div>}
+            {!form.match_all && <div className="font-display -mb-1 inline-flex items-center gap-1 text-[15px] font-bold">كلمات التشغيل <InfoDot text="الكلمات اللي إذا كتبها العميل في تعليقه (أو رده على الستوري) تشتغل الحملة وترد عليه. اكتب الكلمة واضغط «إضافة»، وتقدر تضيف أكثر من كلمة، مثل: بكم، السعر، رابط. واختر طريقة المطابقة: «يحتوي» يكفي إن العبارة موجودة داخل التعليق، «كلمة كاملة» لازم تكون كلمة مستقلة، و«مطابق تمامًا» لازم يكون التعليق هو الكلمة نفسها." /></div>}
             {!form.match_all && <KeywordEditor kind="include" keywords={form.keywords} onChange={(k) => set("keywords", k)} />}
             <p className="muted text-[13px]">المطابقة تتجاهل التشكيل والتطويل والإيموجي والمسافات الزائدة وحالة الأحرف الإنجليزية.</p>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">

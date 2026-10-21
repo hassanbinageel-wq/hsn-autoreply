@@ -1,9 +1,11 @@
 import { Icon } from "./Icon";
+import { RemixIcon } from "./RemixIcon";
 
 export interface BannerTexts {
   title: string;
   subtitle: string;
-  points: Array<{ title: string; desc: string }>;
+  /** 1–6 points; icon: "" = built-in, "ri:<name>" = Remix Icon, or an uploaded PNG (data URL). */
+  points: Array<{ title: string; desc: string; icon?: string }>;
 }
 export interface Branding {
   login_banner: string | null;
@@ -15,15 +17,24 @@ export interface Branding {
 }
 
 export const DEFAULT_TEXTS: BannerTexts = {
-  title: "حوّل تعليقات إنستقرام\nإلى عملاء ومبيعات",
-  subtitle: "ردود تلقائية ورسائل خاصة بالرابط، سحوبات عادلة، جدولة نشر، وتحليلات تربط كل منشور بمبيعات متجرك — عبر واجهة Meta الرسمية.",
+  title: "تعليق واحد…\nويوصل عميلك كل شي في الخاص",
+  subtitle: "ردود تلقائية على التعليقات والستوري، الرابط في الخاص خلال ثوانٍ، سحوبات عادلة، جدولة نشر، ومبيعات كل منشور — عبر واجهة Meta الرسمية.",
   points: [
-    { title: "رد فوري + الرابط في الخاص", desc: "كل تعليق أو رد على ستوري يوصله رد خلال ثوانٍ، والرابط يوصل رسائله الخاصة مباشرة" },
-    { title: "اعرف أي منشور جاب لك فلوس", desc: "تتبّع الضغطات وربط متجرك في سلة، مع سحوبات عادلة وجدولة نشر في نفس المكان" },
-    { title: "آمن ورسمي 100%", desc: "عبر واجهة Meta الرسمية، بدون كلمة مرور حسابك، وبالتزام كامل بقواعد الإرسال" },
+    { title: "رد خلال ثوانٍ، 24 ساعة", desc: "كل تعليق «بكم؟» ينرد عليه علنًا ويوصله الرابط في الخاص", icon: "ri:flashlight-line" },
+    { title: "مبيعات كل منشور", desc: "اربط متجرك واعرف بالريال أي منشور جاب طلبات", icon: "ri:line-chart-line" },
+    { title: "سحوبات وجدولة نشر", desc: "سحب عادل بفيديو، وانشر منشوراتك وستورياتك في وقتها", icon: "ri:calendar-check-line" },
+    { title: "رسمي وآمن 100%", desc: "واجهة Meta الرسمية، بدون كلمة مرور حسابك", icon: "ri:shield-check-line" },
   ],
 };
-const ICONS = ["target", "chart", "shield"];
+/** Built-in icons for points without one (by position). */
+const ICONS = ["target", "chart", "shield", "send", "calendar", "sparkle"];
+
+/** A point's icon: the owner's PNG, a Remix Icon by name, or the built-in one. */
+export function PointIcon({ icon, i, size }: { icon?: string; i: number; size: number }) {
+  if (icon?.startsWith("data:image/")) return <img src={icon} alt="" style={{ width: size, height: size }} className="object-contain" />;
+  if (icon?.startsWith("ri:")) return <RemixIcon name={icon} size={size} />;
+  return <Icon name={ICONS[i % ICONS.length]} size={size} />;
+}
 export const BANNER_GRADIENT =
   "radial-gradient(circle at 80% 15%,rgba(249,115,22,.55),transparent 45%),radial-gradient(circle at 15% 85%,rgba(219,39,119,.5),transparent 50%),linear-gradient(160deg,#1e0b4b,#4c1d95 50%,#86198f)";
 
@@ -92,7 +103,7 @@ export function DesktopBanner({ image, texts, logo, download, className = "" }: 
         {t.points.map((p, i) =>
           p.title ? (
             <div key={i} className="flex items-center gap-3 rounded-2xl border border-white/15 bg-black/20 p-4 backdrop-blur-md">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15"><Icon name={ICONS[i]} size={20} /></span>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15"><PointIcon icon={p.icon} i={i} size={20} /></span>
               <span><b className="block text-sm">{p.title}</b>{p.desc && <span className="text-xs text-violet-50/90">{p.desc}</span>}</span>
             </div>
           ) : null,
@@ -115,7 +126,7 @@ export function MobileBanner({ image, texts, logo, className = "" }: { image: st
         <div className="mt-2 flex flex-wrap gap-1.5">
           {t.points.map((p, i) =>
             p.title ? (
-              <span key={i} className="flex items-center gap-1 rounded-full bg-black/25 px-2.5 py-1 text-[11px] font-bold backdrop-blur"><Icon name={ICONS[i]} size={12} />{p.title}</span>
+              <span key={i} className="flex items-center gap-1 rounded-full bg-black/25 px-2.5 py-1 text-[11px] font-bold backdrop-blur"><PointIcon icon={p.icon} i={i} size={12} />{p.title}</span>
             ) : null,
           )}
         </div>

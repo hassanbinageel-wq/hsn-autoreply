@@ -7,7 +7,7 @@ import type { MetaError, MetaResult } from "../meta/types";
 import { getAccessToken, markNeedsReauth, metaClient } from "./account";
 import { cacheMediaStmt } from "./media";
 import { getEntitlement } from "./plans";
-import { notify } from "./notify";
+import { notify, sendOwnerMessage } from "./notify";
 import { hasInsightsScope, wantsInsightsScope, type ScopeMode } from "./insights";
 
 /**
@@ -95,6 +95,34 @@ export async function wantsPublishScope(db: D1Database, tenantId: number): Promi
   const e = await getEntitlement(db, tenantId);
   return e.owner || (e.active && !!e.limits.scheduling);
 }
+/**
+ * Runs a plan change and, when it newly gives the customer scheduling while their connected Instagram account
+ * lacks the publishing permission, leaves a bell message with the steps to re-connect and allow it.
+ */
+export async function withSchedulingNotice<T>(env: Env, tenantId: number, change: () => Promise<T>): Promise<T> {
+  const can = async () => {
+    const e = await getEntitlement(env.DB, tenantId);
+    return !e.owner && e.active && !!e.limits.scheduling;
+  };
+  const before = await can();
+  const out = await change();
+  try {
+    if (before || !(await can()) || !(await wantsPublishScope(env.DB, tenantId))) return out;
+    const a = await first<{ scopes: string | null }>(env.DB, "SELECT scopes FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 AND status = 'active' ORDER BY id DESC LIMIT 1", tenantId);
+    if (!a || hasPublishScope(a.scopes)) return out;
+    await sendOwnerMessage(env, {
+      tenantId,
+      title: "🗓️ باقتك الجديدة فيها جدولة النشر",
+      body: "عشان تشتغل الجدولة، إنستقرام يحتاج موافقتك على صلاحية النشر مرة وحدة:\n1) افتح صفحة «الربط»\n2) اضغط «إعادة الاتصال»\n3) فعّل كل الصلاحيات في صفحة إنستقرام\n4) اضغط «السماح»\nبعدها تقدر تجدول منشوراتك من صفحة «الجدولة».",
+      link: "/connection",
+      days: 14,
+    });
+  } catch {
+    // The notice is a convenience; the plan change itself already happened.
+  }
+  return out;
+}
+
 /** The optional permissions to request when this customer connects. */
 export async function optionalScopes(db: D1Database, tenantId: number): Promise<string[]> {
   const out: string[] = [];

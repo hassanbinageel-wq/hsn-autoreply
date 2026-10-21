@@ -152,6 +152,8 @@ export const planUpdateSchema = z.object({
   name: text(40).min(1),
   price_label: text(60).optional(),
   price_amount: z.number().min(0).max(1_000_000).nullable().optional(),
+  /** The old price (same currency), shown struck through; empty = none. */
+  price_before: z.number().min(0).max(1_000_000).nullable().optional(),
   price_currency: z.enum(["USD", "SAR", "YER", "YER_SAN"]).optional(),
   price_period: z.enum(["month", "quarter", "year", "once"]).optional(),
   /** Fixed card price in SAR (Moyasar); empty = no card payment for this plan. */
@@ -262,7 +264,21 @@ export const brandingSchema = z.object({
     .object({
       title: shortText(120),
       subtitle: shortText(300),
-      points: z.array(z.object({ title: shortText(60), desc: shortText(120) })).length(3),
+      points: z
+        .array(
+          z.object({
+            title: shortText(60),
+            desc: shortText(120),
+            /** "" = the built-in icon, "ri:<name>" = a Remix Icon, or a small uploaded PNG. */
+            icon: z
+              .string()
+              .max(80_000, "الأيقونة كبيرة — اختر صورة أصغر")
+              .refine((v) => v === "" || /^ri:[a-z0-9-]{1,60}$/.test(v) || /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(v), "الأيقونة: ارفع PNG أو اكتب اسم أيقونة من Remix Icon")
+              .default(""),
+          }),
+        )
+        .min(1, "أضف نقطة واحدة على الأقل")
+        .max(6, "الحد 6 نقاط"),
     })
     .nullable(),
   logo: logoSchema.nullable(),

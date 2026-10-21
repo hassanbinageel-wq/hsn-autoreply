@@ -6,6 +6,7 @@ import { FEATURE_LABELS, type PlanLimits } from "../shared/plans";
 import { enableBio, takeBioOffer } from "./lib/biometric";
 import { Icon } from "./components/Icon";
 import { NotificationBell } from "./components/NotificationBell";
+import { HelpWidget, IncidentBanner, useSupportCenter } from "./components/HelpWidget";
 import { AccountAvatar } from "./components/UserAvatar";
 import { LoginPage } from "./pages/Login";
 import { canOpenPage } from "../shared/staff";
@@ -131,7 +132,7 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ to: string; label: strin
 /** Customers only: their subscription page. */
 const SUBSCRIPTION_ITEM = { to: "/subscription", label: "اشتراكي", icon: "zap" };
 /** Customers only: support conversations with the service owner. */
-const SUPPORT_ITEM = { to: "/support", label: "الدعم", icon: "msg" };
+const SUPPORT_ITEM = { to: "/support", label: "مركز الدعم", icon: "msg" };
 /** Owner-only section (customers management). */
 const OWNER_GROUP = { title: "الإدارة", items: [{ to: "/owner", label: "العملاء", icon: "users" }, { to: "/usage", label: "الاستهلاك", icon: "gauge" }] };
 const NAV = [...NAV_GROUPS, OWNER_GROUP].flatMap((g) => g.items).concat(SUBSCRIPTION_ITEM, SUPPORT_ITEM);
@@ -143,6 +144,7 @@ export function App() {
   const [auth, setAuth] = useState<"loading" | "in" | "out">("loading");
   const [username, setUsername] = useState("");
   const [isOwner, setIsOwner] = useState(false);
+  const supportCenter = useSupportCenter();
   // A staff login sees only the sections the account holder gave it (the server enforces the same).
   const [role, setRole] = useState<"owner" | "staff">("owner");
   const [perms, setPerms] = useState<string[]>([]);
@@ -427,7 +429,8 @@ export function App() {
             </button>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-6xl px-4 pb-28 pt-5 lg:px-8 lg:pb-10">
+        <main className="mx-auto w-full max-w-6xl px-4 pb-28 pt-5 lg:px-8 lg:pb-24">
+          <IncidentBanner center={supportCenter} />
           {sub && route !== "/subscription" && (!sub.active || (sub.expires_at && sub.expires_at - Date.now() < 3 * 86_400_000)) && (
             <div className="mb-4">
               <Alert tone={sub.active ? "warn" : "bad"}>
@@ -495,6 +498,7 @@ export function App() {
           </div>
         </div>
       )}
+      {route !== "/support" && !(isOwner && route === "/owner") && <HelpWidget center={supportCenter} isOwner={isOwner} />}
       <ToastHost />
       {bioOffer && (
         <Modal open center onClose={() => setBioOffer(null)} title="الدخول بالبصمة">

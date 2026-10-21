@@ -69,7 +69,7 @@ import { storeAnalytics, storeCampaignDetail, storeProductCosts, storeProducts }
 import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
 import { auditCampaignComments } from "./services/audit";
-import { LIMITS, hasPublishScope, isImage, isVideo, optionalScopes, publishScopeMode, removeFiles, validatePost, verifyMediaUrl, wantsPublishScope, type PostKind } from "./services/publish";
+import { LIMITS, hasPublishScope, isImage, isVideo, optionalScopes, publishScopeMode, removeFiles, validatePost, verifyMediaUrl, wantsPublishScope, withSchedulingNotice, type PostKind } from "./services/publish";
 import { captureInsights, insightsAccount, insightsScopeMode, insightsSummary, mediaInsightsSeries, wantsInsightsScope } from "./services/insights";
 import { analyticsByCampaign, analyticsByPost, analyticsDevices, analyticsFollow, analyticsHeatmap, analyticsOverview, analyticsRetention, osFamily, tzOffsetMinutes, type AnalyticsFilter, type EventType, type HeatKind } from "./services/analytics";
 import { deleteDraws, DrawFailure, EXCLUDE_LABELS, fetchBatch, loadDraw, pickNext, preview, replaceWinner, runDraw, settingsOf, winnersOf } from "./services/draws";
@@ -91,6 +91,7 @@ import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp }
 import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
+import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
 import { codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { cardEnabled, cardPriceHalalas, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
@@ -205,23 +206,28 @@ async function appDownloadUrl(c: C): Promise<string> {
 
 /** What a buyer needs to see: active plans (with structured prices), exchange rates, payment accounts and the contact link. */
 async function publicCatalog(c: C) {
-  const [plans, rates, payment_methods, contact, featured, order] = await Promise.all([
+  const [plans, rates, payment_methods, contact, featured, order, cardLabel] = await Promise.all([
     listPlans(c.env.DB),
     getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES),
     listPaymentMethods(c.env.DB),
     getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", ""),
     getSetting<{ plan_id: string | null; label: string } | null>(c.env.DB, OWNER_TENANT, "featured_plan", null),
     getSetting<string[] | null>(c.env.DB, OWNER_TENANT, "feature_order", null),
+    getSetting<string>(c.env.DB, OWNER_TENANT, "card_button_label", ""),
   ]);
   return {
     plans: plans
       .filter((p) => p.active)
-      .map(({ id, name, price_label, price_amount, price_currency, price_period, card_price_halalas, description, limits }) => ({
+      .map(({ id, name, price_label, price_amount, price_before, price_currency, price_period, card_price_halalas, description, limits }) => ({
         id, name, price_label, price_amount, price_currency, price_period, description, limits,
+        // The old price, only when it is above the current one.
+        price_before: price_amount !== null && price_before && price_before > price_amount ? price_before : null,
         // Fixed SAR price for card payment (Moyasar), only when card payments are on and the period has a length.
         card_price: cardEnabled(c.env) ? (cardPriceHalalas({ card_price_halalas, price_amount, price_currency, price_period }) ?? 0) / 100 || null : null,
       })),
     card_payments: cardEnabled(c.env),
+    // Text of the card pay button (owner-set), no currency or price in it.
+    card_button_label: cardLabel || "اشترك الآن",
     rates: { ...DEFAULT_RATES, ...rates, USD: 1 },
     // A bank / office with no account yet would show buyers an empty box.
     payment_methods: payment_methods.filter((p) => p.accounts.length > 0),
@@ -543,6 +549,8 @@ export function createApp() {
 
   // Public: the plans and how to buy, shown on the sign-up screen before an account exists.
   app.get("/api/public/plans", async (c) => c.json(await publicCatalog(c)));
+  // Help widget: FAQ (with video links), expected response time and the incident banner.
+  app.get("/api/public/support", async (c) => c.json(await supportCenter(c.env.DB)));
   // Subscription discount codes: check a code (plans page), and count it when the receipt is sent.
   app.get("/api/public/coupon", async (c) => {
     if (!(await rateLimit(c.env.DB, `coupon_check:${clientIp(c)}`, 30, 3_600_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد شوي");
@@ -1015,7 +1023,7 @@ export function createApp() {
       if (cp) return apiError(c, 422, "is_coupon", `«${cp.code}» كود خصم ${cp.percent}% وليس كود تفعيل — استخدمه تحت في «الباقات وطرق الدفع» ← «عندك كود خصم؟» عشان يطلع لك السعر بعد الخصم.`);
     }
     try {
-      const r = await redeemCode(c.env.DB, T(c), p.data.code);
+      const r = await withSchedulingNotice(c.env, T(c), () => redeemCode(c.env.DB, T(c), p.data.code));
       await audit(c.env.DB, T(c), c.get("session").username, "subscription.redeemed", r.plan_id, { expires_at: r.expires_at });
       return c.json({ ok: true, ...r });
     } catch (e) {
@@ -1200,52 +1208,132 @@ export function createApp() {
     return c.json({ ok: true });
   });
 
-  // Support conversations of all customers.
+  // ---- Support center (owner): every customer's tickets, FAQ, canned replies, response time and incident banner.
+  const WHO = `(SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.tenant_id AND u.role = 'owner') AS tenant_usernames,
+                (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.tenant_id ORDER BY a.id DESC LIMIT 1) AS ig_username,
+                (SELECT st.name FROM stores st WHERE st.tenant_id = t.tenant_id AND st.status != 'disconnected' ORDER BY st.id DESC LIMIT 1) AS store_name`;
+  const MSG_COLS = "id, sender, body, created_at, att_mime, att_size, (att_key IS NOT NULL AND att_deleted_at IS NULL) AS has_att, (att_deleted_at IS NOT NULL) AS att_removed";
   owner.get("/support", async (c) =>
     c.json(
       await all(
         c.env.DB,
-        `SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.status, t.last_from, t.updated_at,
-                (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.tenant_id AND u.role = 'owner') AS tenant_usernames,
-                (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.tenant_id ORDER BY a.id DESC LIMIT 1) AS ig_username,
-                (SELECT st.name FROM stores st WHERE st.tenant_id = t.tenant_id AND st.status != 'disconnected' ORDER BY st.id DESC LIMIT 1) AS store_name,
+        `SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.category, t.state, t.priority, t.status, t.last_from, t.created_at, t.updated_at, ${WHO},
                 (t.last_from = 'customer' AND COALESCE(t.owner_read_at, 0) < t.updated_at) AS unread,
                 (SELECT body FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_body
-           FROM support_threads t JOIN tenants n ON n.id = t.tenant_id ORDER BY (t.status = 'open') DESC, t.updated_at DESC LIMIT 200`,
+           FROM support_threads t JOIN tenants n ON n.id = t.tenant_id
+          ORDER BY (t.state = 'resolved'), CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, t.updated_at DESC LIMIT 300`,
       ),
     ),
   );
+  // FAQ shown in the help widget (with optional YouTube / Instagram video links).
+  const videoUrl = z
+    .string()
+    .trim()
+    .max(300)
+    .refine((v) => v === "" || /^https:\/\/((www\.|m\.)?youtube\.com|youtu\.be|(www\.)?instagram\.com)\//i.test(v), "رابط الفيديو لازم يكون من يوتيوب أو إنستقرام ويبدأ بـ https://");
+  const faqSchema = z.object({ question: z.string().trim().min(3).max(200), answer: z.string().trim().min(1).max(3000), video_url: videoUrl.optional(), sort: z.number().int().min(0).max(10_000).optional(), active: z.boolean().optional() });
+  owner.get("/support-faq", async (c) => c.json(await all(c.env.DB, "SELECT id, question, answer, video_url, sort, active FROM support_faq ORDER BY sort, id LIMIT 300")));
+  owner.post("/support-faq", async (c) => {
+    const p = await parseBody(c, faqSchema);
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    const sort = p.data.sort ?? ((await first<{ n: number | null }>(c.env.DB, "SELECT MAX(sort) AS n FROM support_faq"))?.n ?? 0) + 1;
+    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO support_faq (question, answer, video_url, sort, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id", p.data.question, p.data.answer, p.data.video_url || null, sort, p.data.active === false ? 0 : 1, now, now);
+    return c.json({ id: r!.id });
+  });
+  owner.put("/support-faq/:id", async (c) => {
+    const p = await parseBody(c, faqSchema);
+    if (!p.ok) return p.res;
+    const r = await run(c.env.DB, "UPDATE support_faq SET question = ?, answer = ?, video_url = ?, sort = COALESCE(?, sort), active = ?, updated_at = ? WHERE id = ?", p.data.question, p.data.answer, p.data.video_url || null, p.data.sort ?? null, p.data.active === false ? 0 : 1, Date.now(), idParam(c));
+    if (!r.meta.changes) return apiError(c, 404, "not_found", "السؤال غير موجود");
+    return c.json({ ok: true });
+  });
+  owner.delete("/support-faq/:id", async (c) => {
+    await run(c.env.DB, "DELETE FROM support_faq WHERE id = ?", idParam(c));
+    return c.json({ ok: true });
+  });
+  // Canned replies for the owner's answers.
+  const cannedSchema = z.object({ title: z.string().trim().min(1).max(60), body: z.string().trim().min(1).max(2000) });
+  owner.get("/support-canned", async (c) => c.json(await all(c.env.DB, "SELECT id, title, body FROM support_canned ORDER BY id LIMIT 100")));
+  owner.post("/support-canned", async (c) => {
+    const p = await parseBody(c, cannedSchema);
+    if (!p.ok) return p.res;
+    if (((await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM support_canned"))?.n ?? 0) >= 100) return apiError(c, 409, "too_many", "الحد 100 رد جاهز");
+    const r = await first<{ id: number }>(c.env.DB, "INSERT INTO support_canned (title, body, created_at) VALUES (?, ?, ?) RETURNING id", p.data.title, p.data.body, Date.now());
+    return c.json({ id: r!.id });
+  });
+  owner.put("/support-canned/:id", async (c) => {
+    const p = await parseBody(c, cannedSchema);
+    if (!p.ok) return p.res;
+    await run(c.env.DB, "UPDATE support_canned SET title = ?, body = ? WHERE id = ?", p.data.title, p.data.body, idParam(c));
+    return c.json({ ok: true });
+  });
+  owner.delete("/support-canned/:id", async (c) => {
+    await run(c.env.DB, "DELETE FROM support_canned WHERE id = ?", idParam(c));
+    return c.json({ ok: true });
+  });
+  // The expected response time and the service-wide incident banner.
+  owner.get("/support-settings", async (c) =>
+    c.json({
+      response_time: await getSetting<string>(c.env.DB, OWNER_TENANT, "support_response_time", ""),
+      default_response_time: DEFAULT_RESPONSE_TIME,
+      incident: (await getSetting<Incident | null>(c.env.DB, OWNER_TENANT, "support_incident", null)) ?? { active: false, text: "", tone: "warn" },
+    }),
+  );
+  owner.put("/support-settings", async (c) => {
+    const p = await parseBody(c, z.object({ response_time: z.string().trim().max(160).optional(), incident: z.object({ active: z.boolean(), text: z.string().trim().max(300), tone: z.enum(["info", "warn", "bad"]) }).optional() }));
+    if (!p.ok) return p.res;
+    if (p.data.incident?.active && !p.data.incident.text) return apiError(c, 422, "validation", "اكتب نص الإعلان");
+    if (p.data.response_time !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "support_response_time", p.data.response_time);
+    if (p.data.incident) {
+      await setSetting(c.env.DB, OWNER_TENANT, "support_incident", p.data.incident);
+      await audit(c.env.DB, T(c), c.get("session").username, "support.incident", p.data.incident.active ? "on" : "off", { text: p.data.incident.text });
+    }
+    return c.json({ ok: true });
+  });
+  owner.get("/support/attachment/:mid", async (c) => {
+    const m = await first<{ att_key: string }>(c.env.DB, "SELECT att_key FROM support_messages WHERE id = ? AND att_key IS NOT NULL AND att_deleted_at IS NULL", Number(c.req.param("mid")) || 0);
+    const obj = m && c.env.MEDIA ? await c.env.MEDIA.get(m.att_key) : null;
+    if (!obj) return c.text("not found", 404);
+    return new Response(obj.body, { headers: { "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream", "Cache-Control": "private, max-age=600", "X-Content-Type-Options": "nosniff" } });
+  });
   owner.get("/support/:id", async (c) => {
     const id = idParam(c);
     const t = await first(
       c.env.DB,
-      `SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.status, t.created_at,
-              (SELECT GROUP_CONCAT(u.username, '، ') FROM admin_users u WHERE u.tenant_id = t.tenant_id AND u.role = 'owner') AS tenant_usernames,
-                (SELECT a.username FROM instagram_accounts a WHERE a.tenant_id = t.tenant_id ORDER BY a.id DESC LIMIT 1) AS ig_username,
-                (SELECT st.name FROM stores st WHERE st.tenant_id = t.tenant_id AND st.status != 'disconnected' ORDER BY st.id DESC LIMIT 1) AS store_name
+      `SELECT t.id, t.tenant_id, n.name AS tenant_name, t.subject, t.category, t.state, t.priority, t.status, t.created_at, ${WHO}
          FROM support_threads t JOIN tenants n ON n.id = t.tenant_id WHERE t.id = ?`,
       id,
     );
-    if (!t) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    if (!t) return apiError(c, 404, "not_found", "الطلب غير موجود");
     await run(c.env.DB, "UPDATE support_threads SET owner_read_at = ? WHERE id = ?", Date.now(), id);
-    return c.json({ thread: t, messages: await all(c.env.DB, "SELECT id, sender, body, created_at FROM support_messages WHERE thread_id = ? ORDER BY id LIMIT 500", id) });
+    return c.json({ thread: t, messages: await all(c.env.DB, `SELECT ${MSG_COLS} FROM support_messages WHERE thread_id = ? ORDER BY id LIMIT 500`, id) });
   });
   owner.post("/support/:id/reply", async (c) => {
     const id = idParam(c);
-    const p = await parseBody(c, z.object({ body: z.string().trim().min(1).max(2000), close: z.boolean().optional() }));
+    const p = await parseBody(c, z.object({ body: z.string().trim().min(1).max(4000), state: z.enum(["in_progress", "waiting", "resolved"]).optional(), close: z.boolean().optional() }));
     if (!p.ok) return p.res;
     const t = await first<{ id: number; tenant_id: number; subject: string }>(c.env.DB, "SELECT id, tenant_id, subject FROM support_threads WHERE id = ?", id);
-    if (!t) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    if (!t) return apiError(c, 404, "not_found", "الطلب غير موجود");
     const now = Date.now();
-    await run(c.env.DB, "INSERT INTO support_messages (thread_id, sender, body, created_at) VALUES (?, 'owner', ?, ?)", id, p.data.body, now);
-    await run(c.env.DB, "UPDATE support_threads SET status = ?, last_from = 'owner', owner_read_at = ?, updated_at = ? WHERE id = ?", p.data.close ? "closed" : "open", now, now, id);
-    await notify(c.env, t.tenant_id, "support_reply", `🎧 رد الدعم على: ${t.subject}\n${p.data.body.slice(0, 300)}`, undefined, { link: `/support?thread=${t.id}` });
-    return c.json({ ok: true });
+    const state = p.data.state ?? (p.data.close ? "resolved" : "waiting");
+    const m = await first<{ id: number }>(c.env.DB, "INSERT INTO support_messages (thread_id, sender, body, created_at) VALUES (?, 'owner', ?, ?) RETURNING id", id, p.data.body, now);
+    await run(c.env.DB, "UPDATE support_threads SET last_from = 'owner', owner_read_at = ? WHERE id = ?", now, id);
+    await setState(c.env.DB, t.id, state, now);
+    await notify(c.env, t.tenant_id, "support_reply", `🎧 رد الدعم على طلبك رقم ${ticketNo(t.id)} (${STATES[state]}): ${t.subject}\n${p.data.body.slice(0, 300)}`, undefined, { link: `/support?thread=${t.id}` });
+    return c.json({ ok: true, message_id: m!.id });
   });
-  owner.post("/support/:id/status", async (c) => {
-    const p = await parseBody(c, z.object({ status: z.enum(["open", "closed"]) }));
+  // State and priority set by the owner; a new state is told to the customer.
+  owner.post("/support/:id/meta", async (c) => {
+    const p = await parseBody(c, z.object({ state: z.enum(["new", "in_progress", "waiting", "resolved"]).optional(), priority: z.enum(["low", "normal", "high", "urgent"]).optional() }));
     if (!p.ok) return p.res;
-    await run(c.env.DB, "UPDATE support_threads SET status = ? WHERE id = ?", p.data.status, idParam(c));
+    const t = await first<{ id: number; tenant_id: number; subject: string; state: string }>(c.env.DB, "SELECT id, tenant_id, subject, state FROM support_threads WHERE id = ?", idParam(c));
+    if (!t) return apiError(c, 404, "not_found", "الطلب غير موجود");
+    if (p.data.priority) await run(c.env.DB, "UPDATE support_threads SET priority = ? WHERE id = ?", p.data.priority, t.id);
+    if (p.data.state && p.data.state !== t.state) {
+      await setState(c.env.DB, t.id, p.data.state);
+      await notifyState(c.env, t, p.data.state);
+    }
     return c.json({ ok: true });
   });
   // A private message to one customer: their bell, and their Telegram when they set it up.
@@ -1268,6 +1356,7 @@ export function createApp() {
       `SELECT t.id, t.name, t.is_owner, t.status, t.notes, t.created_at, t.plan_id, t.plan_expires_at, t.plan_started_at,
               (SELECT p.name FROM plans p WHERE p.id = t.plan_id) AS plan_name,
               (SELECT u.messages FROM usage_counters u WHERE u.tenant_id = t.id AND u.month = ?) AS messages_month,
+              (SELECT json_extract(p.limits, '$.monthly_messages') FROM plans p WHERE p.id = t.plan_id) AS messages_limit,
               (SELECT u.username FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS username,
               (SELECT u.email FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email,
               (SELECT u.email_verified_at FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email_verified_at,
@@ -1371,7 +1460,7 @@ export function createApp() {
     else if (p.data.days !== undefined && p.data.days < 0) expires = running ? Math.max(now, cur!.plan_expires_at! + p.data.days * 86_400_000) : expires;
     // A new period starts when the subscription was not running; extending keeps the original start.
     const started = expires && expires > now ? (running ? (cur!.plan_started_at ?? now) : now) : (cur?.plan_started_at ?? null);
-    await run(c.env.DB, "UPDATE tenants SET plan_id = ?, plan_expires_at = ?, plan_started_at = ?, expiry_notice_at = NULL, updated_at = ? WHERE id = ?", p.data.plan_id, expires, started, now, t.id);
+    await withSchedulingNotice(c.env, t.id, () => run(c.env.DB, "UPDATE tenants SET plan_id = ?, plan_expires_at = ?, plan_started_at = ?, expiry_notice_at = NULL, updated_at = ? WHERE id = ?", p.data.plan_id, expires, started, now, t.id));
     await audit(c.env.DB, T(c), c.get("session").username, "tenant.plan_set", String(t.id), { plan: p.data.plan_id, expires_at: expires });
     return c.json({ ok: true, plan_id: p.data.plan_id, expires_at: expires });
   });
@@ -1386,6 +1475,7 @@ export function createApp() {
     // Stop Instagram webhooks for the customer's account(s) first, then remove everything.
     const accounts = await all<{ id: number }>(c.env.DB, "SELECT id FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0", t.id);
     for (const a of accounts) await disconnectAccount(c.env, a.id, { purge: true, actor: c.get("session").username }).catch(() => undefined);
+    await deleteTenantSupportFiles(c.env, t.id);
     await deleteTenantData(c.env.DB, t.id);
     await audit(c.env.DB, T(c), c.get("session").username, "tenant.deleted", String(t.id), { name: t.name });
     return c.json({ ok: true });
@@ -1415,10 +1505,11 @@ export function createApp() {
     const label = amount !== null ? formatPrice(amount, currency, period) : (p.data.price_label ?? null);
     // empty = the plan's own price when it is in SAR; 0 = no card payment for this plan
     const card = p.data.card_price_sar === null || p.data.card_price_sar === undefined ? null : Math.round(p.data.card_price_sar * 100);
+    const before = amount !== null && p.data.price_before ? p.data.price_before : null;
     await run(
       c.env.DB,
-      "UPDATE plans SET name = ?, price_label = ?, price_amount = ?, price_currency = ?, price_period = ?, card_price_halalas = ?, description = ?, limits = ?, active = ?, updated_at = ? WHERE id = ?",
-      p.data.name, label, amount, currency, period, card, p.data.description ?? null, JSON.stringify(p.data.limits), p.data.active ? 1 : 0, Date.now(), pid,
+      "UPDATE plans SET name = ?, price_label = ?, price_amount = ?, price_before = ?, price_currency = ?, price_period = ?, card_price_halalas = ?, description = ?, limits = ?, active = ?, updated_at = ? WHERE id = ?",
+      p.data.name, label, amount, before, currency, period, card, p.data.description ?? null, JSON.stringify(p.data.limits), p.data.active ? 1 : 0, Date.now(), pid,
     );
     await audit(c.env.DB, T(c), c.get("session").username, "plan.updated", pid);
     return c.json({ ok: true });
@@ -1566,16 +1657,18 @@ export function createApp() {
     c.json({
       sales_contact: await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", ""),
       app_download_url: await getSetting<string>(c.env.DB, OWNER_TENANT, "app_download_url", ""),
+      card_button_label: await getSetting<string>(c.env.DB, OWNER_TENANT, "card_button_label", ""),
       exchange_rates: { ...DEFAULT_RATES, ...(await getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES)), USD: 1 },
     }),
   );
   owner.put("/settings", async (c) => {
     const httpsOrEmpty = z.string().trim().max(300).refine((v) => v === "" || /^https:\/\//.test(v), "الرابط يجب أن يبدأ بـ https://");
-    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional(), exchange_rates: exchangeRatesSchema.optional() }));
+    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional(), card_button_label: z.string().trim().max(40).optional(), exchange_rates: exchangeRatesSchema.optional() }));
     if (!p.ok) return p.res;
     if (p.data.exchange_rates) await setSetting(c.env.DB, OWNER_TENANT, "exchange_rates", { USD: 1, ...p.data.exchange_rates });
     if (p.data.sales_contact !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "sales_contact", p.data.sales_contact);
     if (p.data.app_download_url !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "app_download_url", p.data.app_download_url);
+    if (p.data.card_button_label !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "card_button_label", p.data.card_button_label);
     return c.json({ ok: true });
   });
 
@@ -3346,49 +3439,89 @@ export function createApp() {
     return c.json(await referralStats(c.env.DB, T(c)));
   });
 
-  // ---- Support: the customer's conversations with the service owner
+  // ---- Support center (customer): tickets with the service owner, one optional file per message.
+  const SUP_MSG_COLS = "id, sender, body, created_at, att_mime, att_size, (att_key IS NOT NULL AND att_deleted_at IS NULL) AS has_att, (att_deleted_at IS NOT NULL) AS att_removed";
   api.get("/support", async (c) =>
     c.json(
       await all(
         c.env.DB,
-        `SELECT t.id, t.subject, t.status, t.last_from, t.updated_at, (t.last_from = 'owner' AND COALESCE(t.customer_read_at, 0) < t.updated_at) AS unread,
+        `SELECT t.id, t.subject, t.category, t.state, t.status, t.last_from, t.created_at, t.updated_at, (t.last_from = 'owner' AND COALESCE(t.customer_read_at, 0) < t.updated_at) AS unread,
                 (SELECT body FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_body
-           FROM support_threads t WHERE t.tenant_id = ? ORDER BY t.updated_at DESC LIMIT 50`,
+           FROM support_threads t WHERE t.tenant_id = ? ORDER BY (t.state = 'resolved'), t.updated_at DESC LIMIT 100`,
         T(c),
       ),
     ),
   );
   api.post("/support", async (c) => {
-    const p = await parseBody(c, z.object({ subject: z.string().trim().min(3).max(120), body: z.string().trim().min(1).max(2000) }));
+    const p = await parseBody(c, z.object({ category: z.enum(["tech", "question", "billing", "suggestion"]).default("question"), subject: z.string().trim().min(3).max(120), body: z.string().trim().min(1).max(4000) }));
     if (!p.ok) return p.res;
     if (c.get("session").is_owner) return apiError(c, 409, "owner", "أنت صاحب الخدمة — الدعم للعملاء");
-    if (!(await rateLimit(c.env.DB, `support_new:${T(c)}`, 10, 86_400_000))) return apiError(c, 429, "rate_limited", "فتحت محادثات كثيرة اليوم — كمّل في محادثة موجودة");
+    if (!(await rateLimit(c.env.DB, `support_new:${T(c)}`, 10, 86_400_000))) return apiError(c, 429, "rate_limited", "فتحت طلبات كثيرة اليوم — كمّل في طلب موجود");
     const now = Date.now();
-    const t = await first<{ id: number }>(c.env.DB, "INSERT INTO support_threads (tenant_id, subject, last_from, customer_read_at, created_at, updated_at) VALUES (?, ?, 'customer', ?, ?, ?) RETURNING id", T(c), p.data.subject, now, now, now);
-    await run(c.env.DB, "INSERT INTO support_messages (thread_id, sender, body, created_at) VALUES (?, 'customer', ?, ?)", t!.id, p.data.body, now);
+    const t = await first<{ id: number }>(
+      c.env.DB,
+      "INSERT INTO support_threads (tenant_id, subject, category, state, last_from, customer_read_at, created_at, updated_at) VALUES (?, ?, ?, 'new', 'customer', ?, ?, ?) RETURNING id",
+      T(c), p.data.subject, p.data.category, now, now, now,
+    );
+    const m = await first<{ id: number }>(c.env.DB, "INSERT INTO support_messages (thread_id, sender, body, created_at) VALUES (?, 'customer', ?, ?) RETURNING id", t!.id, p.data.body, now);
     const name = (await first<{ name: string }>(c.env.DB, "SELECT name FROM tenants WHERE id = ?", T(c)))?.name ?? "عميل";
-    await notify(c.env, OWNER_TENANT, "support", `🎧 رسالة دعم جديدة من «${name}»: ${p.data.subject}\n${p.data.body.slice(0, 300)}`);
-    return c.json({ ok: true, id: t!.id });
+    await notify(c.env, OWNER_TENANT, "support", `🎧 طلب دعم جديد رقم ${ticketNo(t!.id)} (${CATEGORIES[p.data.category]}) من «${name}»: ${p.data.subject}\n${p.data.body.slice(0, 300)}`, undefined, { link: `/owner?tab=support&thread=${t!.id}` });
+    return c.json({ ok: true, id: t!.id, number: ticketNo(t!.id), message_id: m!.id });
+  });
+  api.get("/support/attachment/:mid", async (c) => {
+    const m = await first<{ att_key: string }>(
+      c.env.DB,
+      "SELECT m.att_key FROM support_messages m JOIN support_threads t ON t.id = m.thread_id WHERE m.id = ? AND t.tenant_id = ? AND m.att_key IS NOT NULL AND m.att_deleted_at IS NULL",
+      Number(c.req.param("mid")) || 0, T(c),
+    );
+    const obj = m && c.env.MEDIA ? await c.env.MEDIA.get(m.att_key) : null;
+    if (!obj) return c.text("not found", 404);
+    return new Response(obj.body, { headers: { "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream", "Cache-Control": "private, max-age=600", "X-Content-Type-Options": "nosniff" } });
   });
   api.get("/support/:id", async (c) => {
     const id = idParam(c);
-    const t = await first(c.env.DB, "SELECT id, subject, status, created_at FROM support_threads WHERE id = ? AND tenant_id = ?", id, T(c));
-    if (!t) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    const t = await first(c.env.DB, "SELECT id, subject, category, state, status, created_at FROM support_threads WHERE id = ? AND tenant_id = ?", id, T(c));
+    if (!t) return apiError(c, 404, "not_found", "الطلب غير موجود");
     await run(c.env.DB, "UPDATE support_threads SET customer_read_at = ? WHERE id = ?", Date.now(), id);
-    return c.json({ thread: t, messages: await all(c.env.DB, "SELECT id, sender, body, created_at FROM support_messages WHERE thread_id = ? ORDER BY id LIMIT 500", id) });
+    return c.json({ thread: t, messages: await all(c.env.DB, `SELECT ${SUP_MSG_COLS} FROM support_messages WHERE thread_id = ? ORDER BY id LIMIT 500`, id) });
   });
   api.post("/support/:id/reply", async (c) => {
     const id = idParam(c);
-    const p = await parseBody(c, z.object({ body: z.string().trim().min(1).max(2000) }));
+    const p = await parseBody(c, z.object({ body: z.string().trim().min(1).max(4000) }));
     if (!p.ok) return p.res;
-    const t = await first<{ id: number; subject: string }>(c.env.DB, "SELECT id, subject FROM support_threads WHERE id = ? AND tenant_id = ?", id, T(c));
-    if (!t) return apiError(c, 404, "not_found", "المحادثة غير موجودة");
+    const t = await first<{ id: number; subject: string; state: string }>(c.env.DB, "SELECT id, subject, state FROM support_threads WHERE id = ? AND tenant_id = ?", id, T(c));
+    if (!t) return apiError(c, 404, "not_found", "الطلب غير موجود");
     if (!(await rateLimit(c.env.DB, `support_reply:${T(c)}`, 60, 3_600_000))) return apiError(c, 429, "rate_limited", "رسائل كثيرة — جرّب بعد شوي");
     const now = Date.now();
-    await run(c.env.DB, "INSERT INTO support_messages (thread_id, sender, body, created_at) VALUES (?, 'customer', ?, ?)", id, p.data.body, now);
-    await run(c.env.DB, "UPDATE support_threads SET status = 'open', last_from = 'customer', customer_read_at = ?, updated_at = ? WHERE id = ?", now, now, id);
+    const m = await first<{ id: number }>(c.env.DB, "INSERT INTO support_messages (thread_id, sender, body, created_at) VALUES (?, 'customer', ?, ?) RETURNING id", id, p.data.body, now);
+    await run(c.env.DB, "UPDATE support_threads SET last_from = 'customer', customer_read_at = ? WHERE id = ?", now, id);
+    await setState(c.env.DB, t.id, stateAfterCustomer(t.state), now);
     const name = (await first<{ name: string }>(c.env.DB, "SELECT name FROM tenants WHERE id = ?", T(c)))?.name ?? "عميل";
-    await notify(c.env, OWNER_TENANT, "support", `🎧 رد من «${name}» على: ${t.subject}\n${p.data.body.slice(0, 300)}`);
+    await notify(c.env, OWNER_TENANT, "support", `🎧 رد من «${name}» على الطلب رقم ${ticketNo(t.id)}${t.state === "resolved" ? " (انفتح من جديد)" : ""}: ${t.subject}\n${p.data.body.slice(0, 300)}`, undefined, { link: `/owner?tab=support&thread=${t.id}` });
+    return c.json({ ok: true, message_id: m!.id });
+  });
+  // The file of a message the customer just sent (body = the file): an image up to 5 MB or a video up to 25 MB.
+  api.put("/support/:id/messages/:mid/attachment", async (c) => {
+    if (!c.env.MEDIA) return apiError(c, 503, "no_storage", "مساحة حفظ الملفات غير مفعّلة على الخادم");
+    const id = idParam(c) ?? 0;
+    const m = await ownMessage(c.env.DB, T(c), id, Number(c.req.param("mid")) || 0);
+    if (!m || m.sender !== "customer") return apiError(c, 404, "not_found", "الرسالة غير موجودة");
+    if (m.att_key) return apiError(c, 409, "exists", "الرسالة فيها ملف من قبل");
+    if (Date.now() - m.created_at > 3_600_000) return apiError(c, 409, "too_late", "أرفق الملف مع رسالة جديدة");
+    const mime = (c.req.header("Content-Type") ?? "").split(";")[0].trim().toLowerCase();
+    const limit = attachLimit(mime);
+    if (!limit) return apiError(c, 422, "type", "نوع الملف غير مدعوم: صورة (JPG / PNG / WEBP) أو فيديو (MP4 / MOV)");
+    const size = Number(c.req.header("Content-Length") ?? 0);
+    if (!size || size > limit) return apiError(c, 422, "size", limit === ATTACH.imageBytes ? "الصورة أكبر من 5 ميجا" : "الفيديو أكبر من 25 ميجا");
+    if (!c.req.raw.body) return apiError(c, 400, "empty", "الملف فاضي");
+    if (!(await rateLimit(c.env.DB, `support_upload:${T(c)}`, 30, 86_400_000))) return apiError(c, 429, "rate_limited", "رفعت ملفات كثيرة اليوم");
+    const key = attachKey(T(c), id, m.id, randomToken(10), mime);
+    const obj = await c.env.MEDIA.put(key, c.req.raw.body, { httpMetadata: { contentType: mime } });
+    if (!obj || obj.size > limit) {
+      await c.env.MEDIA.delete(key).catch(() => undefined);
+      return apiError(c, 422, "size", "الملف أكبر من المسموح");
+    }
+    await run(c.env.DB, "UPDATE support_messages SET att_key = ?, att_mime = ?, att_size = ? WHERE id = ?", key, mime, obj.size, m.id);
     return c.json({ ok: true });
   });
 
