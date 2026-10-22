@@ -9,7 +9,7 @@
 على جهازك (يحتاج JDK 17+ و openssl، و `gh` اختياريًا):
 
 ```bash
-bash scripts/create-signing-key.sh hassanbinageel-wq/hsn-autoreply
+bash scripts/create-signing-key.sh hassanbinageel-wq/shayyek
 ```
 
 - يُنشئ `~/hsn-autoreply-signing/hsn-autoreply-release.jks` (خارج المستودع) وكلمة مرور عشوائية.

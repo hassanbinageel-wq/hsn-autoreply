@@ -44,11 +44,11 @@
     // The service's own domain (expiry date shown on the owner's usage page).
     "SERVICE_DOMAIN": "hsnreply.online",
     // Sender of password-recovery emails (the domain is verified in Resend).
-    "EMAIL_FROM": "شيّك Shayyek <no-reply@hsnreply.online>",
+    "EMAIL_FROM": "شيّك Shayyek <no-reply@shayyek.sa>",
     "ALLOWED_APP_ORIGINS": "https://localhost,capacitor://localhost",
     "APP_VERSION": "1.0.0",
     "APP_DEEP_LINK": "sa.shayyek.app://oauth-done",
-    "RELEASES_URL": "https://github.com/hassanbinageel-wq/hsn-autoreply/releases",
+    "RELEASES_URL": "https://github.com/hassanbinageel-wq/shayyek/releases",
     "APK_DOWNLOAD_URL": ""
   }
 }

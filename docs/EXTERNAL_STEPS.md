@@ -4,7 +4,7 @@
 🔐 قاعدة: لا ترسل أي كلمة مرور أو سر في أي محادثة. كل سر يُلصق مباشرة في خانة «Secret» في GitHub.
 
 مكان إضافة الأسرار والمتغيرات في GitHub:
-`github.com/hassanbinageel-wq/hsn-autoreply` › **Settings › Secrets and variables › Actions** — تبويب **Secrets** للأسرار، وتبويب **Variables** للمتغيرات.
+`github.com/hassanbinageel-wq/shayyek` › **Settings › Secrets and variables › Actions** — تبويب **Secrets** للأسرار، وتبويب **Variables** للمتغيرات.
 
 ---
 
