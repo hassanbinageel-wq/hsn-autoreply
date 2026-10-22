@@ -44,6 +44,11 @@ export function SubscriptionPage() {
   const [checkKey, setCheckKey] = useState(0);
   const [payResult, setPayResult] = useState<{ status: string; amount?: number; days?: number; upgrade?: boolean } | null>(null);
   useEffect(() => {
+    if (payResult?.status !== "paid") return;
+    const t = setTimeout(() => setPayResult(null), 15_000);
+    return () => clearTimeout(t);
+  }, [payResult?.status]);
+  useEffect(() => {
     if (!paidId) return;
     let stop = false;
     let tries = 0;
@@ -126,8 +131,13 @@ export function SubscriptionPage() {
             </div>
           )}
         </Card>
-        <Card title="تفعيل كود">
-          <p className="muted mb-3 text-sm">أدخل <b>كود التفعيل</b> اللي وصلك بعد الدفع (يبدأ بـ HSN-). إذا كان اشتراكك ما زال فعّالًا، تُضاف المدة الجديدة بعد تاريخ انتهائه. <b>كود الخصم</b> مكانه تحت في الباقات ← «عندك كود خصم؟».</p>
+        {data.active && data.card_payments && !isStaff() && <div id="upgrade" className="scroll-mt-20"><UpgradeCard data={data} onPay={goPay} /></div>}
+      </div>
+      <ReferralCard />
+      <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
+      <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
+      <Card title="تفعيل كود">
+          <p className="muted mb-3 text-sm">أدخل <b>كود التفعيل</b> اللي وصلك بعد الدفع (يبدأ بـ HSN-). إذا كان اشتراكك ما زال فعّالًا، تُضاف المدة الجديدة بعد تاريخ انتهائه. <b>كود الخصم</b> مكانه فوق في الباقات ← «عندك كود خصم؟».</p>
           <div className="flex gap-2">
             <input className="input" dir="ltr" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="HSN-XXXX-XXXX-XXXX" aria-label="كود التفعيل" />
             <button className="btn btn-primary shrink-0" disabled={busy || code.trim().length < 4} onClick={redeem}>{busy ? "…" : "تفعيل"}</button>
@@ -136,11 +146,6 @@ export function SubscriptionPage() {
             <a className="btn btn-ghost mt-4 w-full" href={data.sales_contact} target="_blank" rel="noopener"><Icon name="send" size={17} />تواصل معنا لشراء أو ترقية الباقة</a>
           )}
         </Card>
-      </div>
-      {data.active && data.card_payments && !isStaff() && <div id="upgrade" className="scroll-mt-20"><UpgradeCard data={data} onPay={goPay} /></div>}
-      <ReferralCard />
-      <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
-      <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
     </div>
   );
 }
@@ -189,7 +194,12 @@ function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url:
     () => (chosen ? api<{ amount: number; days_left: number; used_messages: number; messages_limit: number | null; new_value: number; credit: number }>(`/api/subscription/upgrade/quote?plan_id=${encodeURIComponent(chosen.id)}`) : Promise.resolve(null)),
     [chosen?.id],
   );
-  const u = st?.upgrade;
+  const [showDone, setShowDone] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setShowDone(false), 15_000);
+    return () => clearTimeout(t);
+  }, [st?.upgrade?.id]);
+  const u = showDone ? st?.upgrade : null;
   if (!higher.length && !u) return null;
   const pay = async () => {
     if (!chosen || !quote) return;

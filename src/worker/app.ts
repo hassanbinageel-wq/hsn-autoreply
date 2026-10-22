@@ -1038,7 +1038,7 @@ export function createApp() {
     // A discount code typed in the activation box: say where it goes.
     if (!/^HSN-/i.test(p.data.code.trim())) {
       const cp = await findCoupon(c.env.DB, p.data.code);
-      if (cp) return apiError(c, 422, "is_coupon", `«${cp.code}» كود خصم ${cp.percent}% وليس كود تفعيل — استخدمه تحت في «الباقات وطرق الدفع» ← «عندك كود خصم؟» عشان يطلع لك السعر بعد الخصم.`);
+      if (cp) return apiError(c, 422, "is_coupon", `«${cp.code}» كود خصم ${cp.percent}% وليس كود تفعيل — استخدمه فوق في «الباقات وطرق الدفع» ← «عندك كود خصم؟» عشان يطلع لك السعر بعد الخصم.`);
     }
     try {
       const r = await withSchedulingNotice(c.env, T(c), () => redeemCode(c.env.DB, T(c), p.data.code));
