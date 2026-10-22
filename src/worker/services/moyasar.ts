@@ -55,28 +55,38 @@ export async function startCardPayment(env: Env, tenantId: number, planId: strin
   if (!cardEnabled(env)) throw new PayError("card_off", "الدفع بالبطاقة غير متاح حاليًا — استخدم طرق الدفع الأخرى", 409);
   const plan = await payablePlan(env, planId);
   if (!plan) throw new PayError("not_payable", "هذي الباقة ما تندفع بالبطاقة — استخدم طرق الدفع الأخرى");
-  const { amount, days } = plan;
+  return createInvoice(env, { tenantId, planId: plan.id, days: plan.days, amount: plan.amount, description: `شيّك — ${plan.name} (${plan.days} يوم)`, actor, siteOrigin }, now);
+}
+
+/** Opens a Moyasar invoice for an amount (a plan period, or an upgrade difference when `upgradeId` is set). */
+export async function createInvoice(
+  env: Env,
+  o: { tenantId: number; planId: string; days: number; amount: number; description: string; actor: string; siteOrigin?: string; upgradeId?: number },
+  now = Date.now(),
+): Promise<{ id: number; url: string }> {
+  if (!cardEnabled(env)) throw new PayError("card_off", "الدفع بالبطاقة غير متاح حاليًا — استخدم طرق الدفع الأخرى", 409);
+  if (o.amount < 100) throw new PayError("too_small", "أقل مبلغ للدفع بالبطاقة 1 ر.س");
   const row = await run(
     env.DB,
-    "INSERT INTO card_payments (tenant_id, plan_id, days, amount, currency, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'SAR', ?, ?, ?)",
-    tenantId, plan.id, days, amount, actor, now, now,
+    "INSERT INTO card_payments (tenant_id, plan_id, days, amount, currency, created_by, upgrade_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'SAR', ?, ?, ?, ?)",
+    o.tenantId, o.planId, o.days, o.amount, o.actor, o.upgradeId ?? null, now, now,
   );
   const id = Number(row.meta.last_row_id);
   const base = env.PUBLIC_BASE_URL.replace(/\/+$/, "");
   // The customer comes back to the domain they paid from (their session cookie lives there).
-  const site = (siteOrigin || base).replace(/\/+$/, "");
+  const site = (o.siteOrigin || base).replace(/\/+$/, "");
   try {
     const inv = await moyasar(env, "/invoices", {
       method: "POST",
       body: {
-        amount,
+        amount: o.amount,
         currency: "SAR",
-        description: `شيّك — ${plan.name} (${days} يوم)`,
+        description: o.description,
         callback_url: `${base}/webhooks/moyasar`,
         success_url: `${site}/#/subscription?paid=${id}`,
         back_url: `${site}/#/subscription`,
         expired_at: new Date(now + 2 * 3_600_000).toISOString(),
-        metadata: { payment_id: String(id), tenant_id: String(tenantId), plan_id: plan.id },
+        metadata: { payment_id: String(id), tenant_id: String(o.tenantId), plan_id: o.planId, ...(o.upgradeId ? { upgrade_id: String(o.upgradeId) } : {}) },
       },
     });
     if (!inv.id || !inv.url) throw new PayError("gateway", "ردّ بوابة الدفع ناقص", 502);
@@ -109,9 +119,9 @@ const FINAL = ["failed", "canceled", "expired", "voided", "refunded"];
  * (the status change is atomic, so a callback and a status check arriving together cannot both extend it).
  */
 export async function syncInvoice(env: Env, invoiceId: string, now = Date.now()): Promise<string> {
-  const pay = await first<{ id: number; tenant_id: number; plan_id: string; days: number; amount: number; currency: string; status: string }>(
+  const pay = await first<{ id: number; tenant_id: number; plan_id: string; days: number; amount: number; currency: string; status: string; upgrade_id: number | null }>(
     env.DB,
-    "SELECT id, tenant_id, plan_id, days, amount, currency, status FROM card_payments WHERE invoice_id = ?",
+    "SELECT id, tenant_id, plan_id, days, amount, currency, status, upgrade_id FROM card_payments WHERE invoice_id = ?",
     invoiceId,
   );
   if (!pay) return "unknown";
@@ -126,6 +136,10 @@ export async function syncInvoice(env: Env, invoiceId: string, now = Date.now())
     }
     const claimed = await run(env.DB, "UPDATE card_payments SET status = 'paid', paid_at = ?, updated_at = ? WHERE id = ? AND status != 'paid'", now, now, pay.id);
     if (!claimed.meta.changes) return "paid";
+    if (pay.upgrade_id) {
+      await applyUpgrade(env, pay.upgrade_id, `payment:${pay.id}`, now, { id: pay.id, amount: pay.amount });
+      return "paid";
+    }
     const r = await withSchedulingNotice(env, pay.tenant_id, () => extendPlan(env.DB, pay.tenant_id, pay.plan_id, pay.days, now));
     const t = await first<{ name: string }>(env.DB, "SELECT name FROM tenants WHERE id = ?", pay.tenant_id);
     const plan = await first<{ name: string }>(env.DB, "SELECT name FROM plans WHERE id = ?", pay.plan_id);
@@ -137,4 +151,37 @@ export async function syncInvoice(env: Env, invoiceId: string, now = Date.now())
   }
   if (FINAL.includes(inv.status) && inv.status !== pay.status) await run(env.DB, "UPDATE card_payments SET status = ?, updated_at = ? WHERE id = ? AND status != 'paid'", inv.status, now, pay.id);
   return inv.status;
+}
+
+/**
+ * Moves the customer of an approved (or just paid) upgrade to the new plan, keeping the expiry date, once.
+ * `payment` = the card payment of the difference (honoured even if the request was cancelled or rejected while the
+ * payment page was open — the customer paid); none when the owner approved it for free.
+ */
+export async function applyUpgrade(env: Env, upgradeId: number, actor: string, now = Date.now(), payment?: { id: number; amount: number }): Promise<boolean> {
+  const paymentId = payment?.id;
+  const u = await first<{ id: number; tenant_id: number; from_plan: string; to_plan: string; amount: number | null }>(
+    env.DB,
+    "SELECT id, tenant_id, from_plan, to_plan, amount FROM plan_upgrades WHERE id = ?",
+    upgradeId,
+  );
+  if (!u) return false;
+  const done = await run(
+    env.DB,
+    `UPDATE plan_upgrades SET status = ?, payment_id = ?, amount = COALESCE(?, amount), updated_at = ? WHERE id = ? AND status IN (${paymentId ? "'approved', 'pending', 'canceled', 'rejected'" : "'approved', 'pending'"})`,
+    paymentId ? "paid" : "done", paymentId ?? null, payment?.amount ?? null, now, u.id,
+  );
+  if (!done.meta.changes) return false;
+  await withSchedulingNotice(env, u.tenant_id, () => run(env.DB, "UPDATE tenants SET plan_id = ?, updated_at = ? WHERE id = ?", u.to_plan, now, u.tenant_id));
+  const t = await first<{ name: string; plan_expires_at: number | null }>(env.DB, "SELECT name, plan_expires_at FROM tenants WHERE id = ?", u.tenant_id);
+  const to = await first<{ name: string }>(env.DB, "SELECT name FROM plans WHERE id = ?", u.to_plan);
+  const paid = payment?.amount ?? u.amount ?? 0;
+  const sar = (paid / 100).toLocaleString("en-US");
+  await audit(env.DB, u.tenant_id, actor, "subscription.upgraded", u.to_plan, { upgrade: u.id, from: u.from_plan, amount: paid, payment: paymentId ?? null });
+  await notify(env, u.tenant_id, "plan", `⬆️ تمت ترقية باقتك إلى «${to?.name ?? u.to_plan}»${paymentId ? ` (دفعت الفرق ${sar} ر.س)` : ""} — تاريخ الانتهاء نفسه وحدود الباقة الجديدة تشتغل من الحين.`, undefined, { link: "/subscription" });
+  if (paymentId)
+    await notify(env, OWNER_TENANT, "plan", `💳 دفع فرق ترقية: «${t?.name ?? u.tenant_id}» دفع ${sar} ر.س وترقّى إلى «${to?.name ?? u.to_plan}»${isTestKey(env) ? " (تجريبي)" : ""}`, undefined, { link: "/owner?tab=payments" });
+  if (!t?.plan_expires_at || t.plan_expires_at <= now)
+    await notify(env, OWNER_TENANT, "plan", `⚠️ ترقية رقم ${u.id}: اشتراك «${t?.name ?? u.tenant_id}» منتهي — تغيّرت الباقة لكن ما في أيام. راجعه من صفحة العملاء.`);
+  return true;
 }

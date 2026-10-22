@@ -97,7 +97,8 @@ import { emptyMenu, extrasProblem, menuParts, menuProblem, type DmMenu, type Men
 import { syncMenuProfile } from "./services/menuProfile";
 import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
 import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
-import { cardEnabled, cardPriceHalalas, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
+import { applyUpgrade, cardEnabled, cardPriceHalalas, createInvoice, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
+import { quoteUpgrade } from "./services/upgrades";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, pageLang, parseSignedRequest, privacyPage, refundPage, termsPage } from "./pages";
 
@@ -1068,16 +1069,81 @@ export function createApp() {
   });
   // After returning from the payment page: re-checks that payment with Moyasar (own payments only).
   api.get("/subscription/pay/:id", async (c) => {
-    const pay = await first<{ id: number; invoice_id: string | null; status: string; plan_id: string; amount: number; days: number }>(
+    const pay = await first<{ id: number; invoice_id: string | null; status: string; plan_id: string; amount: number; days: number; upgrade_id: number | null }>(
       c.env.DB,
-      "SELECT id, invoice_id, status, plan_id, amount, days FROM card_payments WHERE id = ? AND tenant_id = ?",
+      "SELECT id, invoice_id, status, plan_id, amount, days, upgrade_id FROM card_payments WHERE id = ? AND tenant_id = ?",
       Number(c.req.param("id")) || 0, T(c),
     );
     if (!pay) return apiError(c, 404, "not_found", "الدفعة غير موجودة");
     let status = pay.status;
     if (status === "initiated" && pay.invoice_id && cardEnabled(c.env) && (await rateLimit(c.env.DB, `card_check:${T(c)}`, 60, 3_600_000)))
       status = await syncInvoice(c.env, pay.invoice_id).catch(() => status);
-    return c.json({ id: pay.id, status, plan_id: pay.plan_id, amount: pay.amount / 100, days: pay.days });
+    return c.json({ id: pay.id, status, plan_id: pay.plan_id, amount: pay.amount / 100, days: pay.days, upgrade: !!pay.upgrade_id });
+  });
+
+  // ---- Plan upgrade: the account holder asks, the owner approves an amount (the difference), the holder pays it.
+  api.use("/subscription/upgrade*", async (c, next) => {
+    if (c.get("session").is_owner) return apiError(c, 409, "owner", "حساب المالك لا يحتاج اشتراكًا");
+    if (c.req.method !== "GET" && c.get("session").role !== "owner") return apiError(c, 403, "holder_only", "الترقية لصاحب الحساب فقط");
+    await next();
+  });
+  api.get("/subscription/upgrade", async (c) => {
+    const u = await first<any>(
+      c.env.DB,
+      `SELECT u.id, u.from_plan, u.to_plan, f.name AS from_name, p.name AS to_name, u.status, u.amount, u.note, u.updated_at
+         FROM plan_upgrades u LEFT JOIN plans f ON f.id = u.from_plan LEFT JOIN plans p ON p.id = u.to_plan
+        WHERE u.tenant_id = ? AND (u.status IN ('pending', 'approved') OR u.updated_at > ?) ORDER BY u.id DESC LIMIT 1`,
+      T(c), Date.now() - 7 * 86_400_000,
+    );
+    return c.json({ upgrade: u ? { ...u, amount: u.amount === null ? null : u.amount / 100 } : null });
+  });
+  api.post("/subscription/upgrade", async (c) => {
+    const p = await parseBody(c, z.object({ plan_id: z.string().max(20) }));
+    if (!p.ok) return p.res;
+    if (!(await rateLimit(c.env.DB, `upgrade_req:${T(c)}`, 10, 3_600_000))) return apiError(c, 429, "rate_limited", "طلبات كثيرة، حاول بعد ساعة");
+    const now = Date.now();
+    let q;
+    try {
+      q = await quoteUpgrade(c.env, T(c), p.data.plan_id, now);
+    } catch (e) {
+      if (e instanceof PayError) return apiError(c, e.status as any, e.code, e.message);
+      throw e;
+    }
+    await run(c.env.DB, "UPDATE plan_upgrades SET status = 'canceled', updated_at = ? WHERE tenant_id = ? AND status IN ('pending', 'approved')", now, T(c));
+    const row = await run(
+      c.env.DB,
+      "INSERT INTO plan_upgrades (tenant_id, from_plan, to_plan, suggested, used_messages, days_left, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      T(c), q.from_plan, q.to_plan, q.suggested, q.used_messages, q.days_left, now, now,
+    );
+    const t = await first<{ name: string }>(c.env.DB, "SELECT name FROM tenants WHERE id = ?", T(c));
+    const names = await all<{ id: string; name: string }>(c.env.DB, "SELECT id, name FROM plans WHERE id IN (?, ?)", q.from_plan, q.to_plan);
+    const nm = (id: string) => names.find((x) => x.id === id)?.name ?? id;
+    await audit(c.env.DB, T(c), c.get("session").username, "subscription.upgrade_requested", q.to_plan, { from: q.from_plan, suggested: q.suggested });
+    await notify(c.env, OWNER_TENANT, "plan", `⬆️ طلب ترقية: «${t?.name ?? T(c)}» من «${nm(q.from_plan)}» إلى «${nm(q.to_plan)}» — استهلك ${q.used_messages} رسالة هذي الدورة، باقي ${q.days_left} يوم. المبلغ المقترح ${(q.suggested / 100).toLocaleString("en-US")} ر.س`, undefined, { link: "/owner?tab=payments" });
+    return c.json({ ok: true, id: Number(row.meta.last_row_id) });
+  });
+  api.delete("/subscription/upgrade/:id", async (c) => {
+    const r = await run(c.env.DB, "UPDATE plan_upgrades SET status = 'canceled', updated_at = ? WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'approved')", Date.now(), Number(c.req.param("id")) || 0, T(c));
+    if (!r.meta.changes) return apiError(c, 404, "not_found", "الطلب غير موجود");
+    return c.json({ ok: true });
+  });
+  api.post("/subscription/upgrade/:id/pay", async (c) => {
+    const u = await first<{ id: number; from_plan: string; to_plan: string; status: string; amount: number | null }>(
+      c.env.DB, "SELECT id, from_plan, to_plan, status, amount FROM plan_upgrades WHERE id = ? AND tenant_id = ?", Number(c.req.param("id")) || 0, T(c));
+    if (!u) return apiError(c, 404, "not_found", "الطلب غير موجود");
+    if (u.status !== "approved" || !u.amount) return apiError(c, 409, "not_approved", "الطلب ما انقبل بعد");
+    const t = await first<{ plan_id: string | null; plan_expires_at: number | null }>(c.env.DB, "SELECT plan_id, plan_expires_at FROM tenants WHERE id = ?", T(c));
+    if (t?.plan_id !== u.from_plan || !t.plan_expires_at || t.plan_expires_at <= Date.now()) return apiError(c, 409, "plan_changed", "باقتك تغيّرت من وقت الطلب — اطلب الترقية من جديد");
+    if (!(await rateLimit(c.env.DB, `card_pay:${T(c)}`, 10, 3_600_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
+    const to = await first<{ name: string }>(c.env.DB, "SELECT name FROM plans WHERE id = ?", u.to_plan);
+    try {
+      const r = await createInvoice(c.env, { tenantId: T(c), planId: u.to_plan, days: 0, amount: u.amount, description: `شيّك — ترقية إلى ${to?.name ?? u.to_plan}`, actor: c.get("session").username, siteOrigin: new URL(c.req.url).origin, upgradeId: u.id });
+      await audit(c.env.DB, T(c), c.get("session").username, "subscription.upgrade_pay_started", u.to_plan, { upgrade: u.id, payment: r.id });
+      return c.json({ ok: true, ...r });
+    } catch (e) {
+      if (e instanceof PayError) return apiError(c, e.status as any, e.code, e.message);
+      throw e;
+    }
   });
 
   // ---- Owner panel (customers). Owner tenant only.
@@ -1601,6 +1667,55 @@ export function createApp() {
     );
     const total = await first<{ n: number; sum: number | null }>(c.env.DB, "SELECT COUNT(*) AS n, SUM(amount) AS sum FROM card_payments WHERE status = 'paid'");
     return c.json({ enabled: cardEnabled(c.env), test_mode: isTestKey(c.env), payments: rows, paid_count: total?.n ?? 0, paid_total: (total?.sum ?? 0) / 100 });
+  });
+  // Upgrade requests, newest first; open ones come with the live usage and the current suggested amount.
+  owner.get("/upgrades", async (c) => {
+    const rows = await all<any>(
+      c.env.DB,
+      `SELECT u.*, t.name AS tenant_name, f.name AS from_name, p.name AS to_name
+         FROM plan_upgrades u LEFT JOIN tenants t ON t.id = u.tenant_id LEFT JOIN plans f ON f.id = u.from_plan LEFT JOIN plans p ON p.id = u.to_plan
+        WHERE u.status != 'canceled' ORDER BY (u.status IN ('pending', 'approved')) DESC, u.id DESC LIMIT 100`,
+    );
+    const out = [];
+    for (const r of rows) {
+      let live = null;
+      if (r.status === "pending" || r.status === "approved") live = await quoteUpgrade(c.env, r.tenant_id, r.to_plan).catch((e) => ({ error: (e as Error).message }));
+      out.push({ ...r, live });
+    }
+    return c.json({ enabled: cardEnabled(c.env), upgrades: out });
+  });
+  owner.post("/upgrades/:id/approve", async (c) => {
+    const p = await parseBody(c, z.object({ amount_sar: z.number().min(0).max(100_000) }));
+    if (!p.ok) return p.res;
+    const id = Number(c.req.param("id")) || 0;
+    const u = await first<{ id: number; tenant_id: number; to_plan: string; status: string }>(c.env.DB, "SELECT id, tenant_id, to_plan, status FROM plan_upgrades WHERE id = ?", id);
+    if (!u) return apiError(c, 404, "not_found", "الطلب غير موجود");
+    if (u.status !== "pending" && u.status !== "approved") return apiError(c, 409, "closed", "الطلب مقفل");
+    const amount = Math.round(p.data.amount_sar * 100);
+    if (amount > 0 && amount < 100) return apiError(c, 422, "too_small", "أقل مبلغ 1 ر.س — أو 0 للترقية مجانًا");
+    const now = Date.now();
+    const actor = c.get("session").username;
+    await run(c.env.DB, "UPDATE plan_upgrades SET status = 'approved', amount = ?, decided_by = ?, decided_at = ?, updated_at = ? WHERE id = ?", amount, actor, now, now, id);
+    await audit(c.env.DB, T(c), actor, "upgrade.approved", String(id), { tenant: u.tenant_id, amount });
+    if (amount === 0) {
+      await applyUpgrade(c.env, id, actor, now);
+      return c.json({ ok: true, applied: true });
+    }
+    const to = await first<{ name: string }>(c.env.DB, "SELECT name FROM plans WHERE id = ?", u.to_plan);
+    await notify(c.env, u.tenant_id, "plan", `✅ انقبل طلب ترقيتك إلى «${to?.name ?? u.to_plan}» — ادفع الفرق ${p.data.amount_sar.toLocaleString("en-US")} ر.س من صفحة «اشتراكي» وتترقى باقتك فورًا.`, undefined, { link: "/subscription" });
+    return c.json({ ok: true, applied: false });
+  });
+  owner.post("/upgrades/:id/reject", async (c) => {
+    const p = await parseBody(c, z.object({ note: z.string().trim().max(300).optional() }));
+    if (!p.ok) return p.res;
+    const id = Number(c.req.param("id")) || 0;
+    const u = await first<{ tenant_id: number }>(c.env.DB, "SELECT tenant_id FROM plan_upgrades WHERE id = ? AND status IN ('pending', 'approved')", id);
+    if (!u) return apiError(c, 404, "not_found", "الطلب غير موجود أو مقفل");
+    const now = Date.now();
+    await run(c.env.DB, "UPDATE plan_upgrades SET status = 'rejected', note = ?, decided_by = ?, decided_at = ?, updated_at = ? WHERE id = ?", p.data.note || null, c.get("session").username, now, now, id);
+    await audit(c.env.DB, T(c), c.get("session").username, "upgrade.rejected", String(id), { tenant: u.tenant_id });
+    await notify(c.env, u.tenant_id, "plan", `ما انقبل طلب الترقية${p.data.note ? ` — ${p.data.note}` : ""}. تقدر تتواصل معنا من صفحة الدعم.`, undefined, { link: "/subscription" });
+    return c.json({ ok: true });
   });
   owner.put("/plans/:pid", async (c) => {
     const pid = c.req.param("pid");

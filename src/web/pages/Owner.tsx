@@ -607,7 +607,7 @@ export function OwnerPage() {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <CardPaymentsCard /> : <BrandingTab />}
+      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <><UpgradesCard /><CardPaymentsCard /></> : <BrandingTab />}
     </div>
   );
 }
@@ -665,6 +665,92 @@ const CARD_STATUS: Record<string, [string, string]> = {
   mismatch: ["مبلغ غير مطابق ⚠️", "text-red-600"],
   refunded: ["مسترجع", "text-amber-600"],
 };
+
+const UPG_STATUS: Record<string, [string, string]> = {
+  pending: ["بانتظار موافقتك", "text-amber-600"],
+  approved: ["مقبول — بانتظار دفع العميل", "text-violet-600 dark:text-violet-300"],
+  rejected: ["مرفوض", "muted"],
+  paid: ["مدفوع ✅ وترقّى", "text-emerald-700 dark:text-emerald-300"],
+  done: ["ترقّى مجانًا ✅", "text-emerald-700 dark:text-emerald-300"],
+};
+const sarOf = (h: number | null | undefined) => (h == null ? "—" : `${(h / 100).toLocaleString("en-US")} ر.س`);
+
+/**
+ * Upgrade requests: the customer's usage in the current cycle and the days left help decide the amount
+ * (the full difference when nothing was used, or the difference for the days left), then approve or reject.
+ */
+function UpgradesCard() {
+  const { data, reload } = useAsync(() => api<{ enabled: boolean; upgrades: any[] }>("/api/owner/upgrades"), []);
+  if (!data || !data.upgrades.length) return null;
+  return (
+    <Card title="⬆️ طلبات ترقية الباقة" className="mb-5">
+      <ul className="space-y-3">
+        {data.upgrades.map((u) => <UpgradeRow key={u.id} u={u} onDone={reload} />)}
+      </ul>
+    </Card>
+  );
+}
+
+function UpgradeRow({ u, onDone }: { u: any; onDone: () => void }) {
+  const live = u.live && !u.live.error ? u.live : null;
+  const open = u.status === "pending" || u.status === "approved";
+  const [amount, setAmount] = useState(() => String(((u.amount ?? live?.suggested ?? u.suggested) / 100)));
+  const [busy, setBusy] = useState(false);
+  const act = async (f: () => Promise<unknown>, ok: string) => {
+    setBusy(true);
+    try {
+      await f();
+      toast(ok);
+      onDone();
+    } catch (e: any) {
+      if (e.message !== "أُلغي") toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const approve = () => {
+    const v = Number(amount);
+    return act(async () => {
+      if (v === 0 && !(await askConfirm({ title: "ترقية مجانية؟", message: "المبلغ 0 — الباقة تترقى الحين بدون دفع.", confirmLabel: "ترقية" }))) throw new Error("أُلغي");
+      await api(`/api/owner/upgrades/${u.id}/approve`, { body: { amount_sar: v } });
+    }, v === 0 ? "ترقّى العميل" : "تمت الموافقة — وصل العميل إشعار بالمبلغ");
+  };
+  const reject = () => act(async () => {
+    const note = await askText({ title: "رفض طلب الترقية", label: "سبب يوصل للعميل (اختياري)", confirmLabel: "رفض" });
+    if (note === null) throw new Error("أُلغي");
+    await api(`/api/owner/upgrades/${u.id}/reject`, { body: { note: note || undefined } });
+  }, "رُفض الطلب");
+  return (
+    <li className="rounded-2xl border border-[var(--border)] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <b>{u.tenant_name ?? `#${u.tenant_id}`}</b>
+        <span className={`text-xs font-bold ${UPG_STATUS[u.status]?.[1] ?? ""}`}>{UPG_STATUS[u.status]?.[0] ?? u.status}</span>
+      </div>
+      <p className="mt-1 text-sm">من «{u.from_name ?? u.from_plan}» إلى «{u.to_name ?? u.to_plan}» <span className="muted text-xs">· {fmtTime(u.created_at)}</span></p>
+      {open && live ? (
+        <div className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
+          <span>الرسائل في الدورة الحالية: <b>{live.used_messages.toLocaleString("en-US")}</b>{live.used_messages === 0 ? " (ما استخدم شي)" : ""}</span>
+          <span>الأيام الباقية: <b>{live.days_left}</b></span>
+          <span>فرق كامل: <b>{sarOf(live.full)}</b></span>
+          <span>فرق الأيام الباقية: <b>{sarOf(live.prorated)}</b></span>
+          <span className="sm:col-span-2">المقترح: <b>{sarOf(live.suggested)}</b> <span className="muted">({live.used_messages === 0 ? "فرق كامل لأنه ما استخدم الباقة" : "حسب الأيام الباقية لأنه استخدم الباقة"})</span></span>
+        </div>
+      ) : open && u.live?.error ? (
+        <p className="mt-2 text-xs text-red-600">{u.live.error}</p>
+      ) : (
+        <p className="muted mt-1 text-xs">المبلغ: {sarOf(u.amount)}{u.note ? ` · ${u.note}` : ""}</p>
+      )}
+      {open && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input className="input w-28" type="number" min={0} step="1" dir="ltr" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="المبلغ بالريال" />
+          <span className="muted text-xs">ر.س (0 = مجانًا)</span>
+          <button className="btn btn-primary min-h-9 text-sm" disabled={busy || amount === "" || Number(amount) < 0} onClick={approve}>{u.status === "approved" ? "تحديث المبلغ" : "موافقة"}</button>
+          <button className="btn btn-ghost min-h-9 text-sm text-red-600" disabled={busy} onClick={reject}>رفض</button>
+        </div>
+      )}
+    </li>
+  );
+}
 
 /** Card payments through Moyasar: on/off state, the paid total and the latest attempts. */
 function CardPaymentsCard() {

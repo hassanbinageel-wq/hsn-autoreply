@@ -42,14 +42,14 @@ export function SubscriptionPage() {
   // Back from the card payment page (#/subscription?paid=<id>): re-check that payment with the gateway.
   const [paidId, setPaidId] = useState(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("paid"));
   const [checkKey, setCheckKey] = useState(0);
-  const [payResult, setPayResult] = useState<{ status: string; amount?: number; days?: number } | null>(null);
+  const [payResult, setPayResult] = useState<{ status: string; amount?: number; days?: number; upgrade?: boolean } | null>(null);
   useEffect(() => {
     if (!paidId) return;
     let stop = false;
     let tries = 0;
     const check = async () => {
       try {
-        const r = await api<{ status: string; amount: number; days: number }>(`/api/subscription/pay/${encodeURIComponent(paidId)}`);
+        const r = await api<{ status: string; amount: number; days: number; upgrade: boolean }>(`/api/subscription/pay/${encodeURIComponent(paidId)}`);
         if (stop) return;
         setPayResult(r);
         if (r.status === "paid") return reload();
@@ -72,16 +72,18 @@ export function SubscriptionPage() {
     });
     if (!ok) return;
     try {
-      const r = await api<{ id: number; url: string }>("/api/subscription/pay", { body: { plan_id: planId } });
-      // In the Android app the payment page opens in the browser; back in the app, this page checks the payment.
-      if (isNative) {
-        await openExternal(r.url);
-        setPaidId(String(r.id));
-        setPayResult({ status: "initiated" });
-      } else location.href = r.url;
+      goPay(await api<{ id: number; url: string }>("/api/subscription/pay", { body: { plan_id: planId } }));
     } catch (e: any) {
       toast(e.message, "bad");
     }
+  };
+  // In the Android app the payment page opens in the browser; back in the app, this page checks the payment.
+  const goPay = async (r: { id: number; url: string }) => {
+    if (isNative) {
+      await openExternal(r.url);
+      setPaidId(String(r.id));
+      setPayResult({ status: "initiated" });
+    } else location.href = r.url;
   };
   if (loading && !data) return <Spinner />;
   if (error) return <Alert tone="bad">{error}</Alert>;
@@ -94,7 +96,7 @@ export function SubscriptionPage() {
         <p className="muted mt-1 text-sm">باقتك الحالية واستهلاكك هذا الشهر، وتفعيل الكود.</p>
       </header>
       {payResult && (
-        payResult.status === "paid" ? <Alert tone="good">✅ تم الدفع وتفعّلت باقتك{payResult.days ? ` (${payResult.days} يوم)` : ""}. شكرًا لك!</Alert>
+        payResult.status === "paid" ? <Alert tone="good">{payResult.upgrade ? "✅ تم دفع الفرق وترقّت باقتك — تاريخ الانتهاء نفسه." : `✅ تم الدفع وتفعّلت باقتك${payResult.days ? ` (${payResult.days} يوم)` : ""}. شكرًا لك!`}</Alert>
         : payResult.status === "initiated" ? <Alert tone="info">ننتظر تأكيد الدفع… إذا دفعت، تتفعّل الباقة تلقائيًا خلال دقائق ويوصلك إشعار. <button className="font-bold underline" onClick={() => setCheckKey((k) => k + 1)}>تحقق الحين</button></Alert>
         : <Alert tone="bad">ما اكتمل الدفع ({payResult.status === "failed" ? "رُفضت البطاقة" : payResult.status === "expired" ? "انتهت مهلة الصفحة" : payResult.status === "canceled" ? "أُلغي" : "تعذر التأكد"}). ما انخصم منك شي إذا ما اكتمل — جرّب مرة ثانية أو استخدم طريقة دفع ثانية.</Alert>
       )}
@@ -129,6 +131,7 @@ export function SubscriptionPage() {
           )}
         </Card>
       </div>
+      {data.active && data.card_payments && !isStaff() && <UpgradeCard data={data} onPay={goPay} />}
       <ReferralCard />
       <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
       <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
@@ -161,6 +164,77 @@ function ReferralCard() {
         <button className="btn btn-primary shrink-0" onClick={share}><Icon name="send" size={16} />مشاركة</button>
       </div>
       <p className="muted mt-2 text-xs">اشترك من رابطك: <b>{data.referred}</b> · كسبت: <b>{data.rewarded * data.days_per_referral}</b> يوم</p>
+    </Card>
+  );
+}
+
+const UPGRADE_STATUS: Record<string, string> = { pending: "قيد المراجعة", approved: "مقبول — بانتظار الدفع", rejected: "ما انقبل", paid: "تمت الترقية ✅", done: "تمت الترقية ✅" };
+
+/**
+ * Upgrading to a higher plan without losing the current period: the customer asks, the service reviews the usage
+ * and approves the price difference, then the customer pays only that and the plan changes with the same expiry.
+ */
+function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url: string }) => void }) {
+  const { data: st, reload } = useAsync(() => api<{ upgrade: any }>("/api/subscription/upgrade"), []);
+  const current = data.plans?.find((p: any) => p.id === data.plan?.id);
+  const higher = (data.plans ?? []).filter((p: any) => p.card_price && current?.card_price && p.card_price > current.card_price);
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const u = st?.upgrade;
+  const open = u && (u.status === "pending" || u.status === "approved");
+  if (!st || (!higher.length && !u)) return null;
+  const act = async (f: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await f();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const request = () => act(async () => {
+    const plan = higher.find((p: any) => p.id === (target || higher[0].id));
+    if (!plan) return;
+    await api("/api/subscription/upgrade", { body: { plan_id: plan.id } });
+    toast("وصلنا طلبك — نراجعه ونرد عليك بالمبلغ");
+    reload();
+  });
+  const cancel = () => act(async () => {
+    if (!(await askConfirm({ title: "إلغاء طلب الترقية؟", confirmLabel: "إلغاء الطلب", danger: true }))) return;
+    await api(`/api/subscription/upgrade/${u.id}`, { method: "DELETE" });
+    reload();
+  });
+  const pay = () => act(async () => onPay(await api<{ id: number; url: string }>(`/api/subscription/upgrade/${u.id}/pay`, { body: {} })));
+  return (
+    <Card title="⬆️ ترقية الباقة">
+      {open ? (
+        <div className="space-y-3">
+          <p className="text-sm">طلب ترقية من <b>{u.from_name ?? u.from_plan}</b> إلى <b>{u.to_name ?? u.to_plan}</b> — <span className="font-bold">{UPGRADE_STATUS[u.status]}</span></p>
+          {u.status === "pending" ? (
+            <p className="muted text-sm">نراجع استهلاكك ونرسل لك مبلغ الفرق بإشعار. ما يتغيّر شي في باقتك قبل الدفع.</p>
+          ) : (
+            <button className="btn btn-primary w-full" disabled={busy} onClick={pay}><Icon name="lock" size={17} />ادفع الفرق {Number(u.amount).toLocaleString("en-US")} ر.س</button>
+          )}
+          <button className="btn btn-ghost w-full" disabled={busy} onClick={cancel}>إلغاء الطلب</button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {u?.status === "rejected" && <Alert tone="warn">ما انقبل آخر طلب ترقية{u.note ? ` — ${u.note}` : ""}.</Alert>}
+          {(u?.status === "paid" || u?.status === "done") && <Alert tone="good">تمت ترقية باقتك إلى «{u.to_name ?? u.to_plan}».</Alert>}
+          {higher.length > 0 && (
+            <>
+              <p className="muted text-sm">تبي باقة أعلى؟ ما تحتاج تنتظر انتهاء اشتراكك ولا تدفع شهر كامل: اطلب الترقية، ونراجع استهلاكك ونرسل لك <b>فرق السعر</b> فقط. بعد الدفع تترقى فورًا وتاريخ الانتهاء يبقى نفسه.</p>
+              <div className="flex gap-2">
+                <select className="input" value={target || higher[0].id} onChange={(e) => setTarget(e.target.value)} aria-label="الباقة الجديدة">
+                  {higher.map((p: any) => <option key={p.id} value={p.id}>{p.name} — {Number(p.card_price).toLocaleString("en-US")} ر.س</option>)}
+                </select>
+                <button className="btn btn-primary shrink-0" disabled={busy} onClick={request}>اطلب الترقية</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
