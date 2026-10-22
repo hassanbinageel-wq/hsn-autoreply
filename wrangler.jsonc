@@ -45,6 +45,7 @@
     "SERVICE_DOMAIN": "hsnreply.online",
     // Sender of password-recovery emails (the domain is verified in Resend).
     "EMAIL_FROM": "شيّك Shayyek <no-reply@shayyek.sa>",
+    "EMAIL_FROM_FALLBACK": "شيّك Shayyek <no-reply@hsnreply.online>",
     "ALLOWED_APP_ORIGINS": "https://localhost,capacitor://localhost",
     "APP_VERSION": "1.0.0",
     "APP_DEEP_LINK": "sa.shayyek.app://oauth-done",

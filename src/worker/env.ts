@@ -32,6 +32,8 @@ export interface Env {
   // Optional: Resend (resend.com) for password-recovery emails; sender address on the verified domain.
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+  /** Sender used once when Resend refuses EMAIL_FROM (e.g. the old, still-verified domain). */
+  EMAIL_FROM_FALLBACK?: string;
   /** Optional: Moyasar (moyasar.com) secret key for card payments in SAR; sk_test_… for the sandbox. */
   MOYASAR_SECRET_KEY?: string;
   /** The service's own domain (e.g. hsnreply.online), for its expiry date. */

@@ -87,7 +87,7 @@ import { permsFor } from "../shared/staff";
 
 const MAX_STAFF = 10;
 import { confirmEmailCode, confirmPasswordChange, requestPasswordReset, resetPassword, sendEmailCode, startPasswordChange } from "./services/recovery";
-import { emailEnabled } from "./services/email";
+import { emailEnabled, lastEmailError } from "./services/email";
 import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp } from "./lib/totp";
 import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
@@ -1914,6 +1914,10 @@ export function createApp() {
     checks.push({ name: "أسرار الخادم", ok: miss.length === 0, detail: miss.length ? `ناقص: ${miss.join(", ")}` : undefined });
     checks.push({ name: "INSTAGRAM_APP_ID", ok: !!c.env.INSTAGRAM_APP_ID });
     checks.push({ name: "PUBLIC_BASE_URL (HTTPS)", ok: c.env.PUBLIC_BASE_URL?.startsWith("https://") ?? false, detail: c.env.PUBLIC_BASE_URL });
+    if (T(c) === 1 && emailEnabled(c.env)) {
+      const e = await lastEmailError(c.env);
+      checks.push({ name: "الإيميل (Resend) — آخر خطأ", ok: e ? null : true, detail: e ? `${new Date(e.at).toISOString()} — ${e.error}` : "لا أخطاء مسجّلة" });
+    }
     if (!a || a.status === "disconnected") {
       checks.push({ name: "حساب متصل", ok: false });
       return c.json({ checks });
