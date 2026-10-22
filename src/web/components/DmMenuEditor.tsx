@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./Icon";
-import { Alert, Card, Field, InfoDot, Spinner, Toggle, toast } from "./ui";
-import { emptyMenu, maxOptions, menuProblem, MENU_LIMITS, newKey, TRIGGER_LABELS, type DmMenu, type MenuNode } from "../../shared/menu";
+import { Alert, Card, Field, InfoDot, Modal, Spinner, Toggle, toast } from "./ui";
+import { emptyMenu, extrasProblem, maxOptions, menuProblem, MENU_LIMITS, newKey, TRIGGER_LABELS, type DmMenu, type MenuNode } from "../../shared/menu";
 
 /** «القائمة التلقائية»: whoever writes to the account gets a menu; each option sends its own reply (sub-menus allowed). */
 export function DmMenuEditor() {
@@ -11,6 +11,8 @@ export function DmMenuEditor() {
   const [taps, setTaps] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [profile, setProfile] = useState<Array<{ username: string | null; ok: boolean; error?: string; skipped?: boolean }> | null>(null);
   useEffect(() => {
     api<{ menu: DmMenu; available: boolean; taps: Record<string, number> }>("/api/dm-menu")
       .then((r) => { setMenu(r.menu ?? emptyMenu()); setAvailable(r.available); setTaps(r.taps); })
@@ -18,13 +20,14 @@ export function DmMenuEditor() {
   }, []);
   if (!menu) return <Spinner />;
   const update = (m: DmMenu) => { setMenu(m); setDirty(true); };
-  const problem = menuProblem(menu.root);
+  const problem = menuProblem(menu.root) ?? extrasProblem(menu);
   const save = async (next = menu) => {
-    const p = menuProblem(next.root);
+    const p = menuProblem(next.root) ?? extrasProblem(next);
     if (p) return toast(p, "bad");
     setBusy(true);
     try {
-      await api("/api/dm-menu", { method: "PUT", body: next });
+      const r = await api<{ profile?: Array<{ username: string | null; ok: boolean; error?: string; skipped?: boolean }> }>("/api/dm-menu", { method: "PUT", body: next });
+      setProfile(r.profile?.filter((x) => !x.skipped) ?? null);
       setMenu(next);
       setDirty(false);
       toast(next.enabled ? "تم الحفظ — القائمة شغّالة ✅" : "تم الحفظ");
@@ -65,9 +68,16 @@ export function DmMenuEditor() {
             </div>
           </div>
         </Card>
-        <Card title="رسالة القائمة والخيارات">
+        <Card title="رسالة القائمة والخيارات" action={<button type="button" className="btn btn-ghost min-h-9 text-xs" onClick={() => setHelp(true)}>؟ وش الفرق بين القوائم</button>}>
           <NodeEditor node={menu.root} depth={0} taps={taps} onChange={(root) => update({ ...menu, root })} />
         </Card>
+        <ExtrasEditor menu={menu} onChange={update} onHelp={() => setHelp(true)} />
+        {profile && profile.length > 0 && (
+          <Alert tone={profile.every((x) => x.ok) ? "good" : "warn"}>
+            {profile.map((x, i) => <div key={i}>{x.username ? `@${x.username}: ` : ""}{x.ok ? "تم تحديث أسئلة البداية والقائمة الثابتة في إنستقرام (قد تتأخر شوي حتى تظهر للمحادثات القديمة)." : `ما تحدّثت أسئلة البداية والقائمة الثابتة: ${x.error}`}</div>)}
+          </Alert>
+        )}
+        <MenuHelp open={help} onClose={() => setHelp(false)} />
         <div className="sticky bottom-20 z-10 flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-lg lg:bottom-4">
           <button className="btn btn-primary" disabled={busy || !!problem || !dirty} onClick={() => save()}>{busy ? "…" : "حفظ القائمة"}</button>
           <span className={`text-xs ${problem ? "text-red-600" : "muted"}`}>{problem ?? (dirty ? "فيه تعديلات ما انحفظت" : "محفوظة")}</span>
@@ -142,6 +152,110 @@ function NodeEditor({ node, depth, taps, onChange }: { node: MenuNode; depth: nu
         </div>
       )}
     </div>
+  );
+}
+
+/** Every option of the menu, with its path (for linking ice breakers / persistent-menu items to an option). */
+function flatOptions(root: MenuNode): Array<{ key: string; label: string }> {
+  const out: Array<{ key: string; label: string }> = [];
+  const walk = (n: MenuNode, path: string) => n.children.forEach((c) => { const l = path ? `${path} ← ${c.label || "خيار"}` : c.label || "خيار"; out.push({ key: c.key, label: l }); walk(c, l); });
+  walk(root, "");
+  return out;
+}
+
+/** Ice breakers (questions before the first message) and the persistent menu (always inside the conversation). */
+function ExtrasEditor({ menu, onChange, onHelp }: { menu: DmMenu; onChange: (m: DmMenu) => void; onHelp: () => void }) {
+  const opts = flatOptions(menu.root);
+  const ice = menu.ice_breakers ?? [];
+  const pm = menu.persistent ?? [];
+  const optSelect = (value: string | undefined, set: (k: string) => void) => (
+    <select className="input min-w-0" value={value ?? ""} onChange={(e) => set(e.target.value)} aria-label="الخيار اللي يرد">
+      <option value="" disabled>اختر الرد من القائمة…</option>
+      {opts.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+    </select>
+  );
+  return (
+    <>
+      <Card title={<span className="inline-flex items-center gap-1.5">أسئلة البداية <InfoDot text="حتى 4 أسئلة تظهر للشخص أول ما يفتح محادثة مع حسابك، قبل ما يكتب أي شي (في تطبيق إنستقرام، وفي أول محادثة فقط). يضغط السؤال ويوصله رد الخيار اللي تختاره." /></span>} action={<button type="button" className="btn btn-ghost min-h-9 text-xs" onClick={onHelp}>؟ شرح</button>}>
+        {!opts.length ? <p className="muted text-sm">أضف خيارات للقائمة أول، وبعدها تربط كل سؤال بخيار.</p> : (
+          <div className="space-y-2">
+            {ice.map((q, i) => (
+              <div key={i} className="grid gap-2 sm:grid-cols-[1.2fr_1fr_auto]">
+                <input className="input" maxLength={MENU_LIMITS.question} value={q.question} onChange={(e) => onChange({ ...menu, ice_breakers: ice.map((x, j) => (j === i ? { ...x, question: e.target.value } : x)) })} aria-label="السؤال" placeholder="مثل: كم سعر التوصيل؟" />
+                {optSelect(q.key, (k) => onChange({ ...menu, ice_breakers: ice.map((x, j) => (j === i ? { ...x, key: k } : x)) }))}
+                <button type="button" className="btn btn-ghost min-h-10 text-xs text-red-600" onClick={() => onChange({ ...menu, ice_breakers: ice.filter((_, j) => j !== i) })}>حذف</button>
+              </div>
+            ))}
+            <button type="button" className="btn btn-ghost w-full text-sm" disabled={ice.length >= MENU_LIMITS.iceBreakers} onClick={() => onChange({ ...menu, ice_breakers: [...ice, { question: "", key: opts[0].key }] })}>
+              <Icon name="plus" size={15} />{ice.length >= MENU_LIMITS.iceBreakers ? `الحد ${MENU_LIMITS.iceBreakers} أسئلة` : "إضافة سؤال"}
+            </button>
+          </div>
+        )}
+      </Card>
+      <Card title={<span className="inline-flex items-center gap-1.5">القائمة الثابتة <InfoDot text="قائمة دائمة داخل المحادثة، تنفتح من أيقونة جنب خانة الكتابة في أي وقت. كل عنصر يفتح خيار من قائمتك أو رابط." /></span>} action={<button type="button" className="btn btn-ghost min-h-9 text-xs" onClick={onHelp}>؟ شرح</button>}>
+        <div className="space-y-2">
+          {pm.map((p, i) => {
+            const isLink = p.url !== undefined;
+            const set = (v: Partial<typeof p> & { url?: string; key?: string }) => onChange({ ...menu, persistent: pm.map((x, j) => (j === i ? v as typeof p : x)) });
+            return (
+              <div key={i} className="grid gap-2 rounded-xl border border-[var(--border)] p-2.5 sm:grid-cols-[1fr_auto_1.3fr_auto]">
+                <input className="input" maxLength={MENU_LIMITS.persistentTitle} value={p.title} onChange={(e) => set({ ...p, title: e.target.value })} aria-label="العنوان" placeholder="العنوان" />
+                <select className="input w-auto" value={isLink ? "link" : "option"} onChange={(e) => set(e.target.value === "link" ? { title: p.title, url: "https://" } : { title: p.title, key: opts[0]?.key })} aria-label="النوع">
+                  <option value="option">خيار من القائمة</option>
+                  <option value="link">رابط</option>
+                </select>
+                {isLink ? <input className="input" dir="ltr" value={p.url} onChange={(e) => set({ title: p.title, url: e.target.value.trim() })} aria-label="الرابط" /> : optSelect(p.key, (k) => set({ title: p.title, key: k }))}
+                <button type="button" className="btn btn-ghost min-h-10 text-xs text-red-600" onClick={() => onChange({ ...menu, persistent: pm.filter((_, j) => j !== i) })}>حذف</button>
+              </div>
+            );
+          })}
+          <button type="button" className="btn btn-ghost w-full text-sm" disabled={pm.length >= MENU_LIMITS.persistent} onClick={() => onChange({ ...menu, persistent: [...pm, opts.length ? { title: "", key: opts[0].key } : { title: "", url: "https://" }] })}>
+            <Icon name="plus" size={15} />{pm.length >= MENU_LIMITS.persistent ? `الحد ${MENU_LIMITS.persistent} عناصر` : "إضافة عنصر"}
+          </button>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+/** «وش الفرق بين القوائم»: the explanation window (points + comparison table). */
+function MenuHelp({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const rows: Array<[string, string, string, string]> = [
+    ["متى تظهر", "لما يرسل الشخص رسالة", "قبل أول رسالة", "دائمًا داخل المحادثة"],
+    ["تُرسل كرسالة؟", "نعم", "لا، تظهر بالواجهة", "لا، تظهر بالواجهة"],
+    ["تنحسب من الباقة", "نعم، كل رسالة يرسلها النظام", "الضغطة لا، والرد عليها نعم", "الضغطة لا، والرد عليها نعم"],
+    ["مكانها", "الجوال والكمبيوتر", "تطبيق الجوال فقط", "حسب إنستقرام"],
+    ["العدد", "حتى 3 أزرار أو 13 زر سريع", "حتى 4 أسئلة", "حتى 5 عناصر"],
+  ];
+  return (
+    <Modal open={open} onClose={onClose} title="القوائم في الرسائل — وش الفرق؟">
+      <div className="space-y-4 text-sm leading-relaxed">
+        <section>
+          <b className="font-display text-base">💬 القائمة التلقائية</b>
+          <p className="muted">رسالة فيها خيارات توصل للشخص لما يراسلك (حسب القاعدة اللي تختارها). كل خيار يرسل رد تكتبه أنت، وتقدر تسوي قوائم فرعية.</p>
+        </section>
+        <section>
+          <b className="font-display text-base">❓ أسئلة البداية (Ice Breakers)</b>
+          <p className="muted">أسئلة جاهزة تظهر للشخص أول ما يفتح محادثة مع حسابك، قبل ما يكتب أي شي — مثل «كم سعر التوصيل؟» أو «وين موقعكم؟». يضغط السؤال بدل ما يكتب، ويوصله الرد فورًا. تظهر في تطبيق إنستقرام فقط، وفي أول محادثة للشخص مع الحساب.</p>
+        </section>
+        <section>
+          <b className="font-display text-base">📌 القائمة الثابتة (Persistent Menu)</b>
+          <p className="muted">قائمة دائمة داخل المحادثة، تنفتح من أيقونة جنب خانة الكتابة. الشخص يوصل للخيارات في أي وقت — حتى بعد أيام — بدون ما تزعجه برسالة.</p>
+        </section>
+        <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+          <table className="w-full min-w-[520px] text-right text-xs">
+            <thead className="bg-[var(--surface-2)]">
+              <tr><th className="p-2"></th><th className="p-2">القائمة التلقائية</th><th className="p-2">أسئلة البداية</th><th className="p-2">القائمة الثابتة</th></tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {rows.map((r) => <tr key={r[0]}><th className="p-2 font-bold">{r[0]}</th><td className="p-2">{r[1]}</td><td className="p-2">{r[2]}</td><td className="p-2">{r[3]}</td></tr>)}
+            </tbody>
+          </table>
+        </div>
+        <p className="muted text-xs">أسئلة البداية والقائمة الثابتة تنحفظ في حساب إنستقرام نفسه لما تحفظ القائمة، وتردّ بنفس ردود خياراتك فما تحتاج تكتبها مرتين. التغيير قد ياخذ وقت حتى يظهر في المحادثات القديمة.</p>
+        <button type="button" className="btn btn-primary w-full" onClick={onClose}>فهمت</button>
+      </div>
+    </Modal>
   );
 }
 

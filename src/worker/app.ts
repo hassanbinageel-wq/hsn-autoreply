@@ -93,7 +93,8 @@ import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/mess
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
 import { parseFaqText } from "../shared/support";
-import { emptyMenu, menuProblem, type DmMenu, type MenuNode } from "../shared/menu";
+import { emptyMenu, extrasProblem, menuProblem, type DmMenu, type MenuNode } from "../shared/menu";
+import { syncMenuProfile } from "./services/menuProfile";
 import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
 import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { cardEnabled, cardPriceHalalas, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
@@ -3637,7 +3638,7 @@ export function createApp() {
   api.put("/dm-menu", async (c) => {
     const p = await parseBody(c, dmMenuSchema);
     if (!p.ok) return p.res;
-    const problem = menuProblem(p.data.root as MenuNode);
+    const problem = menuProblem(p.data.root as MenuNode) ?? extrasProblem(p.data as DmMenu);
     if (problem) return apiError(c, 422, "validation", problem);
     if (p.data.enabled) {
       const e = await ENT(c);
@@ -3645,7 +3646,9 @@ export function createApp() {
     }
     await setSetting(c.env.DB, T(c), "dm_menu", p.data);
     await audit(c.env.DB, T(c), c.get("session").username, "dm_menu.saved", p.data.enabled ? "on" : "off");
-    return c.json({ ok: true });
+    // Ice breakers and persistent menu live on the Instagram account itself.
+    const profile = await syncMenuProfile(c.env, T(c), p.data as DmMenu).catch((e) => [{ username: null, ok: false, error: String(e?.message ?? e).slice(0, 200) }]);
+    return c.json({ ok: true, profile });
   });
 
   // ---- Saved replies (quick replies in the inbox)

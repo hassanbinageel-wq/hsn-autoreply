@@ -167,3 +167,47 @@ describe("DM menu: settings API", () => {
     expect((await call("/api/dm-menu", A, "PUT", { ...MENU, root: { ...MENU.root, text: "" } })).status).toBe(422);
   });
 });
+
+describe("DM menu: ice breakers and persistent menu on the Instagram account", () => {
+  it("sets them with menu payloads, skips unchanged, removes them when switched off; taps open the option", async () => {
+    const { syncMenuProfile } = await import("../src/worker/services/menuProfile");
+    const { TEST_ENV } = await import("./helpers");
+    const calls: Array<{ op: string; body: any }> = [];
+    const deps = {
+      token: async () => "tok",
+      client: {
+        setMessengerProfile: async (_t: string, _ig: string, body: any) => (calls.push({ op: "set", body }), { ok: true as const, data: { success: true }, httpStatus: 200 }),
+        deleteMessengerProfile: async (_t: string, _ig: string, fields: any) => (calls.push({ op: "delete", body: fields }), { ok: true as const, data: { success: true }, httpStatus: 200 }),
+      },
+    };
+    const m: DmMenu = { ...MENU, ice_breakers: [{ question: "كم سعر التوصيل؟", key: "price001" }], persistent: [{ title: "المناطق", key: "areas001" }, { title: "الموقع", url: "https://example.com" }] };
+    let r = await syncMenuProfile(TEST_ENV, 1, m, deps as any);
+    expect(r[0].ok).toBe(true);
+    expect(calls[0].op).toBe("set");
+    expect(calls[0].body.ice_breakers).toEqual([{ locale: "default", call_to_actions: [{ question: "كم سعر التوصيل؟", payload: "hsn:menu:price001" }] }]);
+    expect(calls[0].body.persistent_menu[0].call_to_actions).toEqual([{ type: "postback", title: "المناطق", payload: "hsn:menu:areas001" }, { type: "web_url", title: "الموقع", url: "https://example.com" }]);
+    // unchanged → no call
+    r = await syncMenuProfile(TEST_ENV, 1, m, deps as any);
+    expect(r[0].skipped).toBe(true);
+    expect(calls).toHaveLength(1);
+    // only ice breakers left → set ice, delete the menu; then switched off → delete both
+    await syncMenuProfile(TEST_ENV, 1, { ...m, persistent: [] }, deps as any);
+    expect(calls.slice(1).map((c) => c.op)).toEqual(["set", "delete"]);
+    expect(calls[2].body).toEqual(["persistent_menu"]);
+    await syncMenuProfile(TEST_ENV, 1, { ...m, enabled: false }, deps as any);
+    expect(calls.at(-1)).toEqual({ op: "delete", body: ["ice_breakers", "persistent_menu"] });
+    // an ice breaker tap is a postback with the option's payload → its reply
+    await setMenu(m);
+    const meta = new MockMeta();
+    await deliver(messagePayload({ postback: "hsn:menu:price001" }), meta);
+    expect(meta.calls.filter((c) => c.kind === "dm").at(-1)!.msg!.text).toBe("السعر 210 وتدفعي 110");
+  });
+
+  it("checks the extras: 4 questions, linked to existing options, https links", async () => {
+    const { extrasProblem } = await import("../src/shared/menu");
+    expect(extrasProblem({ root: MENU.root, ice_breakers: [{ question: "س", key: "gone0001" }] })).toContain("محذوف");
+    expect(extrasProblem({ root: MENU.root, ice_breakers: Array.from({ length: 5 }, () => ({ question: "س", key: "price001" })) })).toContain("الحد 4");
+    expect(extrasProblem({ root: MENU.root, persistent: [{ title: "رابط", url: "http://x" }] })).toContain("https://");
+    expect(extrasProblem({ root: MENU.root, persistent: [{ title: "المناطق", key: "areas001" }] })).toBeNull();
+  });
+});

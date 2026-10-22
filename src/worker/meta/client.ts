@@ -317,6 +317,23 @@ export class HttpMetaClient implements MetaClient {
     return this.request(u.toString(), this.authGet(token), false);
   }
 
+  // ---------- Messenger profile (ice breakers, persistent menu) ----------
+  /**
+   * Sets the account's ice breakers and / or persistent menu (POST /<IG_ID>/messenger_profile, platform=instagram,
+   * per Meta's Instagram API with Instagram Login docs). Tapping one sends a messaging_postbacks webhook.
+   */
+  setMessengerProfile(token: string, igUserId: string, body: { ice_breakers?: unknown; persistent_menu?: unknown }) {
+    return this.request<{ success?: boolean }>(`${this.graphBase}/${encodeURIComponent(igUserId)}/messenger_profile`, this.authJson(token, { platform: "instagram", ...body }), false);
+  }
+  /** Removes them (DELETE /<IG_ID>/messenger_profile with the field names). */
+  deleteMessengerProfile(token: string, igUserId: string, fields: Array<"ice_breakers" | "persistent_menu">) {
+    return this.request<{ success?: boolean }>(
+      `${this.graphBase}/${encodeURIComponent(igUserId)}/messenger_profile`,
+      { method: "DELETE", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ platform: "instagram", fields }) },
+      false,
+    );
+  }
+
   // ---------- Messaging ----------
   private messageBody(msg: OutgoingMessage) {
     const m: Record<string, unknown> = { text: msg.text };

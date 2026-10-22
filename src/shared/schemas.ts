@@ -201,6 +201,8 @@ export const dmMenuSchema = z.object({
   trigger: z.enum(["first", "daily", "every"]),
   pause_hours: z.number().int().min(0).max(168),
   root: menuNodeSchema,
+  ice_breakers: z.array(z.object({ question: z.string().trim().max(80), key: z.string().regex(/^[A-Za-z0-9]{4,16}$/) })).max(4).default([]),
+  persistent: z.array(z.object({ title: z.string().trim().max(30), key: z.string().regex(/^[A-Za-z0-9]{4,16}$/).optional(), url: z.string().trim().max(500).optional() })).max(5).default([]),
 });
 
 export const settingsSchema = z.object({

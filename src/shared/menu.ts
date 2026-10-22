@@ -26,9 +26,16 @@ export interface DmMenu {
   /** After the account replies by hand to a person, the menu stays quiet for them this many hours (0 = never pause). */
   pause_hours: number;
   root: MenuNode;
+  /**
+   * Ice breakers: up to 4 questions shown before someone's first message (Instagram app only); each sends the reply
+   * of a menu option.
+   */
+  ice_breakers?: Array<{ question: string; key: string }>;
+  /** Persistent menu: always available inside the conversation; an item opens a menu option or a link. */
+  persistent?: Array<{ title: string; key?: string; url?: string }>;
 }
 
-export const MENU_LIMITS = { depth: 3, buttons: 3, quick: 13, label: 20, text: 640 } as const;
+export const MENU_LIMITS = { depth: 3, buttons: 3, quick: 13, label: 20, text: 640, iceBreakers: 4, question: 80, persistent: 5, persistentTitle: 30 } as const;
 export const MENU_PAYLOAD = /^hsn:menu:([A-Za-z0-9]{4,16})$/;
 export const menuPayload = (key: string) => `hsn:menu:${key}`;
 
@@ -83,4 +90,21 @@ export function menuProblem(root: MenuNode): string | null {
     return null;
   };
   return walk(root, 0, "رسالة القائمة");
+}
+
+/** Problems in the ice breakers / persistent menu (keys must point to existing options). */
+export function extrasProblem(m: Pick<DmMenu, "root" | "ice_breakers" | "persistent">): string | null {
+  for (const q of m.ice_breakers ?? []) {
+    if (!q.question.trim()) return "أسئلة البداية: اكتب نص السؤال";
+    if (q.question.length > MENU_LIMITS.question) return `أسئلة البداية: السؤال أطول من ${MENU_LIMITS.question} حرف`;
+    if (!findNode(m.root, q.key)) return `أسئلة البداية: «${q.question}» مربوط بخيار محذوف`;
+  }
+  if ((m.ice_breakers ?? []).length > MENU_LIMITS.iceBreakers) return `أسئلة البداية: الحد ${MENU_LIMITS.iceBreakers}`;
+  for (const p of m.persistent ?? []) {
+    if (!p.title.trim()) return "القائمة الثابتة: اكتب عنوان العنصر";
+    if (p.title.length > MENU_LIMITS.persistentTitle) return `القائمة الثابتة: العنوان أطول من ${MENU_LIMITS.persistentTitle} حرف`;
+    if (p.url ? !/^https:\/\//.test(p.url) : !p.key || !findNode(m.root, p.key)) return `القائمة الثابتة: «${p.title}» يحتاج خيار من القائمة أو رابط يبدأ بـ https://`;
+  }
+  if ((m.persistent ?? []).length > MENU_LIMITS.persistent) return `القائمة الثابتة: الحد ${MENU_LIMITS.persistent} عناصر`;
+  return null;
 }
