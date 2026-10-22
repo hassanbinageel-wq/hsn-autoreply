@@ -1,6 +1,7 @@
-import { DmMenuEditor } from "../components/DmMenuEditor";
+import { DmMenuEditor, MenuHelp } from "../components/DmMenuEditor";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { askText } from "../components/Confirm";
 import { Alert, Badge, PageHeader, Spinner, fmtTime, toast } from "../components/ui";
 import { UserAvatar } from "../components/UserAvatar";
 import { Icon } from "../components/Icon";
@@ -12,8 +13,11 @@ export const LABELS: Record<string, { text: string; cls: string; icon: string }>
   other: { text: "أخرى", icon: "💬", cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
 };
 
+/** A built-in label, or one the merchant typed (shown with a tag icon). */
+const labelInfo = (label: string) => LABELS[label] ?? { text: label, icon: "🏷️", cls: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300" };
+
 function LabelChip({ label, auto }: { label: string | null; auto?: boolean }) {
-  const l = label ? LABELS[label] : null;
+  const l = label ? labelInfo(label) : null;
   if (!l) return null;
   return <span className={`chip shrink-0 !py-0 text-[10.5px] ${l.cls}`} title={auto ? "تصنيف تلقائي من كلام الشخص — تقدر تغيّره" : undefined}>{l.icon} {l.text}{auto ? " ·تلقائي" : ""}</span>;
 }
@@ -26,7 +30,7 @@ function left(ms: number): string {
   return h > 0 ? `${h} ساعة و${m} دقيقة` : `${m} دقيقة`;
 }
 
-function Thread({ id, onSent, onBack }: { id: number; onSent: () => void; onBack: () => void }) {
+function Thread({ id, onSent, onBack, custom }: { id: number; onSent: () => void; onBack: () => void; custom: string[] }) {
   const [data, setData] = useState<any>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -106,13 +110,20 @@ function Thread({ id, onSent, onBack }: { id: number; onSent: () => void; onBack
           aria-label="تصنيف المحادثة"
           value={p.inbox_label ?? ""}
           onChange={async (e) => {
-            await api(`/api/inbox/${id}/label`, { method: "PUT", body: { label: e.target.value || null } }).catch((err) => toast(err.message, "bad"));
+            let v: string | null = e.target.value || null;
+            if (v === "__new") {
+              v = (await askText({ title: "تصنيف جديد", label: "اكتب اسم التصنيف (مثل: عميل مهم، بانتظار الدفع)", confirmLabel: "حفظ" }))?.trim().slice(0, 24) || null;
+              if (!v) return;
+            }
+            await api(`/api/inbox/${id}/label`, { method: "PUT", body: { label: v } }).catch((err) => toast(err.message, "bad"));
             await load();
             onSent();
           }}
         >
           <option value="">🏷️ بدون تصنيف</option>
           {Object.entries(LABELS).map(([k, l]) => <option key={k} value={k}>{l.icon} {l.text}{p.inbox_label === k && p.inbox_label_source === "auto" ? " (تلقائي)" : ""}</option>)}
+          {[...new Set([...custom, ...(p.inbox_label && !LABELS[p.inbox_label] ? [p.inbox_label] : [])])].map((c) => <option key={c} value={c}>🏷️ {c}</option>)}
+          <option value="__new">✏️ تصنيف جديد…</option>
         </select>
       </div>
       <div ref={boxRef} className="-mx-3 h-[calc(100dvh-23rem)] min-h-[220px] space-y-2 overflow-y-auto overscroll-contain bg-[var(--surface-2)] px-3 py-3 sm:-mx-4 sm:px-4 lg:h-[56vh] lg:min-h-[280px]">
@@ -158,10 +169,16 @@ function Thread({ id, onSent, onBack }: { id: number; onSent: () => void; onBack
 
 export function InboxPage() {
   const [view, setView] = useState<"chats" | "menu">(() => (location.hash.includes("view=menu") ? "menu" : "chats"));
+  const [help, setHelp] = useState(false);
   if (view === "menu")
     return (
       <div className="space-y-4">
-        <PageHeader title="الرسائل" subtitle="القائمة التلقائية: رسالة بخيارات لكل من يراسلك، وكل خيار يرد برد جاهز." />
+        <PageHeader
+          title="الرسائل"
+          subtitle="ثلاث طرق تخلي العميل يوصل للرد بضغطة — شغّل اللي تحتاجه منها."
+          actions={<button type="button" className="btn btn-ghost min-h-10 text-sm" onClick={() => setHelp(true)}>❔ وش الفرق بين القوائم؟</button>}
+        />
+        <MenuHelp open={help} onClose={() => setHelp(false)} />
         <InboxTabs view={view} setView={setView} />
         <DmMenuEditor />
       </div>
@@ -185,9 +202,11 @@ function Chats({ tabs }: { tabs: React.ReactNode }) {
   const [open, setOpen] = useState<number | null>(null);
   const [label, setLabel] = useState("");
   const [counts, setCounts] = useState<Record<string, number>>({});
+  // Labels the merchant typed themselves (anything that is not a built-in one).
+  const custom = Object.keys(counts).filter((k) => k !== "none" && !LABELS[k]).sort();
   const load = () => {
     api<Array<{ label: string | null; n: number }>>("/api/inbox-labels").then((r) => setCounts(Object.fromEntries(r.map((x) => [x.label ?? "none", x.n])))).catch(() => undefined);
-    return api<any[]>(`/api/inbox?q=${encodeURIComponent(q)}&label=${label}`).then(setList).catch((e) => toast(e.message, "bad"));
+    return api<any[]>(`/api/inbox?q=${encodeURIComponent(q)}&label=${encodeURIComponent(label)}`).then(setList).catch((e) => toast(e.message, "bad"));
   };
   // Fill missing / expired profile pictures once per visit (small batches, official User Profile API).
   useEffect(() => {
@@ -221,7 +240,7 @@ function Chats({ tabs }: { tabs: React.ReactNode }) {
         <div className={`card min-w-0 p-2 sm:p-3 ${open !== null ? "hidden lg:block" : ""}`}>
           <input className="input mb-2" placeholder="بحث باسم الحساب…" value={q} onChange={(e) => setQ(e.target.value)} />
           <div className="mb-2 flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]" role="group" aria-label="تصفية حسب التصنيف">
-            {[["", "الكل", ""], ...Object.entries(LABELS).map(([k, l]) => [k, l.text, l.icon]), ["none", "بدون تصنيف", "🏷️"]].map(([k, t, ic]) => (
+            {[["", "الكل", ""], ...Object.entries(LABELS).map(([k, l]) => [k, l.text, l.icon]), ...custom.map((c) => [c, c, "🏷️"]), ["none", "بدون تصنيف", "🏷️"]].map(([k, t, ic]) => (
               <button key={k} type="button" aria-pressed={label === k} onClick={() => setLabel(k)} className={`chip shrink-0 ${label === k ? "grad text-white" : "surface-2"}`}>
                 {ic} {t}{k && counts[k] ? <span className="opacity-75"> {counts[k]}</span> : null}
               </button>
@@ -260,7 +279,7 @@ function Chats({ tabs }: { tabs: React.ReactNode }) {
           {open === null ? (
             <p className="muted py-10 text-center text-sm">اختر محادثة من القائمة.</p>
           ) : (
-            <Thread id={open} onSent={load} onBack={() => setOpen(null)} />
+            <Thread id={open} onSent={load} onBack={() => setOpen(null)} custom={custom} />
           )}
         </div>
       </div>

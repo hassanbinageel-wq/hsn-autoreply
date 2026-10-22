@@ -1,18 +1,25 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./Icon";
-import { Alert, Card, Field, InfoDot, Modal, Spinner, Toggle, toast } from "./ui";
+import { Alert, Field, InfoDot, Modal, Spinner, toast } from "./ui";
 import { emptyMenu, extrasProblem, maxOptions, menuProblem, MENU_LIMITS, newKey, TRIGGER_LABELS, type DmMenu, type MenuNode } from "../../shared/menu";
 
-/** «القائمة التلقائية»: whoever writes to the account gets a menu; each option sends its own reply (sub-menus allowed). */
+type ProfileRow = { username: string | null; ok: boolean; error?: string; skipped?: boolean };
+const iceOn = (m: DmMenu) => (m.ice_enabled ?? true) && !!m.ice_breakers?.length;
+const pmOn = (m: DmMenu) => (m.persistent_enabled ?? true) && !!m.persistent?.length;
+
+/**
+ * Menus in direct messages, in three simple sections — each with its own switch:
+ * the automatic menu, the ice breakers and the persistent menu (the last two reuse the menu's replies).
+ */
 export function DmMenuEditor() {
   const [menu, setMenu] = useState<DmMenu | null>(null);
   const [available, setAvailable] = useState(true);
   const [taps, setTaps] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [help, setHelp] = useState(false);
-  const [profile, setProfile] = useState<Array<{ username: string | null; ok: boolean; error?: string; skipped?: boolean }> | null>(null);
+  const [open, setOpen] = useState<"auto" | "ice" | "pm" | null>("auto");
+  const [profile, setProfile] = useState<ProfileRow[] | null>(null);
   useEffect(() => {
     api<{ menu: DmMenu; available: boolean; taps: Record<string, number> }>("/api/dm-menu")
       .then((r) => { setMenu(r.menu ?? emptyMenu()); setAvailable(r.available); setTaps(r.taps); })
@@ -21,75 +28,138 @@ export function DmMenuEditor() {
   if (!menu) return <Spinner />;
   const update = (m: DmMenu) => { setMenu(m); setDirty(true); };
   const problem = menuProblem(menu.root) ?? extrasProblem(menu);
-  const save = async (next = menu) => {
+  const save = async (next = menu, done = "تم الحفظ ✅") => {
     const p = menuProblem(next.root) ?? extrasProblem(next);
     if (p) return toast(p, "bad");
     setBusy(true);
     try {
-      const r = await api<{ profile?: Array<{ username: string | null; ok: boolean; error?: string; skipped?: boolean }> }>("/api/dm-menu", { method: "PUT", body: next });
+      const r = await api<{ profile?: ProfileRow[] }>("/api/dm-menu", { method: "PUT", body: next });
       setProfile(r.profile?.filter((x) => !x.skipped) ?? null);
       setMenu(next);
       setDirty(false);
-      toast(next.enabled ? "تم الحفظ — القائمة شغّالة ✅" : "تم الحفظ");
+      toast(done);
     } catch (e: any) {
       toast(e.message, "bad");
     } finally {
       setBusy(false);
     }
   };
+  const opts = flatOptions(menu.root);
+  const onOff = (on: boolean, what: string) => (on ? `تم تشغيل ${what} ✅` : `تم إيقاف ${what}`);
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="space-y-5">
-        {!available && (
-          <Alert tone="warn">
-            القائمة التلقائية مو ضمن باقتك الحالية. تقدر تجهّزها الحين، وتفعيلها يحتاج باقة فيها الميزة — <a className="font-bold underline" href="#/subscription">اشتراكي</a>.
-          </Alert>
-        )}
-        <Card title={<span className="inline-flex items-center gap-1.5">القائمة التلقائية <InfoDot text="أي شخص يراسل حسابك (خارج الحملات) توصله رسالة فيها خيارات، وكل خيار يرسل رد تكتبه أنت، وتقدر تسوي قوائم فرعية. النظام يرد فقط على اللي راسلك أول (ضمن 24 ساعة من رسالته). كل رسالة يرسلها النظام تنحسب من رسائل باقتك، والضغط على الأزرار نفسه ما ينحسب." /></span>}>
-          <div className="space-y-3">
-            <Toggle
-              checked={menu.enabled}
-              disabled={!available && !menu.enabled}
-              onChange={(v) => save({ ...menu, enabled: v })}
-              label="القائمة شغّالة"
-              description={menu.enabled ? "توصل لكل شخص يراسلك حسب القاعدة تحت." : "مطفأة — ما يوصل شي."}
-            />
+    <div className="space-y-4">
+      {!available && (
+        <Alert tone="warn">
+          القوائم مو ضمن باقتك الحالية. تقدر تجهّزها الحين، والتشغيل يحتاج باقة فيها «القائمة التلقائية» — <a className="font-bold underline" href="#/subscription">اشتراكي</a>.
+        </Alert>
+      )}
+
+      <Section
+        icon="💬"
+        title="القائمة التلقائية"
+        desc="رسالة بخيارات توصل للي يراسلك، وكل خيار يرد برد تكتبه."
+        summary={`${menu.root.children.length} خيارات · ${TRIGGER_LABELS[menu.trigger]}`}
+        on={menu.enabled}
+        canTurnOn={available && menu.root.children.length > 0}
+        offHint={!menu.root.children.length ? "أضف خيار واحد على الأقل" : undefined}
+        expanded={open === "auto"}
+        onExpand={() => setOpen(open === "auto" ? null : "auto")}
+        onToggle={(v) => save({ ...menu, enabled: v }, onOff(v, "القائمة التلقائية"))}
+      >
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="متى تُرسل القائمة؟">
+              <Field label="متى تُرسل؟">
                 <select className="input" value={menu.trigger} onChange={(e) => update({ ...menu, trigger: e.target.value as DmMenu["trigger"] })}>
                   {(Object.keys(TRIGGER_LABELS) as Array<DmMenu["trigger"]>).map((k) => <option key={k} value={k}>{TRIGGER_LABELS[k]}</option>)}
                 </select>
               </Field>
-              <Field label={<span className="inline-flex items-center gap-1">بعد ما ترد بنفسك <InfoDot text="إذا رديت على شخص بيدك (من صندوق الرسائل أو من تطبيق إنستقرام)، القائمة ما ترسل له طول هالمدة عشان ما تقاطع محادثتك." /></span>}>
+              <Field label={<span className="inline-flex items-center gap-1">لما ترد بنفسك <InfoDot text="إذا رديت على شخص بيدك (من صندوق الرسائل أو من تطبيق إنستقرام)، القائمة ما ترسل له طول هالمدة عشان ما تقاطع محادثتك." /></span>}>
                 <select className="input" value={menu.pause_hours} onChange={(e) => update({ ...menu, pause_hours: Number(e.target.value) })}>
                   {[0, 2, 6, 12, 24, 48, 72].map((h) => <option key={h} value={h}>{h === 0 ? "لا تتوقف" : `توقف ${h} ساعة`}</option>)}
                 </select>
               </Field>
             </div>
+            <NodeEditor node={menu.root} depth={0} taps={taps} onChange={(root) => update({ ...menu, root })} />
           </div>
-        </Card>
-        <Card title="رسالة القائمة والخيارات" action={<button type="button" className="btn btn-ghost min-h-9 text-xs" onClick={() => setHelp(true)}>؟ وش الفرق بين القوائم</button>}>
-          <NodeEditor node={menu.root} depth={0} taps={taps} onChange={(root) => update({ ...menu, root })} />
-        </Card>
-        <ExtrasEditor menu={menu} onChange={update} onHelp={() => setHelp(true)} />
-        {profile && profile.length > 0 && (
-          <Alert tone={profile.every((x) => x.ok) ? "good" : "warn"}>
-            {profile.map((x, i) => <div key={i}>{x.username ? `@${x.username}: ` : ""}{x.ok ? "تم تحديث أسئلة البداية والقائمة الثابتة في إنستقرام (قد تتأخر شوي حتى تظهر للمحادثات القديمة)." : `ما تحدّثت أسئلة البداية والقائمة الثابتة: ${x.error}`}</div>)}
-          </Alert>
-        )}
-        <MenuHelp open={help} onClose={() => setHelp(false)} />
-        <div className="sticky bottom-20 z-10 flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-lg lg:bottom-4">
-          <button className="btn btn-primary" disabled={busy || !!problem || !dirty} onClick={() => save()}>{busy ? "…" : "حفظ القائمة"}</button>
-          <span className={`text-xs ${problem ? "text-red-600" : "muted"}`}>{problem ?? (dirty ? "فيه تعديلات ما انحفظت" : "محفوظة")}</span>
+          <div className="xl:sticky xl:top-4 xl:self-start">
+            <div className="muted mb-1.5 text-xs font-bold">المعاينة</div>
+            <Preview root={menu.root} />
+          </div>
         </div>
-      </div>
-      <div className="xl:sticky xl:top-4 xl:self-start">
-        <Card title="معاينة">
-          <Preview root={menu.root} />
-          <p className="muted mt-3 text-xs">الشكل في إنستقرام قد يختلف قليلًا حسب الجوال. الأزرار السريعة تختفي بعد الضغط، وأزرار الرسالة تبقى.</p>
-        </Card>
-      </div>
+      </Section>
+
+      <Section
+        icon="❓"
+        title="أسئلة البداية"
+        desc="حتى 4 أسئلة تظهر قبل أول رسالة (تطبيق الجوال)."
+        summary={`${menu.ice_breakers?.length ?? 0} من ${MENU_LIMITS.iceBreakers} أسئلة`}
+        on={iceOn(menu)}
+        canTurnOn={available && !!menu.ice_breakers?.length}
+        offHint={!menu.ice_breakers?.length ? "أضف سؤال واحد على الأقل" : undefined}
+        expanded={open === "ice"}
+        onExpand={() => setOpen(open === "ice" ? null : "ice")}
+        onToggle={(v) => save({ ...menu, ice_enabled: v }, onOff(v, "أسئلة البداية"))}
+      >
+        <IceList menu={menu} opts={opts} onChange={update} />
+      </Section>
+
+      <Section
+        icon="📌"
+        title="القائمة الثابتة"
+        desc="أزرار دائمة داخل المحادثة، تنفتح في أي وقت."
+        summary={`${menu.persistent?.length ?? 0} من ${MENU_LIMITS.persistent} عناصر`}
+        on={pmOn(menu)}
+        canTurnOn={available && !!menu.persistent?.length}
+        offHint={!menu.persistent?.length ? "أضف عنصر واحد على الأقل" : undefined}
+        expanded={open === "pm"}
+        onExpand={() => setOpen(open === "pm" ? null : "pm")}
+        onToggle={(v) => save({ ...menu, persistent_enabled: v }, onOff(v, "القائمة الثابتة"))}
+      >
+        <PersistentList menu={menu} opts={opts} onChange={update} />
+      </Section>
+
+      <p className="muted text-xs">كل رسالة يرسلها النظام تنحسب من رسائل باقتك — الضغط على الأزرار نفسه ما ينحسب. النظام يرد فقط على اللي راسلك أول.</p>
+      {profile && profile.length > 0 && (
+        <Alert tone={profile.every((x) => x.ok) ? "good" : "warn"}>
+          {profile.map((x, i) => <div key={i}>{x.username ? `@${x.username}: ` : ""}{x.ok ? "تحدّثت أسئلة البداية والقائمة الثابتة في إنستقرام (قد تتأخر شوي حتى تظهر في المحادثات القديمة)." : `ما تحدّثت أسئلة البداية والقائمة الثابتة: ${x.error}`}</div>)}
+        </Alert>
+      )}
+      {(dirty || problem) && (
+        <div className="sticky bottom-20 z-10 flex items-center gap-3 rounded-2xl border border-violet-300 bg-[var(--surface)] p-3 shadow-lg lg:bottom-4 dark:border-violet-800">
+          <button className="btn btn-primary" disabled={busy || !!problem || !dirty} onClick={() => save()}>{busy ? "…" : "حفظ التعديلات"}</button>
+          <span className={`text-xs ${problem ? "text-red-600" : "muted"}`}>{problem ?? "فيه تعديلات ما انحفظت"}</span>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** One section: icon, title, a short line, the summary, its own switch; opens to edit. */
+function Section({ icon, title, desc, summary, on, canTurnOn, offHint, expanded, onExpand, onToggle, children }: {
+  icon: string; title: string; desc: string; summary: string; on: boolean; canTurnOn: boolean; offHint?: string; expanded: boolean; onExpand: () => void; onToggle: (v: boolean) => void; children: React.ReactNode;
+}) {
+  return (
+    <section className={`card overflow-hidden p-0 ${on ? "ring-1 ring-emerald-400/50" : ""}`}>
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <button type="button" onClick={onExpand} aria-expanded={expanded} className="flex min-w-0 flex-1 items-center gap-3 text-right">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--surface-2)] text-xl">{icon}</span>
+          <span className="min-w-0 flex-1">
+            <b className="font-display block text-base">{title}</b>
+            <span className="muted block truncate text-xs">{desc}</span>
+            <span className={`mt-0.5 block text-[11px] font-bold ${on ? "text-emerald-600" : "muted"}`}>{on ? "● شغّالة" : "○ متوقفة"} · {summary}</span>
+          </span>
+          <Icon name="chev" size={16} className={`shrink-0 transition ${expanded ? "rotate-180" : ""}`} />
+        </button>
+        <label className="relative inline-flex shrink-0 cursor-pointer items-center" title={!on && !canTurnOn ? offHint : undefined}>
+          <input type="checkbox" className="peer sr-only" checked={on} disabled={!on && !canTurnOn} onChange={(e) => onToggle(e.target.checked)} aria-label={`تشغيل ${title}`} />
+          <span className="h-7 w-12 rounded-full bg-[var(--border)] transition peer-checked:bg-emerald-500 peer-disabled:opacity-40" />
+          <span className="absolute right-1 top-1 h-5 w-5 rounded-full bg-white shadow transition peer-checked:-translate-x-5" />
+        </label>
+      </div>
+      {!on && !canTurnOn && offHint && !expanded && <p className="muted -mt-1 px-4 pb-3 text-[11px]">للتشغيل: {offHint} (افتح القسم)</p>}
+      {expanded && <div className="border-t border-[var(--border)] p-4">{children}</div>}
+    </section>
   );
 }
 
@@ -163,63 +233,69 @@ function flatOptions(root: MenuNode): Array<{ key: string; label: string }> {
   return out;
 }
 
-/** Ice breakers (questions before the first message) and the persistent menu (always inside the conversation). */
-function ExtrasEditor({ menu, onChange, onHelp }: { menu: DmMenu; onChange: (m: DmMenu) => void; onHelp: () => void }) {
-  const opts = flatOptions(menu.root);
+const optSelect = (opts: Array<{ key: string; label: string }>, value: string | undefined, set: (k: string) => void) => (
+  <select className="input min-w-0" value={value ?? ""} onChange={(e) => set(e.target.value)} aria-label="الرد">
+    <option value="" disabled>اختر الرد…</option>
+    {opts.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+  </select>
+);
+const noOptions = <p className="muted rounded-xl bg-[var(--surface-2)] p-3 text-sm">الردود تُكتب مرة وحدة في «القائمة التلقائية» (الخيارات)، وتستخدمها هنا. أضف خيار هناك أول.</p>;
+
+/** Ice breakers: a question and which reply it sends. */
+function IceList({ menu, opts, onChange }: { menu: DmMenu; opts: Array<{ key: string; label: string }>; onChange: (m: DmMenu) => void }) {
   const ice = menu.ice_breakers ?? [];
-  const pm = menu.persistent ?? [];
-  const optSelect = (value: string | undefined, set: (k: string) => void) => (
-    <select className="input min-w-0" value={value ?? ""} onChange={(e) => set(e.target.value)} aria-label="الخيار اللي يرد">
-      <option value="" disabled>اختر الرد من القائمة…</option>
-      {opts.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-    </select>
-  );
+  if (!opts.length) return noOptions;
   return (
-    <>
-      <Card title={<span className="inline-flex items-center gap-1.5">أسئلة البداية <InfoDot text="حتى 4 أسئلة تظهر للشخص أول ما يفتح محادثة مع حسابك، قبل ما يكتب أي شي (في تطبيق إنستقرام، وفي أول محادثة فقط). يضغط السؤال ويوصله رد الخيار اللي تختاره." /></span>} action={<button type="button" className="btn btn-ghost min-h-9 text-xs" onClick={onHelp}>؟ شرح</button>}>
-        {!opts.length ? <p className="muted text-sm">أضف خيارات للقائمة أول، وبعدها تربط كل سؤال بخيار.</p> : (
-          <div className="space-y-2">
-            {ice.map((q, i) => (
-              <div key={i} className="grid gap-2 sm:grid-cols-[1.2fr_1fr_auto]">
-                <input className="input" maxLength={MENU_LIMITS.question} value={q.question} onChange={(e) => onChange({ ...menu, ice_breakers: ice.map((x, j) => (j === i ? { ...x, question: e.target.value } : x)) })} aria-label="السؤال" placeholder="مثل: كم سعر التوصيل؟" />
-                {optSelect(q.key, (k) => onChange({ ...menu, ice_breakers: ice.map((x, j) => (j === i ? { ...x, key: k } : x)) }))}
-                <button type="button" className="btn btn-ghost min-h-10 text-xs text-red-600" onClick={() => onChange({ ...menu, ice_breakers: ice.filter((_, j) => j !== i) })}>حذف</button>
-              </div>
-            ))}
-            <button type="button" className="btn btn-ghost w-full text-sm" disabled={ice.length >= MENU_LIMITS.iceBreakers} onClick={() => onChange({ ...menu, ice_breakers: [...ice, { question: "", key: opts[0].key }] })}>
-              <Icon name="plus" size={15} />{ice.length >= MENU_LIMITS.iceBreakers ? `الحد ${MENU_LIMITS.iceBreakers} أسئلة` : "إضافة سؤال"}
-            </button>
-          </div>
-        )}
-      </Card>
-      <Card title={<span className="inline-flex items-center gap-1.5">القائمة الثابتة <InfoDot text="قائمة دائمة داخل المحادثة، تنفتح من أيقونة جنب خانة الكتابة في أي وقت. كل عنصر يفتح خيار من قائمتك أو رابط." /></span>} action={<button type="button" className="btn btn-ghost min-h-9 text-xs" onClick={onHelp}>؟ شرح</button>}>
-        <div className="space-y-2">
-          {pm.map((p, i) => {
-            const isLink = p.url !== undefined;
-            const set = (v: Partial<typeof p> & { url?: string; key?: string }) => onChange({ ...menu, persistent: pm.map((x, j) => (j === i ? v as typeof p : x)) });
-            return (
-              <div key={i} className="grid gap-2 rounded-xl border border-[var(--border)] p-2.5 sm:grid-cols-[1fr_auto_1.3fr_auto]">
-                <input className="input" maxLength={MENU_LIMITS.persistentTitle} value={p.title} onChange={(e) => set({ ...p, title: e.target.value })} aria-label="العنوان" placeholder="العنوان" />
-                <select className="input w-auto" value={isLink ? "link" : "option"} onChange={(e) => set(e.target.value === "link" ? { title: p.title, url: "https://" } : { title: p.title, key: opts[0]?.key })} aria-label="النوع">
-                  <option value="option">خيار من القائمة</option>
-                  <option value="link">رابط</option>
-                </select>
-                {isLink ? <input className="input" dir="ltr" value={p.url} onChange={(e) => set({ title: p.title, url: e.target.value.trim() })} aria-label="الرابط" /> : optSelect(p.key, (k) => set({ title: p.title, key: k }))}
-                <button type="button" className="btn btn-ghost min-h-10 text-xs text-red-600" onClick={() => onChange({ ...menu, persistent: pm.filter((_, j) => j !== i) })}>حذف</button>
-              </div>
-            );
-          })}
-          <button type="button" className="btn btn-ghost w-full text-sm" disabled={pm.length >= MENU_LIMITS.persistent} onClick={() => onChange({ ...menu, persistent: [...pm, opts.length ? { title: "", key: opts[0].key } : { title: "", url: "https://" }] })}>
-            <Icon name="plus" size={15} />{pm.length >= MENU_LIMITS.persistent ? `الحد ${MENU_LIMITS.persistent} عناصر` : "إضافة عنصر"}
-          </button>
+    <div className="space-y-2">
+      {ice.map((q, i) => (
+        <div key={i} className="grid items-center gap-2 rounded-xl bg-[var(--surface-2)] p-2.5 sm:grid-cols-[1.2fr_auto_1fr_auto]">
+          <input className="input" maxLength={MENU_LIMITS.question} value={q.question} onChange={(e) => onChange({ ...menu, ice_breakers: ice.map((x, j) => (j === i ? { ...x, question: e.target.value } : x)) })} aria-label="السؤال" placeholder="مثل: كم سعر التوصيل؟" />
+          <span className="muted hidden text-xs sm:block">يرد بـ</span>
+          {optSelect(opts, q.key, (k) => onChange({ ...menu, ice_breakers: ice.map((x, j) => (j === i ? { ...x, key: k } : x)) }))}
+          <button type="button" className="btn btn-ghost min-h-10 px-3 text-xs text-red-600" onClick={() => onChange({ ...menu, ice_breakers: ice.filter((_, j) => j !== i) })} aria-label="حذف السؤال">✕</button>
         </div>
-      </Card>
-    </>
+      ))}
+      {ice.length < MENU_LIMITS.iceBreakers && (
+        <button type="button" className="btn btn-ghost w-full text-sm" onClick={() => onChange({ ...menu, ice_breakers: [...ice, { question: "", key: opts[0].key }] })}>
+          <Icon name="plus" size={15} />إضافة سؤال
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Persistent menu: a title, and a reply from the menu or a link. */
+function PersistentList({ menu, opts, onChange }: { menu: DmMenu; opts: Array<{ key: string; label: string }>; onChange: (m: DmMenu) => void }) {
+  const pm = menu.persistent ?? [];
+  const set = (i: number, v: DmMenu["persistent"] extends Array<infer T> | undefined ? T : never) => onChange({ ...menu, persistent: pm.map((x, j) => (j === i ? v : x)) });
+  return (
+    <div className="space-y-2">
+      {!opts.length && noOptions}
+      {pm.map((p, i) => {
+        const isLink = p.url !== undefined;
+        return (
+          <div key={i} className="grid items-center gap-2 rounded-xl bg-[var(--surface-2)] p-2.5 sm:grid-cols-[1fr_auto_1.2fr_auto]">
+            <input className="input" maxLength={MENU_LIMITS.persistentTitle} value={p.title} onChange={(e) => set(i, { ...p, title: e.target.value })} aria-label="عنوان الزر" placeholder="عنوان الزر" />
+            <div className="flex rounded-xl border border-[var(--border)] bg-[var(--surface)] p-0.5 text-xs font-bold">
+              <button type="button" disabled={!opts.length} className={`rounded-lg px-2.5 py-1.5 ${!isLink ? "bg-violet-500/15 text-violet-700 dark:text-violet-300" : "muted"}`} onClick={() => set(i, { title: p.title, key: opts[0]?.key })}>رد</button>
+              <button type="button" className={`rounded-lg px-2.5 py-1.5 ${isLink ? "bg-violet-500/15 text-violet-700 dark:text-violet-300" : "muted"}`} onClick={() => set(i, { title: p.title, url: "https://" })}>رابط</button>
+            </div>
+            {isLink ? <input className="input" dir="ltr" value={p.url} onChange={(e) => set(i, { title: p.title, url: e.target.value.trim() })} aria-label="الرابط" /> : optSelect(opts, p.key, (k) => set(i, { title: p.title, key: k }))}
+            <button type="button" className="btn btn-ghost min-h-10 px-3 text-xs text-red-600" onClick={() => onChange({ ...menu, persistent: pm.filter((_, j) => j !== i) })} aria-label="حذف العنصر">✕</button>
+          </div>
+        );
+      })}
+      {pm.length < MENU_LIMITS.persistent && (
+        <button type="button" className="btn btn-ghost w-full text-sm" onClick={() => onChange({ ...menu, persistent: [...pm, opts.length ? { title: "", key: opts[0].key } : { title: "", url: "https://" }] })}>
+          <Icon name="plus" size={15} />إضافة زر
+        </button>
+      )}
+    </div>
   );
 }
 
 /** «وش الفرق بين القوائم»: the explanation window (points + comparison table). */
-function MenuHelp({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function MenuHelp({ open, onClose }: { open: boolean; onClose: () => void }) {
   const rows: Array<[string, string, string, string]> = [
     ["متى تظهر", "لما يرسل الشخص رسالة", "قبل أول رسالة", "دائمًا داخل المحادثة"],
     ["تُرسل كرسالة؟", "نعم", "لا، تظهر بالواجهة", "لا، تظهر بالواجهة"],

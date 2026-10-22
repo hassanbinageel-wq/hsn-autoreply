@@ -203,6 +203,8 @@ export const dmMenuSchema = z.object({
   root: menuNodeSchema,
   ice_breakers: z.array(z.object({ question: z.string().trim().max(80), key: z.string().regex(/^[A-Za-z0-9]{4,16}$/) })).max(4).default([]),
   persistent: z.array(z.object({ title: z.string().trim().max(30), key: z.string().regex(/^[A-Za-z0-9]{4,16}$/).optional(), url: z.string().trim().max(500).optional() })).max(5).default([]),
+  ice_enabled: z.boolean().optional(),
+  persistent_enabled: z.boolean().optional(),
 });
 
 export const settingsSchema = z.object({

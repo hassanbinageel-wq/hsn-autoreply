@@ -33,6 +33,9 @@ export interface DmMenu {
   ice_breakers?: Array<{ question: string; key: string }>;
   /** Persistent menu: always available inside the conversation; an item opens a menu option or a link. */
   persistent?: Array<{ title: string; key?: string; url?: string }>;
+  /** Each part has its own switch (missing = on when it has items). */
+  ice_enabled?: boolean;
+  persistent_enabled?: boolean;
 }
 
 export const MENU_LIMITS = { depth: 3, buttons: 3, quick: 13, label: 20, text: 640, iceBreakers: 4, question: 80, persistent: 5, persistentTitle: 30 } as const;
@@ -108,3 +111,10 @@ export function extrasProblem(m: Pick<DmMenu, "root" | "ice_breakers" | "persist
   if ((m.persistent ?? []).length > MENU_LIMITS.persistent) return `القائمة الثابتة: الحد ${MENU_LIMITS.persistent} عناصر`;
   return null;
 }
+
+/** Which parts are switched on (ice breakers / persistent menu only count when they have items). */
+export const menuParts = (m: DmMenu | null) => ({
+  auto: !!m?.enabled,
+  ice: !!m && (m.ice_enabled ?? true) && !!m.ice_breakers?.length,
+  persistent: !!m && (m.persistent_enabled ?? true) && !!m.persistent?.length,
+});

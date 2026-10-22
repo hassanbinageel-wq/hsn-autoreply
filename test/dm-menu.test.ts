@@ -194,10 +194,14 @@ describe("DM menu: ice breakers and persistent menu on the Instagram account", (
     await syncMenuProfile(TEST_ENV, 1, { ...m, persistent: [] }, deps as any);
     expect(calls.slice(1).map((c) => c.op)).toEqual(["set", "delete"]);
     expect(calls[2].body).toEqual(["persistent_menu"]);
-    await syncMenuProfile(TEST_ENV, 1, { ...m, enabled: false }, deps as any);
+    // each part has its own switch: the automatic menu off keeps the ice breakers; switching them off removes them
+    const before = calls.length;
+    await syncMenuProfile(TEST_ENV, 1, { ...m, persistent: [], enabled: false }, deps as any);
+    expect(calls.length).toBe(before);
+    await syncMenuProfile(TEST_ENV, 1, { ...m, ice_enabled: false, persistent_enabled: false }, deps as any);
     expect(calls.at(-1)).toEqual({ op: "delete", body: ["ice_breakers", "persistent_menu"] });
-    // an ice breaker tap is a postback with the option's payload → its reply
-    await setMenu(m);
+    // an ice breaker tap is a postback with the option's payload → its reply, even with the automatic menu off
+    await setMenu({ ...m, enabled: false });
     const meta = new MockMeta();
     await deliver(messagePayload({ postback: "hsn:menu:price001" }), meta);
     expect(meta.calls.filter((c) => c.kind === "dm").at(-1)!.msg!.text).toBe("السعر 210 وتدفعي 110");
@@ -209,5 +213,23 @@ describe("DM menu: ice breakers and persistent menu on the Instagram account", (
     expect(extrasProblem({ root: MENU.root, ice_breakers: Array.from({ length: 5 }, () => ({ question: "س", key: "price001" })) })).toContain("الحد 4");
     expect(extrasProblem({ root: MENU.root, persistent: [{ title: "رابط", url: "http://x" }] })).toContain("https://");
     expect(extrasProblem({ root: MENU.root, persistent: [{ title: "المناطق", key: "areas001" }] })).toBeNull();
+  });
+});
+
+describe("inbox: labels the merchant types", () => {
+  it("sets a typed label, filters by it, counts it; another customer cannot touch the conversation", async () => {
+    await call("/api/auth/setup", {}, "POST", { setup_token: "test_setup_token_123456", username: "admin", password: "a-very-strong-password" });
+    const OWNER = await login("admin", "a-very-strong-password");
+    await deliver(messagePayload({ text: "مرحبا" }), new MockMeta());
+    const p = await DB.prepare("SELECT id FROM participants WHERE igsid = 'igsid_user_1'").first<any>();
+    expect((await call(`/api/inbox/${p.id}/label`, OWNER, "PUT", { label: "عميل مهم" })).status).toBe(200);
+    expect((await call(`/api/inbox?label=${encodeURIComponent("عميل مهم")}`, OWNER)).body.map((r: any) => r.id)).toEqual([p.id]);
+    expect((await call("/api/inbox?label=order", OWNER)).body).toHaveLength(0);
+    expect((await call("/api/inbox-labels", OWNER)).body).toContainEqual({ label: "عميل مهم", n: 1 });
+    expect((await call(`/api/inbox/${p.id}/label`, OWNER, "PUT", { label: "x".repeat(25) })).status).toBe(422);
+    const code = (await call("/api/owner/codes", OWNER, "POST", { plan_id: "basic", days: 10, count: 1 })).body.codes[0];
+    await call("/api/auth/register", {}, "POST", { name: "متجر ب", username: "shop_b", password: "another-strong-password", code });
+    const B = await login("shop_b", "another-strong-password");
+    expect((await call(`/api/inbox/${p.id}/label`, B, "PUT", { label: "دخيل" })).status).toBe(404);
   });
 });

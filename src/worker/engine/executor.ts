@@ -22,7 +22,7 @@ import {
 } from "./context";
 import { buttonPayload, processEvent, type EventRow } from "./events";
 import { loadMenu, menuMessage } from "./menu";
-import { findNode } from "../../shared/menu";
+import { findNode, menuParts } from "../../shared/menu";
 import {
   AUTO_RECHECK,
   AUTO_RECHECK_DELAY_MS,
@@ -664,7 +664,8 @@ async function execMenuSend(ctx: EngineContext, job: JobRow, owner: string): Pro
   if (!account || !participant || participant.account_id !== account.id) return cancel("missing account or person");
   if (account.status !== "active" || account.tenant_status !== "active") return cancel("account not active");
   const menu = await loadMenu(ctx.db, account.tenant_id);
-  const node = menu?.enabled && p.node ? findNode(menu.root, p.node) : null;
+  const parts = menuParts(menu);
+  const node = (p.root ? parts.auto : parts.auto || parts.ice || parts.persistent) && p.node ? findNode(menu!.root, p.node) : null;
   if (!node) return cancel("menu off or option removed");
   let now = ctx.now();
   if (!windowOpen(participant, now)) {

@@ -93,7 +93,7 @@ import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/mess
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
 import { parseFaqText } from "../shared/support";
-import { emptyMenu, extrasProblem, menuProblem, type DmMenu, type MenuNode } from "../shared/menu";
+import { emptyMenu, extrasProblem, menuParts, menuProblem, type DmMenu, type MenuNode } from "../shared/menu";
 import { syncMenuProfile } from "./services/menuProfile";
 import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
 import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
@@ -3429,10 +3429,12 @@ export function createApp() {
       where += " AND p.username LIKE ? ESCAPE '\\'";
       params.push(`%${q.replace(/[%_\\]/g, (m) => "\\" + m)}%`);
     }
-    if ((INBOX_LABELS as string[]).includes(label)) {
+    if (label === "none") where += " AND p.inbox_label IS NULL";
+    else if (label) {
+      // a built-in label or one the merchant typed
       where += " AND p.inbox_label = ?";
-      params.push(label);
-    } else if (label === "none") where += " AND p.inbox_label IS NULL";
+      params.push(label.slice(0, 24));
+    }
     const rows = await all<any>(
       c.env.DB,
       `SELECT p.id, p.username, p.profile_pic_url, p.last_message_at, p.last_user_message_at, p.inbox_read_at, p.last_follow_status, p.inbox_label, p.inbox_label_source,
@@ -3471,7 +3473,8 @@ export function createApp() {
   // Label of a conversation, set by the merchant (kept over automatic suggestions); null clears it.
   api.put("/inbox/:id/label", async (c) => {
     const id = idParam(c);
-    const body = await parseBody(c, z.object({ label: z.enum(INBOX_LABELS as [InboxLabel, ...InboxLabel[]]).nullable() }));
+    // A built-in label (inquiry / order / complaint / other) or any short label the merchant types.
+    const body = await parseBody(c, z.object({ label: z.string().trim().min(1).max(24).nullable() }));
     if (!body.ok) return body.res;
     await run(c.env.DB, "UPDATE participants SET inbox_label = ?, inbox_label_source = ? WHERE id = ?", body.data.label, body.data.label ? "manual" : null, id);
     return c.json({ ok: true });
@@ -3640,7 +3643,8 @@ export function createApp() {
     if (!p.ok) return p.res;
     const problem = menuProblem(p.data.root as MenuNode) ?? extrasProblem(p.data as DmMenu);
     if (problem) return apiError(c, 422, "validation", problem);
-    if (p.data.enabled) {
+    const parts = menuParts(p.data as DmMenu);
+    if (parts.auto || parts.ice || parts.persistent) {
       const e = await ENT(c);
       if (!e.owner && !(e.active && e.limits.dm_menu)) return apiError(c, 403, "plan_feature", "القائمة التلقائية مو ضمن باقتك — رقّ باقتك من «اشتراكي»");
     }

@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { all, getSetting, setSetting } from "../lib/db";
-import { menuPayload, type DmMenu } from "../../shared/menu";
+import { menuParts, menuPayload, type DmMenu } from "../../shared/menu";
 import type { AccountRow } from "../engine/context";
 import { getAccessToken, metaClient } from "./account";
 import { getEntitlement } from "./plans";
@@ -20,10 +20,10 @@ export type ProfileResult = { username: string | null; ok: boolean; error?: stri
 
 /** What Instagram should show (null = nothing), from the saved menu. */
 export function profileBody(menu: DmMenu | null, live: boolean) {
-  const on = live && !!menu?.enabled;
-  const ice = on && menu!.ice_breakers?.length ? [{ locale: "default", call_to_actions: menu!.ice_breakers.map((q) => ({ question: q.question, payload: menuPayload(q.key) })) }] : null;
-  const pm = on && menu!.persistent?.length
-    ? [{ locale: "default", call_to_actions: menu!.persistent.map((p) => (p.url ? { type: "web_url", title: p.title, url: p.url } : { type: "postback", title: p.title, payload: menuPayload(p.key!) })) }]
+  const parts = menuParts(menu);
+  const ice = live && parts.ice ? [{ locale: "default", call_to_actions: menu!.ice_breakers!.map((q) => ({ question: q.question, payload: menuPayload(q.key) })) }] : null;
+  const pm = live && parts.persistent
+    ? [{ locale: "default", call_to_actions: menu!.persistent!.map((p) => (p.url ? { type: "web_url", title: p.title, url: p.url } : { type: "postback", title: p.title, payload: menuPayload(p.key!) })) }]
     : null;
   return { ice_breakers: ice, persistent_menu: pm };
 }

@@ -1,4 +1,4 @@
-import { findNode, MENU_PAYLOAD, menuPayload, type DmMenu, type MenuNode } from "../../shared/menu";
+import { findNode, MENU_PAYLOAD, menuParts, menuPayload, type DmMenu, type MenuNode } from "../../shared/menu";
 import { first, getSetting, run } from "../lib/db";
 import type { OutgoingMessage } from "../meta/types";
 import { getEntitlement, monthlyMessages } from "../services/plans";
@@ -18,19 +18,24 @@ export async function loadMenu(db: D1Database, tenantId: number): Promise<DmMenu
   return getSetting<DmMenu | null>(db, tenantId, "dm_menu", null);
 }
 
-/** Why the menu may not answer this person now (null = it may). */
-async function blocked(ctx: EngineContext, account: AccountRow, participant: ParticipantRow, menu: DmMenu | null): Promise<string | null> {
-  if (!menu?.enabled) return "menu_off";
+/**
+ * Why the menu may not answer this person now (null = it may). A message needs the automatic menu switched on; a
+ * tap is answered while any part (automatic menu, ice breakers, persistent menu) is on.
+ */
+async function blocked(ctx: EngineContext, account: AccountRow, participant: ParticipantRow, menu: DmMenu | null, tap = false): Promise<string | null> {
+  const parts = menuParts(menu);
+  if (tap ? !(parts.auto || parts.ice || parts.persistent) : !parts.auto) return "menu_off";
   const ent = await getEntitlement(ctx.db, account.tenant_id, ctx.now());
   if (!ent.owner && !(ent.active && ent.limits.dm_menu)) return "menu_not_in_plan";
   if (!account.is_demo && ent.limits.monthly_messages !== null && (await monthlyMessages(ctx.db, account.tenant_id, ctx.now())) >= ent.limits.monthly_messages) return "monthly_limit_reached";
-  if (menu.pause_hours > 0) {
+  // The pause after a manual reply only holds back the automatic menu; a tap is the person asking.
+  if (!tap && menu!.pause_hours > 0) {
     const manual = await first<{ at: number }>(
       ctx.db,
       "SELECT MAX(created_at) AS at FROM messages WHERE participant_id = ? AND direction = 'out' AND source IN ('manual','app')",
       participant.id,
     );
-    if (manual?.at && ctx.now() - manual.at < menu.pause_hours * H) return "menu_paused_after_manual_reply";
+    if (manual?.at && ctx.now() - manual.at < menu!.pause_hours * H) return "menu_paused_after_manual_reply";
   }
   return null;
 }
@@ -57,8 +62,8 @@ export const isMenuPayload = (p?: string) => !!p && MENU_PAYLOAD.test(p);
 export async function menuTap(ctx: EngineContext, row: EventRow, payload: string, account: AccountRow, participant: ParticipantRow): Promise<ProcessOutcome> {
   const key = MENU_PAYLOAD.exec(payload)![1];
   const menu = await loadMenu(ctx.db, account.tenant_id);
-  const why = await blocked(ctx, account, participant, menu);
-  if (why) return { status: "ignored", reason: why === "menu_off" ? "menu_off" : why };
+  const why = await blocked(ctx, account, participant, menu, true);
+  if (why) return { status: "ignored", reason: why };
   if (!findNode(menu!.root, key)) return { status: "ignored", reason: "menu_option_removed" };
   await run(
     ctx.db,
