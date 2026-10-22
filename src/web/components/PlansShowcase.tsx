@@ -131,7 +131,6 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
                     {catalog.card_button_label || "اشترك الآن"}
                   </button>
                   <div className="muted mt-1 text-center text-[11px]">مدى · فيزا · ماستركارد · Apple Pay — تتفعّل فورًا</div>
-                  {onChoose && <button type="button" onClick={onChoose} className="mt-1 w-full text-center text-xs font-semibold text-violet-700 underline dark:text-violet-300">أو تواصل معنا</button>}
                 </>
               ) : onChoose ? (
                 <button type="button" onClick={onChoose} className={`btn mt-4 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>اشترك في {p.name}</button>

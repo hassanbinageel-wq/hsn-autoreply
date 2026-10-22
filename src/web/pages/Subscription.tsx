@@ -41,6 +41,10 @@ export function SubscriptionPage() {
   };
   // Back from the card payment page (#/subscription?paid=<id>): re-check that payment with the gateway.
   const [paidId, setPaidId] = useState(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("paid"));
+  // Drop ?paid=… from the address once read, so a refresh does not show the payment notice again.
+  useEffect(() => {
+    if (location.hash.includes("paid=")) history.replaceState(null, "", `${location.pathname}${location.search}#/subscription`);
+  }, []);
   const [checkKey, setCheckKey] = useState(0);
   const [payResult, setPayResult] = useState<{ status: string; amount?: number; days?: number; upgrade?: boolean } | null>(null);
   useEffect(() => {
@@ -204,12 +208,17 @@ function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url:
     () => (chosen ? api<{ amount: number; days_left: number; used_messages: number; messages_limit: number | null; new_value: number; credit: number }>(`/api/subscription/upgrade/quote?plan_id=${encodeURIComponent(chosen.id)}`) : Promise.resolve(null)),
     [chosen?.id],
   );
+  // The «upgraded» notice shows once per upgrade (remembered on this device) and hides after 15 seconds.
+  const [seenBefore] = useState(() => { try { return Number(localStorage.getItem("upgrade_seen")) || 0; } catch { return 0; } });
   const [showDone, setShowDone] = useState(true);
+  const doneId = st?.upgrade?.id as number | undefined;
   useEffect(() => {
+    if (!doneId) return;
+    try { localStorage.setItem("upgrade_seen", String(doneId)); } catch { /* private mode */ }
     const t = setTimeout(() => setShowDone(false), 15_000);
     return () => clearTimeout(t);
-  }, [st?.upgrade?.id]);
-  const u = showDone ? st?.upgrade : null;
+  }, [doneId]);
+  const u = showDone && doneId && doneId !== seenBefore ? st?.upgrade : null;
   if (!higher.length && !u) return null;
   const pay = async () => {
     if (!chosen || !quote) return;
