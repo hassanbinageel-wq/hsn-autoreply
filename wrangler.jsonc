@@ -5,10 +5,12 @@
   "compatibility_date": "2026-08-20",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
-  // The service's own domain (Cloudflare zone hsnreply.online). workers.dev stays available too.
+  // The service's domains (Cloudflare zones hsnreply.online and shayyek.sa). workers.dev stays available too.
   "routes": [
     { "pattern": "hsnreply.online", "custom_domain": true },
-    { "pattern": "www.hsnreply.online", "custom_domain": true }
+    { "pattern": "www.hsnreply.online", "custom_domain": true },
+    { "pattern": "shayyek.sa", "custom_domain": true },
+    { "pattern": "www.shayyek.sa", "custom_domain": true }
   ],
   "observability": { "enabled": true },
   // Static PWA assets built by Vite. The Worker handles only the listed paths first.
