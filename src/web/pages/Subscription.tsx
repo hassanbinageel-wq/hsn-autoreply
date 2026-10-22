@@ -103,6 +103,9 @@ export function SubscriptionPage() {
   if (loading && !data) return <Spinner />;
   if (error) return <Alert tone="bad">{error}</Alert>;
   if (data.owner) return <Alert tone="info">حساب المالك يعمل بكل المزايا بدون اشتراك.</Alert>;
+  // Next to «باقتك»: the upgrade card when a higher plan can be bought, otherwise (top plan) the invitation card.
+  const curPlan = data.plans?.find((p: any) => p.id === data.plan?.id);
+  const canUpgrade = !!(data.active && data.card_payments && !isStaff() && curPlan?.card_price && data.plans.some((p: any) => p.card_price && p.card_price > curPlan.card_price));
   const daysLeft = data.expires_at ? Math.ceil((data.expires_at - Date.now()) / 86_400_000) : null;
   return (
     <div className="space-y-5">
@@ -135,9 +138,9 @@ export function SubscriptionPage() {
             </div>
           )}
         </Card>
-        {data.active && data.card_payments && !isStaff() && <div id="upgrade" className="scroll-mt-20"><UpgradeCard data={data} onPay={goPay} /></div>}
+        {canUpgrade ? <div id="upgrade" className="scroll-mt-20"><UpgradeCard data={data} onPay={goPay} /></div> : <ReferralCard />}
       </div>
-      <ReferralCard />
+      {canUpgrade && <ReferralCard />}
       <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
       <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
       {data.code_box?.enabled && (
@@ -168,7 +171,8 @@ export function SubscriptionPage() {
 function ReferralCard() {
   const { data } = useAsync(() => api<any>("/api/referral").catch(() => null), []);
   if (!data || !data.days_per_referral) return null;
-  const link = `${location.origin}/#/register?ref=${data.code}`;
+  // Always the public site (inside the app the page itself runs on a local address).
+  const link = `https://shayyek.sa/#/register?ref=${data.code}`;
   const share = async () => {
     const text = `أستخدم شيّك للرد التلقائي على تعليقات إنستقرام 🚀 اشترك من رابطي وتاخذ ${data.days_per_referral} أيام هدية:\n${link}`;
     try {
