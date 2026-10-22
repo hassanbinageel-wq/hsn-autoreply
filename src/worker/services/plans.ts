@@ -164,6 +164,10 @@ export async function redeemCode(db: D1Database, tenantId: number, raw: string, 
   if (!code) throw new RedeemError("invalid_code", "الكود غير صحيح — تأكد من كتابته كما وصلك");
   if (code.revoked_at) throw new RedeemError("revoked", "هذا الكود أُلغي — تواصل مع إدارة الخدمة");
   if (code.used_at) throw new RedeemError("used", "هذا الكود مستخدم مسبقًا");
+  // No moving down to a lower plan while the current one is still active.
+  const cur = await first<{ sort: number }>(db, "SELECT p.sort FROM tenants t JOIN plans p ON p.id = t.plan_id WHERE t.id = ? AND t.plan_expires_at > ?", tenantId, now);
+  const next = await first<{ sort: number }>(db, "SELECT sort FROM plans WHERE id = ?", code.plan_id);
+  if (cur && next && next.sort < cur.sort) throw new RedeemError("downgrade", "هذا الكود لباقة أقل من باقتك — تقدر تستخدمه بعد ما ينتهي اشتراكك الحالي");
   // Claim it atomically (two simultaneous redemptions cannot both succeed).
   const claimed = await run(
     db,

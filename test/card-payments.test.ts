@@ -25,8 +25,9 @@ beforeEach(async () => {
   OWNER = await login("admin", "a-very-strong-password");
   await DB.prepare("UPDATE plans SET card_price_halalas = 0, price_period = 'month'").run();
 });
+/** A customer on the pro plan for 10 days (paying pro by card renews it; moving to another plan is an upgrade). */
 async function register(username: string) {
-  const code = (await call("/api/owner/codes", OWNER, "POST", { plan_id: "basic", days: 10, count: 1 })).body.codes[0];
+  const code = (await call("/api/owner/codes", OWNER, "POST", { plan_id: "pro", days: 10, count: 1 })).body.codes[0];
   expect((await call("/api/auth/register", {}, "POST", { name: `متجر ${username}`, username, password: "another-strong-password", code })).status).toBe(200);
   const h = await login(username, "another-strong-password");
   const tid = (await DB.prepare("SELECT tenant_id FROM admin_users WHERE username = ?").bind(username).first<any>()).tenant_id as number;
@@ -115,7 +116,7 @@ describe("card payments (Moyasar)", () => {
     // A callback claiming "paid" while Moyasar says otherwise changes nothing.
     remote = { status: "initiated" };
     expect((await call("/webhooks/moyasar", {}, "POST", { id: "inv_0001abcd", status: "paid", amount: 9900, currency: "SAR" })).body.result).toBe("initiated");
-    expect((await tenant(tid)).plan_id).toBe("basic");
+    expect((await tenant(tid)).plan_expires_at).toBe(before);
     expect((await call(`/api/subscription/pay/${pay.body.id}`, h)).body.status).toBe("initiated");
 
     // Paid for real: activated, and a second callback / status check does not add days again.
@@ -138,11 +139,12 @@ describe("card payments (Moyasar)", () => {
   it("a paid invoice with a different amount or currency is not activated", async () => {
     await DB.prepare("UPDATE plans SET card_price_halalas = 9900 WHERE id = 'pro'").run();
     const { h, tid } = await register("shop_a");
+    const before = (await tenant(tid)).plan_expires_at;
     stubMoyasar();
     const pay = await call("/api/subscription/pay", h, "POST", { plan_id: "pro" });
     remote = { status: "paid", amount: 100 };
     expect((await call("/webhooks/moyasar", {}, "POST", { id: "inv_0001abcd" })).body.result).toBe("mismatch");
-    expect((await tenant(tid)).plan_id).toBe("basic");
+    expect((await tenant(tid)).plan_expires_at).toBe(before);
     expect((await call(`/api/subscription/pay/${pay.body.id}`, h)).body.status).toBe("mismatch");
   });
 
@@ -150,6 +152,7 @@ describe("card payments (Moyasar)", () => {
     await DB.prepare("UPDATE plans SET card_price_halalas = 9900 WHERE id = 'pro'").run();
     const a = await register("shop_a");
     const b = await register("shop_b");
+    const bBefore = (await tenant(b.tid)).plan_expires_at;
     stubMoyasar();
     const pay = await call("/api/subscription/pay", a.h, "POST", { plan_id: "pro" });
     expect((await call(`/api/subscription/pay/${pay.body.id}`, b.h)).status).toBe(404);
@@ -157,7 +160,7 @@ describe("card payments (Moyasar)", () => {
     expect((await call("/webhooks/moyasar", {}, "POST", { id: "inv_someone_else" })).body.result).toBe("unknown");
     expect(reqs.length).toBe(n);
     expect((await call("/webhooks/moyasar", {}, "POST", { id: "../x" })).status).toBe(400);
-    expect((await tenant(b.tid)).plan_id).toBe("basic");
+    expect((await tenant(b.tid)).plan_expires_at).toBe(bBefore);
   });
 
   it("plans without a card price or without a period cannot be paid by card; the owner never pays", async () => {

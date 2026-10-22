@@ -65,6 +65,12 @@ export function SubscriptionPage() {
   const payCard = async (planId: string) => {
     const plan = data?.plans?.find((p: any) => p.id === planId);
     if (!plan?.card_price) return;
+    if (data.active && data.plan?.id && data.plan.id !== planId) {
+      const cur = data.plans.find((p: any) => p.id === data.plan.id);
+      toast(cur?.card_price && plan.card_price > cur.card_price ? "للانتقال لباقة أعلى استخدم «ترقية الباقة» فوق وادفع الفرق فقط" : "ما تقدر تنزل لباقة أقل وانت مشترك — تقدر تختارها بعد ما ينتهي اشتراكك", "bad");
+      document.getElementById("upgrade")?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
     const ok = await askConfirm({
       title: `الدفع بالبطاقة — ${plan.name}`,
       message: `راح تنتقل لصفحة الدفع الآمنة (ميسّر) وتدفع ${plan.card_price.toLocaleString("en-US")} ر.س بمدى أو فيزا أو ماستركارد أو Apple Pay. بعد الدفع تتفعّل الباقة تلقائيًا${data.active && data.plan?.id === planId ? "، والمدة الجديدة تنضاف بعد تاريخ انتهاء اشتراكك الحالي" : data.active ? " — تنبيه: باقتك الحالية تتغيّر لهذي الباقة، والأيام المتبقية تنضاف لها" : ""}. أكواد الخصم ما تنطبق على الدفع بالبطاقة.`,
@@ -131,7 +137,7 @@ export function SubscriptionPage() {
           )}
         </Card>
       </div>
-      {data.active && data.card_payments && !isStaff() && <UpgradeCard data={data} onPay={goPay} onPayFull={payCard} />}
+      {data.active && data.card_payments && !isStaff() && <div id="upgrade" className="scroll-mt-20"><UpgradeCard data={data} onPay={goPay} /></div>}
       <ReferralCard />
       <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
       <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
@@ -168,87 +174,68 @@ function ReferralCard() {
   );
 }
 
-const UPGRADE_STATUS: Record<string, string> = { pending: "قيد المراجعة", approved: "مقبول — بانتظار الدفع", rejected: "ما انقبل", paid: "تمت الترقية ✅", done: "تمت الترقية ✅" };
-
 /**
- * Upgrading to a higher plan without losing the current period: the customer asks, the service reviews the usage
- * and approves the price difference, then the customer pays only that and the plan changes with the same expiry.
+ * Upgrading to a higher plan, fully automatic: the price is the higher plan for the days left less what is left of
+ * the current plan (its unused share), the customer pays it and the plan changes with the same expiry date.
  */
-function UpgradeCard({ data, onPay, onPayFull }: { data: any; onPay: (r: { id: number; url: string }) => void; onPayFull: (planId: string) => void }) {
-  const { data: st, reload } = useAsync(() => api<{ upgrade: any }>("/api/subscription/upgrade"), []);
+function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url: string }) => void }) {
+  const { data: st } = useAsync(() => api<{ upgrade: any }>("/api/subscription/upgrade"), []);
   const current = data.plans?.find((p: any) => p.id === data.plan?.id);
   const higher = (data.plans ?? []).filter((p: any) => p.card_price && current?.card_price && p.card_price > current.card_price);
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
-  const u = st?.upgrade;
   const chosen = higher.find((p: any) => p.id === (target || higher[0]?.id));
-  const { data: quote } = useAsync(
-    () => (chosen && !(u && (u.status === "pending" || u.status === "approved")) ? api<{ auto: boolean; amount: number | null; used_messages: number; full_price: number }>(`/api/subscription/upgrade/quote?plan_id=${encodeURIComponent(chosen.id)}`) : Promise.resolve(null)),
-    [chosen?.id, u?.status],
+  const { data: quote, error: quoteError } = useAsync(
+    () => (chosen ? api<{ amount: number; days_left: number; used_messages: number; messages_limit: number | null; new_value: number; credit: number }>(`/api/subscription/upgrade/quote?plan_id=${encodeURIComponent(chosen.id)}`) : Promise.resolve(null)),
+    [chosen?.id],
   );
-  const open = u && (u.status === "pending" || u.status === "approved");
-  if (!st || (!higher.length && !u)) return null;
-  const act = async (f: () => Promise<unknown>) => {
+  const u = st?.upgrade;
+  if (!higher.length && !u) return null;
+  const pay = async () => {
+    if (!chosen || !quote) return;
+    const ok = await askConfirm({
+      title: `ترقية إلى ${chosen.name}`,
+      message: `تدفع ${quote.amount.toLocaleString("en-US")} ر.س بالبطاقة (ميسّر)، وتترقى باقتك فورًا بعد الدفع. تاريخ انتهاء اشتراكك يبقى نفسه.`,
+      confirmLabel: "انتقل للدفع",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
-      await f();
+      onPay(await api<{ id: number; url: string }>("/api/subscription/upgrade", { body: { plan_id: chosen.id } }));
     } catch (e: any) {
       toast(e.message, "bad");
     } finally {
       setBusy(false);
     }
   };
-  // Nothing used: the request is approved by itself, so go straight to paying the difference.
-  const request = () => act(async () => {
-    if (!chosen) return;
-    const r = await api<{ id: number; auto: boolean; amount: number | null }>("/api/subscription/upgrade", { body: { plan_id: chosen.id } });
-    if (r.auto) return onPay(await api<{ id: number; url: string }>(`/api/subscription/upgrade/${r.id}/pay`, { body: {} }));
-    toast("وصلنا طلبك — نراجع استهلاكك ونرسل لك مبلغ الفرق بإشعار");
-    reload();
-  });
-  const cancel = () => act(async () => {
-    if (!(await askConfirm({ title: "إلغاء طلب الترقية؟", confirmLabel: "إلغاء الطلب", danger: true }))) return;
-    await api(`/api/subscription/upgrade/${u.id}`, { method: "DELETE" });
-    reload();
-  });
-  const pay = () => act(async () => onPay(await api<{ id: number; url: string }>(`/api/subscription/upgrade/${u.id}/pay`, { body: {} })));
+  const sar = (v: number) => `${v.toLocaleString("en-US", { maximumFractionDigits: 2 })} ر.س`;
   return (
     <Card title="⬆️ ترقية الباقة">
-      {open ? (
-        <div className="space-y-3">
-          <p className="text-sm">طلب ترقية من <b>{u.from_name ?? u.from_plan}</b> إلى <b>{u.to_name ?? u.to_plan}</b> — <span className="font-bold">{UPGRADE_STATUS[u.status]}</span></p>
-          {u.status === "pending" ? (
-            <p className="muted text-sm">نراجع استهلاكك ونرسل لك مبلغ الفرق بإشعار. ما يتغيّر شي في باقتك قبل الدفع.</p>
-          ) : (
-            <button className="btn btn-primary w-full" disabled={busy} onClick={pay}><Icon name="lock" size={17} />ادفع الفرق {Number(u.amount).toLocaleString("en-US")} ر.س</button>
-          )}
-          <button className="btn btn-ghost w-full" disabled={busy} onClick={cancel}>إلغاء الطلب</button>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {u?.status === "rejected" && <Alert tone="warn">ما انقبل آخر طلب ترقية{u.note ? ` — ${u.note}` : ""}.</Alert>}
-          {(u?.status === "paid" || u?.status === "done") && <Alert tone="good">تمت ترقية باقتك إلى «{u.to_name ?? u.to_plan}».</Alert>}
-          {higher.length > 0 && (
-            <>
-              <p className="muted text-sm">تبي باقة أعلى؟ ما تحتاج تنتظر انتهاء اشتراكك ولا تدفع شهر كامل — تدفع <b>فرق السعر</b> فقط، وتترقى فورًا وتاريخ الانتهاء يبقى نفسه. إذا ما استخدمت شي من باقتك يطلع لك المبلغ مباشرة، وإذا استخدمت نراجع استهلاكك ونرسل لك المبلغ.</p>
-              <select className="input" value={target || higher[0].id} onChange={(e) => setTarget(e.target.value)} aria-label="الباقة الجديدة">
-                {higher.map((p: any) => <option key={p.id} value={p.id}>{p.name} — {Number(p.card_price).toLocaleString("en-US")} ر.س</option>)}
-              </select>
-              {!quote ? (
-                <Spinner />
-              ) : quote.auto ? (
-                <button className="btn btn-primary w-full" disabled={busy} onClick={request}><Icon name="lock" size={17} />ادفع الفرق {Number(quote.amount).toLocaleString("en-US")} ر.س وترقَّ الحين</button>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-xs">استخدمت {quote.used_messages.toLocaleString("en-US")} رسالة من باقتك هذي الدورة، فعندك خيارين:</p>
-                  <button className="btn btn-primary w-full" disabled={busy} onClick={() => onPayFull(chosen.id)}>ادفع السعر كامل {Number(quote.full_price).toLocaleString("en-US")} ر.س — تترقى الحين وتنضاف مدة جديدة</button>
-                  <button className="btn btn-ghost w-full" disabled={busy} onClick={request}>اطلب دفع الفرق فقط — نراجع استهلاكك ونرسل لك المبلغ</button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
+      <div className="space-y-3">
+        {u && <Alert tone="good">تمت ترقية باقتك إلى «{u.to_name ?? u.to_plan}».</Alert>}
+        {higher.length > 0 && (
+          <>
+            <p className="muted text-sm">ترقَّ لباقة أعلى الحين بدون ما تنتظر انتهاء اشتراكك: تدفع <b>الفرق فقط</b> وتبقى نفس أيامك. ما تقدر تنزل لباقة أقل إلا بعد انتهاء اشتراكك.</p>
+            <select className="input" value={target || higher[0].id} onChange={(e) => setTarget(e.target.value)} aria-label="الباقة الجديدة">
+              {higher.map((p: any) => <option key={p.id} value={p.id}>{p.name} — {Number(p.card_price).toLocaleString("en-US")} ر.س</option>)}
+            </select>
+            {quoteError ? (
+              <Alert tone="warn">{quoteError}</Alert>
+            ) : !quote ? (
+              <Spinner />
+            ) : (
+              <>
+                <ul className="muted space-y-1 text-xs">
+                  <li>الأيام الباقية: <b>{quote.days_left}</b> يوم (تبقى نفسها)</li>
+                  <li>رسائل هذي الدورة: <b>{quote.used_messages.toLocaleString("en-US")}</b>{quote.messages_limit ? ` من ${quote.messages_limit.toLocaleString("en-US")}` : ""}</li>
+                  <li>«{chosen.name}» للأيام الباقية: <b>{sar(quote.new_value)}</b> − المتبقي من باقتك: <b>{sar(quote.credit)}</b></li>
+                </ul>
+                <button className="btn btn-primary w-full" disabled={busy} onClick={pay}><Icon name="lock" size={17} />ادفع الفرق {sar(quote.amount)} وترقَّ الحين</button>
+              </>
+            )}
+          </>
+        )}
+      </div>
     </Card>
   );
 }

@@ -38,6 +38,9 @@ export function IncidentBanner({ center }: { center: SupportCenter | null }) {
   );
 }
 
+// Focus the search only with a mouse: on phones the keyboard would cover the questions before they are seen.
+const FINE_POINTER = typeof matchMedia === "function" && matchMedia("(pointer: fine)").matches;
+
 /**
  * Floating help button (bottom-left): search the FAQ (with video links), the expected response time, and
  * «فتح طلب دعم». The owner sees the same FAQ with a link to manage it.
@@ -91,7 +94,7 @@ export function HelpWidget({ center, isOwner }: { center: SupportCenter | null; 
             <b className="font-display block text-lg">كيف نقدر نساعدك؟</b>
             <span className="text-xs text-white/85">{center?.response_time}</span>
             <div className="relative mt-3">
-              <input autoFocus className="w-full rounded-xl border-0 bg-white/95 px-3 py-2.5 pr-9 text-sm text-slate-900 outline-none placeholder:text-slate-500" value={q} onChange={(e) => { setQ(e.target.value); setShown(null); }} placeholder="ابحث في الأسئلة الشائعة" aria-label="بحث" />
+              <input autoFocus={FINE_POINTER} className="w-full rounded-xl border-0 bg-white/95 px-3 py-2.5 pr-9 text-sm text-slate-900 outline-none placeholder:text-slate-500" value={q} onChange={(e) => { setQ(e.target.value); setShown(null); }} placeholder="ابحث في الأسئلة الشائعة" aria-label="بحث" />
               <Icon name="search" size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
             </div>
           </div>

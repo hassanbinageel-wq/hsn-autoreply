@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import { first } from "../lib/db";
 import { cardPriceHalalas, PayError } from "./moyasar";
-import { monthlyMessages, PERIOD_DAYS } from "./plans";
+import { CYCLE_MS, monthlyMessages, parseLimits, PERIOD_DAYS, usageCycle } from "./plans";
 
 const DAY = 86_400_000;
 
@@ -11,53 +11,79 @@ export interface UpgradeQuote {
   /** Card prices of one period, in halalas. */
   from_price: number;
   to_price: number;
-  period_days: number;
   days_left: number;
-  /** Messages sent in the current cycle. */
+  /** Messages sent in the current cycle, and the current plan's limit for a cycle (null = unlimited). */
   used_messages: number;
-  /** The whole difference for the remaining period(s) — fair when nothing was used yet. */
-  full: number;
-  /** The difference for the days left only. */
-  prorated: number;
-  /** `full` when nothing was used in this cycle, else `prorated`; rounded up to whole riyals, at least 1 SAR. */
-  suggested: number;
+  messages_limit: number | null;
+  /** What the higher plan costs for the days left. */
+  new_value: number;
+  /** What is left of the current plan: its days left, less the messages used beyond the time that has passed. */
+  credit: number;
+  /** new_value − credit, rounded up to whole riyals, at least 1 SAR (halalas). */
+  amount: number;
 }
 
-type PlanPrice = { id: string; name: string; active: number; card_price_halalas: number | null; price_amount: number | null; price_currency: string; price_period: string };
+type PlanPrice = { id: string; name: string; active: number; sort: number; limits: string; card_price_halalas: number | null; price_amount: number | null; price_currency: string; price_period: string };
+const PLAN_Q = "SELECT id, name, active, sort, limits, card_price_halalas, price_amount, price_currency, price_period FROM plans WHERE id = ?";
 
-/** The price difference to move a customer with an active plan to a more expensive one, keeping the expiry date. */
+/**
+ * The price to move a customer with an active plan to a more expensive one, keeping the expiry date (the days that
+ * passed are not given back). The customer pays the higher plan for the days left, less what is left of the current
+ * plan. What is left counts the usage too: if more of this cycle's messages were used than the time that passed,
+ * the extra share is not credited. Example: 49 → 99 SAR a month, nothing used on day 0 → 50 SAR; 15 days left with
+ * half the messages used → 49.5 − 24.5 = 25 SAR; 15 days left with all messages used → 49.5 − 0 = 50 SAR.
+ */
 export async function quoteUpgrade(env: Env, tenantId: number, toPlan: string, now = Date.now()): Promise<UpgradeQuote> {
   const t = await first<{ status: string; plan_id: string | null; plan_expires_at: number | null }>(env.DB, "SELECT status, plan_id, plan_expires_at FROM tenants WHERE id = ?", tenantId);
   if (!t || t.status !== "active" || !t.plan_id || !t.plan_expires_at || t.plan_expires_at <= now)
     throw new PayError("no_active_plan", "الترقية لمن عنده اشتراك فعّال — اشترك بالباقة مباشرة");
   if (t.plan_id === toPlan) throw new PayError("same_plan", "هذي باقتك الحالية");
-  const q = "SELECT id, name, active, card_price_halalas, price_amount, price_currency, price_period FROM plans WHERE id = ?";
-  const from = await first<PlanPrice>(env.DB, q, t.plan_id);
-  const to = await first<PlanPrice>(env.DB, q, toPlan);
+  const from = await first<PlanPrice>(env.DB, PLAN_Q, t.plan_id);
+  const to = await first<PlanPrice>(env.DB, PLAN_Q, toPlan);
   if (!to?.active) throw new PayError("not_found", "الباقة غير متاحة");
   const fromPrice = from ? cardPriceHalalas(from) : null;
   const toPrice = cardPriceHalalas(to);
   if (!fromPrice || !toPrice) throw new PayError("not_payable", "الترقية بالدفع تحتاج سعر بطاقة للباقتين — تواصل معنا");
-  const fromDays = PERIOD_DAYS[from!.price_period];
-  const toDays = PERIOD_DAYS[to.price_period];
-  const perDay = toPrice / toDays - fromPrice / fromDays;
-  if (perDay <= 0) throw new PayError("not_higher", "الترقية لباقة أعلى سعرًا فقط");
+  const fromPerDay = fromPrice / PERIOD_DAYS[from!.price_period];
+  const toPerDay = toPrice / PERIOD_DAYS[to.price_period];
+  if (toPerDay <= fromPerDay) throw new PayError("not_higher", "الترقية لباقة أعلى فقط — والتنزيل يكون بعد انتهاء اشتراكك");
+
   const leftDays = (t.plan_expires_at - now) / DAY;
-  const daysLeft = Math.ceil(leftDays);
-  const full = Math.round(perDay * Math.ceil(leftDays / toDays) * toDays);
-  const prorated = Math.round(perDay * leftDays);
   const used = await monthlyMessages(env.DB, tenantId, now);
-  const riyals = (h: number) => Math.max(100, Math.ceil(h / 100) * 100);
+  const limit = parseLimits(from!.limits).monthly_messages;
+  // This cycle: share of time still ahead vs share of messages still unused; usage ahead of time is not credited.
+  const cy = await usageCycle(env.DB, tenantId, now);
+  const timeAhead = Math.max(0, Math.min(cy.end, t.plan_expires_at) - now) / CYCLE_MS;
+  const unused = limit ? Math.max(0, 1 - used / limit) : 1;
+  const overUse = Math.max(0, timeAhead - unused) * fromPerDay * (CYCLE_MS / DAY);
+  const newValue = Math.round(toPerDay * leftDays);
+  const credit = Math.max(0, Math.round(fromPerDay * leftDays - overUse));
+  const amount = Math.max(100, Math.ceil((newValue - credit) / 100) * 100);
   return {
     from_plan: t.plan_id,
     to_plan: to.id,
     from_price: fromPrice,
     to_price: toPrice,
-    period_days: toDays,
-    days_left: daysLeft,
+    days_left: Math.ceil(leftDays),
     used_messages: used,
-    full,
-    prorated,
-    suggested: riyals(used === 0 ? full : prorated),
+    messages_limit: limit,
+    new_value: newValue,
+    credit,
+    amount,
   };
+}
+
+/**
+ * Moving to another plan while the current one is active: only up, and only through an upgrade (the difference);
+ * a lower plan waits until the subscription ends. Renewing the same plan is always fine. Null = allowed.
+ */
+export async function planChangeBlock(env: Env, tenantId: number, planId: string, now = Date.now()): Promise<{ code: string; message: string } | null> {
+  const t = await first<{ plan_id: string | null; plan_expires_at: number | null }>(env.DB, "SELECT plan_id, plan_expires_at FROM tenants WHERE id = ?", tenantId);
+  if (!t?.plan_id || t.plan_id === planId || !t.plan_expires_at || t.plan_expires_at <= now) return null;
+  const cur = await first<{ sort: number }>(env.DB, "SELECT sort FROM plans WHERE id = ?", t.plan_id);
+  const next = await first<{ sort: number }>(env.DB, "SELECT sort FROM plans WHERE id = ?", planId);
+  if (!cur || !next) return null;
+  return next.sort < cur.sort
+    ? { code: "downgrade", message: "ما تقدر تنزل لباقة أقل وانت مشترك — تقدر تختارها بعد ما ينتهي اشتراكك الحالي" }
+    : { code: "use_upgrade", message: "للانتقال لباقة أعلى استخدم «ترقية الباقة» وادفع الفرق فقط" };
 }
