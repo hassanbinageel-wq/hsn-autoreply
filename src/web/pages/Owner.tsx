@@ -380,6 +380,7 @@ function CodesTab() {
         )}
       </Card>
       <Card title="الأكواد" action={data && <span className="muted text-xs">{data.length} كود · {data.filter((c) => c.used_at).length} مستخدم</span>}>
+        <p className="muted mb-3 text-xs leading-relaxed">ℹ️ حذف كود <b>مستخدم</b> يشيله من القائمة فقط — اشتراك العميل اللي فعّله يبقى كما هو بنفس مدته. أما حذف أو إلغاء كود <b>غير مستخدم</b> فيمنع أي أحد من استخدامه.</p>
         {!data ? <Spinner /> : !data.length ? <Empty title="لا توجد أكواد بعد" /> : (
           <ul className="space-y-2">
             {data.map((c) => {

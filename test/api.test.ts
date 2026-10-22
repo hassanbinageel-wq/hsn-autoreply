@@ -305,4 +305,18 @@ describe("public pages", () => {
     expect(await (await call("/data-deletion")).text()).toContain("حذف البيانات");
     void TEST_ENV;
   });
+
+  it("serves the legal pages in Arabic and English, with the contact email", async () => {
+    for (const path of ["/privacy", "/terms", "/refund", "/data-deletion"]) {
+      const ar = await (await call(path)).text();
+      expect(ar).toContain('dir="rtl"');
+      expect(ar).toContain("support@shayyek.sa");
+      expect(ar).toContain(`href="${path}?lang=en"`);
+      const en = await (await call(`${path}?lang=en`)).text();
+      expect(en).toContain('dir="ltr"');
+      expect(en).toContain("support@shayyek.sa");
+      expect(en).toContain("Arqam Al-Mustadeerah");
+    }
+    expect(await (await call("/terms?lang=en")).text()).toContain("Governing law");
+  });
 });

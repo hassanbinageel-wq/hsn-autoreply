@@ -99,7 +99,7 @@ import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, dele
 import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { cardEnabled, cardPriceHalalas, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
-import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, parseSignedRequest, privacyPage, refundPage, termsPage } from "./pages";
+import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, pageLang, parseSignedRequest, privacyPage, refundPage, termsPage } from "./pages";
 
 type C = Context<AppEnv>;
 
@@ -354,12 +354,12 @@ export function createApp() {
     });
   });
 
-  app.get("/privacy", (c) => html(c, privacyPage(c.env.PUBLIC_BASE_URL)));
+  app.get("/privacy", (c) => html(c, privacyPage(c.env.PUBLIC_BASE_URL, pageLang(c.req.query("lang")))));
   // The plans page lives in the app now (works for visitors without an account).
   app.get("/pricing", (c) => c.redirect("/#/plans", 302));
-  app.get("/terms", (c) => html(c, termsPage()));
-  app.get("/refund", (c) => html(c, refundPage()));
-  app.get("/data-deletion", (c) => html(c, dataDeletionPage()));
+  app.get("/terms", (c) => html(c, termsPage(pageLang(c.req.query("lang")))));
+  app.get("/refund", (c) => html(c, refundPage(pageLang(c.req.query("lang")))));
+  app.get("/data-deletion", (c) => html(c, dataDeletionPage(pageLang(c.req.query("lang")))));
   app.get("/meta/deletion-status", (c) => html(c, deletionStatusPage(c.req.query("code") ?? "")));
 
   // ------------------------------------------------------------------ Webhooks
