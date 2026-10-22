@@ -131,7 +131,7 @@ export function SubscriptionPage() {
           )}
         </Card>
       </div>
-      {data.active && data.card_payments && !isStaff() && <UpgradeCard data={data} onPay={goPay} />}
+      {data.active && data.card_payments && !isStaff() && <UpgradeCard data={data} onPay={goPay} onPayFull={payCard} />}
       <ReferralCard />
       <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
       <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
@@ -174,13 +174,18 @@ const UPGRADE_STATUS: Record<string, string> = { pending: "قيد المراجع
  * Upgrading to a higher plan without losing the current period: the customer asks, the service reviews the usage
  * and approves the price difference, then the customer pays only that and the plan changes with the same expiry.
  */
-function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url: string }) => void }) {
+function UpgradeCard({ data, onPay, onPayFull }: { data: any; onPay: (r: { id: number; url: string }) => void; onPayFull: (planId: string) => void }) {
   const { data: st, reload } = useAsync(() => api<{ upgrade: any }>("/api/subscription/upgrade"), []);
   const current = data.plans?.find((p: any) => p.id === data.plan?.id);
   const higher = (data.plans ?? []).filter((p: any) => p.card_price && current?.card_price && p.card_price > current.card_price);
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const u = st?.upgrade;
+  const chosen = higher.find((p: any) => p.id === (target || higher[0]?.id));
+  const { data: quote } = useAsync(
+    () => (chosen && !(u && (u.status === "pending" || u.status === "approved")) ? api<{ auto: boolean; amount: number | null; used_messages: number; full_price: number }>(`/api/subscription/upgrade/quote?plan_id=${encodeURIComponent(chosen.id)}`) : Promise.resolve(null)),
+    [chosen?.id, u?.status],
+  );
   const open = u && (u.status === "pending" || u.status === "approved");
   if (!st || (!higher.length && !u)) return null;
   const act = async (f: () => Promise<unknown>) => {
@@ -193,11 +198,12 @@ function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url:
       setBusy(false);
     }
   };
+  // Nothing used: the request is approved by itself, so go straight to paying the difference.
   const request = () => act(async () => {
-    const plan = higher.find((p: any) => p.id === (target || higher[0].id));
-    if (!plan) return;
-    await api("/api/subscription/upgrade", { body: { plan_id: plan.id } });
-    toast("وصلنا طلبك — نراجعه ونرد عليك بالمبلغ");
+    if (!chosen) return;
+    const r = await api<{ id: number; auto: boolean; amount: number | null }>("/api/subscription/upgrade", { body: { plan_id: chosen.id } });
+    if (r.auto) return onPay(await api<{ id: number; url: string }>(`/api/subscription/upgrade/${r.id}/pay`, { body: {} }));
+    toast("وصلنا طلبك — نراجع استهلاكك ونرسل لك مبلغ الفرق بإشعار");
     reload();
   });
   const cancel = () => act(async () => {
@@ -224,13 +230,21 @@ function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url:
           {(u?.status === "paid" || u?.status === "done") && <Alert tone="good">تمت ترقية باقتك إلى «{u.to_name ?? u.to_plan}».</Alert>}
           {higher.length > 0 && (
             <>
-              <p className="muted text-sm">تبي باقة أعلى؟ ما تحتاج تنتظر انتهاء اشتراكك ولا تدفع شهر كامل: اطلب الترقية، ونراجع استهلاكك ونرسل لك <b>فرق السعر</b> فقط. بعد الدفع تترقى فورًا وتاريخ الانتهاء يبقى نفسه.</p>
-              <div className="flex gap-2">
-                <select className="input" value={target || higher[0].id} onChange={(e) => setTarget(e.target.value)} aria-label="الباقة الجديدة">
-                  {higher.map((p: any) => <option key={p.id} value={p.id}>{p.name} — {Number(p.card_price).toLocaleString("en-US")} ر.س</option>)}
-                </select>
-                <button className="btn btn-primary shrink-0" disabled={busy} onClick={request}>اطلب الترقية</button>
-              </div>
+              <p className="muted text-sm">تبي باقة أعلى؟ ما تحتاج تنتظر انتهاء اشتراكك ولا تدفع شهر كامل — تدفع <b>فرق السعر</b> فقط، وتترقى فورًا وتاريخ الانتهاء يبقى نفسه. إذا ما استخدمت شي من باقتك يطلع لك المبلغ مباشرة، وإذا استخدمت نراجع استهلاكك ونرسل لك المبلغ.</p>
+              <select className="input" value={target || higher[0].id} onChange={(e) => setTarget(e.target.value)} aria-label="الباقة الجديدة">
+                {higher.map((p: any) => <option key={p.id} value={p.id}>{p.name} — {Number(p.card_price).toLocaleString("en-US")} ر.س</option>)}
+              </select>
+              {!quote ? (
+                <Spinner />
+              ) : quote.auto ? (
+                <button className="btn btn-primary w-full" disabled={busy} onClick={request}><Icon name="lock" size={17} />ادفع الفرق {Number(quote.amount).toLocaleString("en-US")} ر.س وترقَّ الحين</button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs">استخدمت {quote.used_messages.toLocaleString("en-US")} رسالة من باقتك هذي الدورة، فعندك خيارين:</p>
+                  <button className="btn btn-primary w-full" disabled={busy} onClick={() => onPayFull(chosen.id)}>ادفع السعر كامل {Number(quote.full_price).toLocaleString("en-US")} ر.س — تترقى الحين وتنضاف مدة جديدة</button>
+                  <button className="btn btn-ghost w-full" disabled={busy} onClick={request}>اطلب دفع الفرق فقط — نراجع استهلاكك ونرسل لك المبلغ</button>
+                </div>
+              )}
             </>
           )}
         </div>

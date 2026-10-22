@@ -1097,6 +1097,18 @@ export function createApp() {
     );
     return c.json({ upgrade: u ? { ...u, amount: u.amount === null ? null : u.amount / 100 } : null });
   });
+  // What an upgrade costs now: with nothing used in this cycle the full difference is paid straight away (no review);
+  // otherwise the customer either pays the new plan's full price or asks the owner for a difference.
+  api.get("/subscription/upgrade/quote", async (c) => {
+    try {
+      const q = await quoteUpgrade(c.env, T(c), c.req.query("plan_id") ?? "");
+      const auto = q.used_messages === 0;
+      return c.json({ auto, used_messages: q.used_messages, days_left: q.days_left, amount: auto ? q.suggested / 100 : null, full_price: q.to_price / 100 });
+    } catch (e) {
+      if (e instanceof PayError) return apiError(c, e.status as any, e.code, e.message);
+      throw e;
+    }
+  });
   api.post("/subscription/upgrade", async (c) => {
     const p = await parseBody(c, z.object({ plan_id: z.string().max(20) }));
     if (!p.ok) return p.res;
@@ -1110,17 +1122,27 @@ export function createApp() {
       throw e;
     }
     await run(c.env.DB, "UPDATE plan_upgrades SET status = 'canceled', updated_at = ? WHERE tenant_id = ? AND status IN ('pending', 'approved')", now, T(c));
+    // Nothing used in this cycle yet: approved at once for the full difference, so the customer can pay right away.
+    // Otherwise the owner reviews the usage and decides the amount.
+    const auto = q.used_messages === 0;
     const row = await run(
       c.env.DB,
-      "INSERT INTO plan_upgrades (tenant_id, from_plan, to_plan, suggested, used_messages, days_left, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      T(c), q.from_plan, q.to_plan, q.suggested, q.used_messages, q.days_left, now, now,
+      "INSERT INTO plan_upgrades (tenant_id, from_plan, to_plan, status, suggested, amount, used_messages, days_left, decided_by, decided_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      T(c), q.from_plan, q.to_plan, auto ? "approved" : "pending", q.suggested, auto ? q.suggested : null, q.used_messages, q.days_left, auto ? "auto" : null, auto ? now : null, now, now,
     );
     const t = await first<{ name: string }>(c.env.DB, "SELECT name FROM tenants WHERE id = ?", T(c));
     const names = await all<{ id: string; name: string }>(c.env.DB, "SELECT id, name FROM plans WHERE id IN (?, ?)", q.from_plan, q.to_plan);
     const nm = (id: string) => names.find((x) => x.id === id)?.name ?? id;
-    await audit(c.env.DB, T(c), c.get("session").username, "subscription.upgrade_requested", q.to_plan, { from: q.from_plan, suggested: q.suggested });
-    await notify(c.env, OWNER_TENANT, "plan", `⬆️ طلب ترقية: «${t?.name ?? T(c)}» من «${nm(q.from_plan)}» إلى «${nm(q.to_plan)}» — استهلك ${q.used_messages} رسالة هذي الدورة، باقي ${q.days_left} يوم. المبلغ المقترح ${(q.suggested / 100).toLocaleString("en-US")} ر.س`, undefined, { link: "/owner?tab=payments" });
-    return c.json({ ok: true, id: Number(row.meta.last_row_id) });
+    const sar = (q.suggested / 100).toLocaleString("en-US");
+    await audit(c.env.DB, T(c), c.get("session").username, "subscription.upgrade_requested", q.to_plan, { from: q.from_plan, suggested: q.suggested, auto });
+    await notify(
+      c.env, OWNER_TENANT, "plan",
+      auto
+        ? `⬆️ ترقية تلقائية: «${t?.name ?? T(c)}» من «${nm(q.from_plan)}» إلى «${nm(q.to_plan)}» — ما استخدم شي من باقته، فيدفع الفرق كامل ${sar} ر.س بدون موافقة.`
+        : `⬆️ طلب ترقية يحتاج موافقتك: «${t?.name ?? T(c)}» من «${nm(q.from_plan)}» إلى «${nm(q.to_plan)}» — استهلك ${q.used_messages} رسالة هذي الدورة، باقي ${q.days_left} يوم. المبلغ المقترح ${sar} ر.س`,
+      undefined, { link: "/owner?tab=payments" },
+    );
+    return c.json({ ok: true, id: Number(row.meta.last_row_id), auto, amount: auto ? q.suggested / 100 : null });
   });
   api.delete("/subscription/upgrade/:id", async (c) => {
     const r = await run(c.env.DB, "UPDATE plan_upgrades SET status = 'canceled', updated_at = ? WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'approved')", Date.now(), Number(c.req.param("id")) || 0, T(c));

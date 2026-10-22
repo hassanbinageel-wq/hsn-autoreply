@@ -64,21 +64,17 @@ describe("plan upgrade: request → owner approves the difference → pay → sa
     await DB.prepare("UPDATE plans SET card_price_halalas = 9900 WHERE id = 'pro'").run();
   });
 
-  it("unused plan: full difference suggested; pay only after approval; the plan changes and the expiry stays", async () => {
+  it("unused plan: approved by itself for the full difference; pay → the plan changes and the expiry stays", async () => {
     const { h, tid } = await register("shop_a");
     const before = await tenant(tid);
-    expect((await call("/api/subscription/upgrade", h, "POST", { plan_id: "pro" })).status).toBe(200);
-    expect(await notes(1)).toEqual(expect.arrayContaining([expect.stringContaining("طلب ترقية")]));
+    expect((await call("/api/subscription/upgrade", h, "POST", { plan_id: "pro" })).body).toMatchObject({ ok: true, auto: true, amount: 50 });
+    expect(await notes(1)).toEqual(expect.arrayContaining([expect.stringContaining("ترقية تلقائية")]));
     const list = (await call("/api/owner/upgrades", OWNER)).body.upgrades;
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ status: "pending", from_plan: "basic", to_plan: "pro", used_messages: 0, suggested: 5000 });
+    expect(list[0]).toMatchObject({ status: "approved", decided_by: "auto", amount: 5000, from_plan: "basic", to_plan: "pro", used_messages: 0, suggested: 5000 });
     expect(list[0].live).toMatchObject({ used_messages: 0, suggested: 5000, days_left: 10 });
     const id = list[0].id;
-
-    // not approved yet → cannot pay
-    expect((await call(`/api/subscription/upgrade/${id}/pay`, h, "POST", {})).status).toBe(409);
     expect((await call(`/api/owner/upgrades/${id}/approve`, OWNER, "POST", { amount_sar: 0.5 })).status).toBe(422);
-    expect((await call(`/api/owner/upgrades/${id}/approve`, OWNER, "POST", { amount_sar: 50 })).body).toMatchObject({ ok: true, applied: false });
     expect((await call("/api/subscription/upgrade", h)).body.upgrade).toMatchObject({ id, status: "approved", amount: 50, to_plan: "pro" });
 
     stubMoyasar();
@@ -110,13 +106,28 @@ describe("plan upgrade: request → owner approves the difference → pay → sa
     expect((await tenant(tid)).plan_id).toBe("pro");
   });
 
+  it("quote: unused → pay the difference now; used → the full price or a request for the difference", async () => {
+    const { h, tid } = await register("shop_a");
+    expect((await call("/api/subscription/upgrade/quote?plan_id=pro", h)).body).toMatchObject({ auto: true, amount: 50, used_messages: 0, full_price: 99 });
+    const cy = await usageCycle(DB, tid);
+    await DB.prepare("INSERT INTO usage_counters (tenant_id, month, messages) VALUES (?, ?, 3)").bind(tid, cy.key).run();
+    expect((await call("/api/subscription/upgrade/quote?plan_id=pro", h)).body).toMatchObject({ auto: false, amount: null, used_messages: 3, full_price: 99 });
+    expect((await call("/api/subscription/upgrade/quote?plan_id=basic", h)).body.error.code).toBe("same_plan");
+  });
+
   it("used plan: the difference for the days left is suggested", async () => {
     const { h, tid } = await register("shop_a");
     const cy = await usageCycle(DB, tid);
     await DB.prepare("INSERT INTO usage_counters (tenant_id, month, messages) VALUES (?, ?, 12)").bind(tid, cy.key).run();
-    await call("/api/subscription/upgrade", h, "POST", { plan_id: "pro" });
+    expect((await call("/api/subscription/upgrade", h, "POST", { plan_id: "pro" })).body).toMatchObject({ auto: false, amount: null });
+    expect(await notes(1)).toEqual(expect.arrayContaining([expect.stringContaining("يحتاج موافقتك")]));
     const u = (await call("/api/owner/upgrades", OWNER)).body.upgrades[0];
+    expect(u).toMatchObject({ status: "pending", amount: null });
     expect(u.used_messages).toBe(12);
+    // not approved yet → cannot pay; the owner may ask for the full difference
+    expect((await call(`/api/subscription/upgrade/${u.id}/pay`, h, "POST", {})).status).toBe(409);
+    expect((await call(`/api/owner/upgrades/${u.id}/approve`, OWNER, "POST", { amount_sar: 50 })).body).toMatchObject({ ok: true, applied: false });
+    expect((await call("/api/subscription/upgrade", h)).body.upgrade).toMatchObject({ status: "approved", amount: 50 });
     // 50 SAR a month × 10 days / 30 = 16.67 → 17 SAR
     expect(u.suggested).toBe(1700);
     expect(u.live.full).toBe(5000);

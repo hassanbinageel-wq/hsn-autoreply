@@ -669,6 +669,7 @@ const CARD_STATUS: Record<string, [string, string]> = {
 const UPG_STATUS: Record<string, [string, string]> = {
   pending: ["بانتظار موافقتك", "text-amber-600"],
   approved: ["مقبول — بانتظار دفع العميل", "text-violet-600 dark:text-violet-300"],
+  auto: ["تلقائي (ما استخدم شي) — بانتظار دفع العميل", "text-violet-600 dark:text-violet-300"],
   rejected: ["مرفوض", "muted"],
   paid: ["مدفوع ✅ وترقّى", "text-emerald-700 dark:text-emerald-300"],
   done: ["ترقّى مجانًا ✅", "text-emerald-700 dark:text-emerald-300"],
@@ -720,11 +721,16 @@ function UpgradeRow({ u, onDone }: { u: any; onDone: () => void }) {
     if (note === null) throw new Error("أُلغي");
     await api(`/api/owner/upgrades/${u.id}/reject`, { body: { note: note || undefined } });
   }, "رُفض الطلب");
+  // Used part of the plan and should pay the new plan in full: closes the request and tells the customer how.
+  const askFull = () => act(async () => {
+    if (!(await askConfirm({ title: "يدفع السعر كامل؟", message: "يُقفل الطلب ويوصل العميل إشعار إنه يقدر يترقى بدفع سعر الباقة كامل (تنضاف له مدة جديدة).", confirmLabel: "إرسال" }))) throw new Error("أُلغي");
+    await api(`/api/owner/upgrades/${u.id}/reject`, { body: { note: `استخدمت جزء من باقتك، فالترقية تكون بدفع سعر «${u.to_name ?? u.to_plan}» كامل من صفحة «اشتراكي» — تترقى فورًا وتنضاف لك مدة جديدة` } });
+  }, "وصل العميل إشعار يدفع كامل");
   return (
     <li className="rounded-2xl border border-[var(--border)] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <b>{u.tenant_name ?? `#${u.tenant_id}`}</b>
-        <span className={`text-xs font-bold ${UPG_STATUS[u.status]?.[1] ?? ""}`}>{UPG_STATUS[u.status]?.[0] ?? u.status}</span>
+        {(() => { const k = u.status === "approved" && u.decided_by === "auto" ? "auto" : u.status; return <span className={`text-xs font-bold ${UPG_STATUS[k]?.[1] ?? ""}`}>{UPG_STATUS[k]?.[0] ?? u.status}</span>; })()}
       </div>
       <p className="mt-1 text-sm">من «{u.from_name ?? u.from_plan}» إلى «{u.to_name ?? u.to_plan}» <span className="muted text-xs">· {fmtTime(u.created_at)}</span></p>
       {open && live ? (
@@ -742,9 +748,16 @@ function UpgradeRow({ u, onDone }: { u: any; onDone: () => void }) {
       )}
       {open && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          {live && (
+            <>
+              <button type="button" className="btn btn-ghost min-h-9 text-xs" onClick={() => setAmount(String(Math.max(1, Math.ceil(live.prorated / 100))))}>فرق الأيام الباقية</button>
+              <button type="button" className="btn btn-ghost min-h-9 text-xs" onClick={() => setAmount(String(Math.max(1, Math.ceil(live.full / 100))))}>الفرق كامل</button>
+            </>
+          )}
           <input className="input w-28" type="number" min={0} step="1" dir="ltr" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="المبلغ بالريال" />
           <span className="muted text-xs">ر.س (0 = مجانًا)</span>
           <button className="btn btn-primary min-h-9 text-sm" disabled={busy || amount === "" || Number(amount) < 0} onClick={approve}>{u.status === "approved" ? "تحديث المبلغ" : "موافقة"}</button>
+          {u.status === "pending" && <button className="btn btn-ghost min-h-9 text-sm" disabled={busy} onClick={askFull}>يدفع كامل</button>}
           <button className="btn btn-ghost min-h-9 text-sm text-red-600" disabled={busy} onClick={reject}>رفض</button>
         </div>
       )}

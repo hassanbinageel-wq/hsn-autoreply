@@ -136,7 +136,7 @@ export function termsPage(lang: Lang = "ar"): string {
 <ul><li>Plans are paid in advance, monthly. Prices are in Saudi riyals and include 15% VAT, and they are shown before payment.</li>
 <li>Payment is by card through the licensed gateway Moyasar, by bank transfer, or by an activation code. Plans do not renew automatically and nothing is charged again without your action.</li>
 <li>Each plan has usage limits (such as the number of automatic messages per period) shown on the plans page.</li>
-<li>You can upgrade to a higher plan during your subscription by paying only the price difference that we approve; the end date stays the same.</li>
+<li>You can upgrade to a higher plan during your subscription by paying the price difference; the end date stays the same.</li>
 <li>Refunds follow the <a href="${href("/refund", lang)}">refund and cancellation policy</a>.</li></ul>
 <h2>5. Suspension and termination</h2>
 <p>We may suspend or close an account that breaks these terms or Meta's policies, or whose use puts the service or other customers at risk, after notice where possible. You may stop using the service and delete your account and its data at any time from the settings.</p>
@@ -170,7 +170,7 @@ ${contact(lang)}
 <ul><li>الباقات تُدفع مقدمًا بشكل شهري. الأسعار بالريال السعودي شاملة ضريبة القيمة المضافة 15%، وتظهر قبل الدفع.</li>
 <li>الدفع بالبطاقة عبر بوابة الدفع المرخّصة «ميسّر»، أو بالتحويل البنكي، أو بكود تفعيل. لا تتجدد الباقات تلقائيًا، ولا يُخصم أي مبلغ مرة ثانية بدون إجراء منك.</li>
 <li>لكل باقة حدود استخدام (مثل عدد الرسائل التلقائية في الفترة) موضّحة في صفحة الباقات.</li>
-<li>تقدر تترقى لباقة أعلى أثناء اشتراكك بدفع فرق السعر الذي نعتمده فقط، ويبقى تاريخ الانتهاء نفسه.</li>
+<li>تقدر تترقى لباقة أعلى أثناء اشتراكك بدفع فرق السعر، ويبقى تاريخ الانتهاء نفسه.</li>
 <li>الاسترجاع حسب <a href="/refund">سياسة الاسترجاع والإلغاء</a>.</li></ul>
 <h2>5. الإيقاف والإنهاء</h2>
 <p>يحق لنا إيقاف أو إغلاق الحساب الذي يخالف هذه الشروط أو سياسات Meta، أو يعرّض الخدمة أو العملاء الآخرين للخطر، مع إشعارك متى أمكن. ويحق لك التوقف عن استخدام الخدمة وحذف حسابك وبياناته في أي وقت من الإعدادات.</p>
@@ -204,7 +204,7 @@ export function refundPage(lang: Lang = "ar"): string {
 <li>Otherwise the current period is not refunded, and your subscription continues until it ends.</li>
 <li>A suspension caused by breaking Meta's policies or the terms of use is not eligible for a refund.</li></ul>
 <h2>How to request</h2><p>Request the refund from the «Support» page inside your account, or by email to <a href="mailto:${OPERATOR.email}">${OPERATOR.email}</a>, with the transaction number. The amount goes back to the same card used for the payment, usually within 5 to 14 business days depending on the issuing bank.</p>
-<h2>Upgrading to a higher plan</h2><p>You can ask to upgrade from the «My subscription» page. We review your usage in the current period and send you the price difference only: the full difference if you have not used the plan yet, or the difference for the days left if you have. After you pay it by card, the plan changes at once and the end date stays the same. Moving to a lower plan does not give a refund; it applies from the next renewal.</p>
+<h2>Upgrading to a higher plan</h2><p>You can ask to upgrade from the «My subscription» page. If you have not used your plan in the current period, you pay the full price difference right away; if you have used it, we review your usage and send you the amount to pay. After you pay it by card, the plan changes at once and the end date stays the same. Moving to a lower plan does not give a refund; it applies from the next renewal.</p>
 <h2>Cancellation</h2><p>Because the subscription does not renew automatically, simply do not renew. You can also delete your account and data at any time from the settings.</p>
 <p class="muted">Payment by bank transfer follows the same periods, and the amount is returned by bank transfer. If the Arabic and English versions differ, the Arabic version prevails.</p>`,
       "",
@@ -222,7 +222,7 @@ export function refundPage(lang: Lang = "ar"): string {
 <li>بعد ذلك لا يُسترجع مبلغ المدة الجارية، ويستمر اشتراكك حتى نهايتها.</li>
 <li>توقّف الخدمة بسبب مخالفة سياسات Meta أو شروط الاستخدام لا يستحق استرجاعًا.</li></ul>
 <h2>طريقة الطلب</h2><p>اطلب الاسترجاع من صفحة «الدعم» داخل حسابك، أو بالإيميل على <a href="mailto:${OPERATOR.email}">${OPERATOR.email}</a>، مع رقم العملية. يُعاد المبلغ إلى نفس البطاقة المستخدمة في الدفع، ويصل عادةً خلال 5 إلى 14 يوم عمل حسب البنك المُصدِر.</p>
-<h2>الترقية لباقة أعلى</h2><p>تقدر تطلب الترقية من صفحة «اشتراكي». نراجع استهلاكك في الفترة الحالية ونرسل لك فرق السعر فقط: الفرق كاملًا إذا ما استخدمت الباقة بعد، أو فرق الأيام الباقية إذا استخدمتها. بعد دفعه بالبطاقة تترقى باقتك فورًا ويبقى تاريخ الانتهاء نفسه. الانتقال لباقة أقل لا يستحق استرجاعًا ويُطبَّق من التجديد التالي.</p>
+<h2>الترقية لباقة أعلى</h2><p>تقدر تطلب الترقية من صفحة «اشتراكي». إذا ما استخدمت باقتك في الفترة الحالية تدفع فرق السعر كاملًا مباشرة، وإذا استخدمتها نراجع استهلاكك ونرسل لك المبلغ المطلوب. بعد دفعه بالبطاقة تترقى باقتك فورًا ويبقى تاريخ الانتهاء نفسه. الانتقال لباقة أقل لا يستحق استرجاعًا ويُطبَّق من التجديد التالي.</p>
 <h2>الإلغاء</h2><p>لأن الاشتراك لا يتجدد تلقائيًا، يكفي ألا تجدّد. يمكنك أيضًا حذف حسابك وبياناتك في أي وقت من الإعدادات.</p>
 <p class="muted">الدفع بالتحويل البنكي يخضع لنفس المدد، ويُعاد المبلغ بتحويل بنكي.</p>`,
     "",
