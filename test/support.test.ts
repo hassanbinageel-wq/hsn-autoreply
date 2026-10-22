@@ -38,6 +38,18 @@ const bell = (tid: number, kind: string) => DB.prepare("SELECT title FROM app_no
 const tidOf = async (username: string) => (await DB.prepare("SELECT tenant_id FROM admin_users WHERE username = ?").bind(username).first<any>()).tenant_id as number;
 
 describe("support center: tickets", () => {
+  it("support messages never count against the plan, from either side", async () => {
+    const A = await customer("shop_a");
+    const tid = await tidOf("shop_a");
+    const r = (await call("/api/support", A, "POST", { category: "question", subject: "سؤال عن الباقة", body: "كم باقي من رسائلي؟" })).body;
+    for (let i = 0; i < 3; i++) {
+      await call(`/api/owner/support/${r.id}/reply`, OWNER, "POST", { body: `رد ${i}` });
+      await call(`/api/support/${r.id}/reply`, A, "POST", { body: `شكرًا ${i}` });
+    }
+    const used = await DB.prepare("SELECT COALESCE(SUM(messages), 0) AS n FROM usage_counters WHERE tenant_id = ?").bind(tid).first<any>();
+    expect(used.n).toBe(0);
+  });
+
   it("a ticket has a number, a type and a state that follows the conversation; both sides are told", async () => {
     const A = await customer("shop_a");
     const r = await call("/api/support", A, "POST", { category: "tech", subject: "الحملة ما ترد", body: "من أمس ما ترد على التعليقات" });
