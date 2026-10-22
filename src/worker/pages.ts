@@ -10,11 +10,11 @@ export const PAGE_CSP =
 /** The legal operator of the service, exactly as in the commercial registration (Meta business verification matches it). */
 export const OPERATOR = { name: "شركة ارقام المستديرة للدعاية والاعلان", cr: "7042872536", country: "المملكة العربية السعودية" };
 const operatorFooter = () =>
-  `<footer style="margin-top:32px;padding-top:14px;border-top:1px solid rgba(127,127,127,.25);font-size:.85rem;opacity:.75;text-align:center">HSN AutoReply خدمة تقدّمها ${esc(OPERATOR.name)} — الرقم الوطني الموحد (السجل التجاري): ${esc(OPERATOR.cr)} — ${esc(OPERATOR.country)}</footer>`;
+  `<footer style="margin-top:32px;padding-top:14px;border-top:1px solid rgba(127,127,127,.25);font-size:.85rem;opacity:.75;text-align:center">شيّك (Shayyek) خدمة تقدّمها ${esc(OPERATOR.name)} — الرقم الوطني الموحد (السجل التجاري): ${esc(OPERATOR.cr)} — ${esc(OPERATOR.country)}</footer>`;
 
 function layout(title: string, body: string, extraHead = ""): string {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<title>${esc(title)} — HSN AutoReply</title>${extraHead}
+<title>${esc(title)} — شيّك</title>${extraHead}
 <style>body{font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;max-width:760px;margin:0 auto;padding:24px 16px;line-height:1.8;background:#fff;color:#111}
 @media (prefers-color-scheme:dark){body{background:#0b0f14;color:#e7ecf2}a{color:#7cc4ff}}
 h1{font-size:1.5rem}.btn{display:inline-block;padding:14px 22px;border-radius:12px;background:#6d28d9;color:#fff;text-decoration:none;font-weight:700}
@@ -24,9 +24,9 @@ h1{font-size:1.5rem}.btn{display:inline-block;padding:14px 22px;border-radius:12
 export function privacyPage(baseUrl: string): string {
   return layout(
     "سياسة الخصوصية",
-    `<h1>سياسة الخصوصية — HSN AutoReply</h1>
+    `<h1>سياسة الخصوصية — شيّك</h1>
 <p>مشغّل الخدمة والمسؤول عن البيانات: ${esc(OPERATOR.name)}، الرقم الوطني الموحد ${esc(OPERATOR.cr)}، ${esc(OPERATOR.country)}.</p>
-<p>HSN AutoReply أداة يستخدمها صاحب الحساب لأتمتة الرد على التعليقات وردود الستوري والإشارات في حسابه الاحترافي على إنستقرام عبر واجهة Meta الرسمية.</p>
+<p>شيّك أداة يستخدمها صاحب الحساب لأتمتة الرد على التعليقات وردود الستوري والإشارات في حسابه الاحترافي على إنستقرام عبر واجهة Meta الرسمية.</p>
 <h2>البيانات التي نعالجها</h2>
 <ul>
 <li>معرّفات Instagram الرسمية للمستخدمين الذين يعلّقون أو يراسلون الحساب (Instagram-scoped ID) واسم المستخدم عند توفره في الحدث.</li>
@@ -60,7 +60,7 @@ export function refundPage(): string {
   return layout(
     "سياسة الاسترجاع والإلغاء",
     `<h1>سياسة الاسترجاع والإلغاء</h1>
-<p>HSN AutoReply اشتراك رقمي (خدمة برمجية) يُدفع مقدمًا لمدة محددة: شهر (30 يومًا) أو 3 أشهر (90 يومًا) أو سنة (365 يومًا) حسب الباقة. الأسعار بالريال السعودي وتظهر قبل الدفع.</p>
+<p>شيّك اشتراك رقمي (خدمة برمجية) يُدفع مقدمًا لمدة محددة: شهر (30 يومًا) أو 3 أشهر (90 يومًا) أو سنة (365 يومًا) حسب الباقة. الأسعار بالريال السعودي وتظهر قبل الدفع.</p>
 <h2>التفعيل</h2><p>تتفعّل الباقة تلقائيًا بعد نجاح الدفع بالبطاقة، وإذا كان عندك اشتراك فعّال تُضاف المدة الجديدة بعد تاريخ انتهائه. لا يوجد تجديد تلقائي ولا خصم متكرر من بطاقتك.</p>
 <h2>الاسترجاع</h2><ul>
 <li>يحق لك طلب استرجاع كامل المبلغ خلال <b>3 أيام</b> من الدفع إذا لم تُرسل الخدمة أي رد تلقائي من حسابك بعد الدفع.</li>

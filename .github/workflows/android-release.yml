@@ -117,10 +117,10 @@ jobs:
           V=${{ steps.v.outputs.version }}
           if [ "$BUILD_TYPE" = release ]; then
             SRC=android/app/build/outputs/apk/release/app-release.apk
-            OUT=hsn-autoreply-v$V.apk
+            OUT=shayyek-v$V.apk
           else
             SRC=android/app/build/outputs/apk/debug/app-debug.apk
-            OUT=hsn-autoreply-v$V-DEBUG-not-for-release.apk
+            OUT=shayyek-v$V-DEBUG-not-for-release.apk
           fi
           cp "$SRC" "$OUT"
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
@@ -152,7 +152,7 @@ jobs:
           CERT=$(grep -m1 "certificate SHA-256 digest" apksigner.txt | awk '{print $NF}')
           NOTES_FILE=$(mktemp)
           {
-            echo "## HSN AutoReply v$V"
+            echo "## شيّك Shayyek v$V"
             echo
             if [ -f "docs/changelog/v$V.md" ]; then cat "docs/changelog/v$V.md"; else git log -n 20 --pretty='- %s' 2>/dev/null || true; fi
             echo
@@ -165,7 +165,7 @@ jobs:
           if gh release view "v$V" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "v$V" "$FILE" "$FILE.sha256" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "v$V" "$FILE" "$FILE.sha256" --repo "$GITHUB_REPOSITORY" --title "HSN AutoReply v$V" --notes-file "$NOTES_FILE" --target "$GITHUB_SHA"
+            gh release create "v$V" "$FILE" "$FILE.sha256" --repo "$GITHUB_REPOSITORY" --title "Shayyek v$V" --notes-file "$NOTES_FILE" --target "$GITHUB_SHA"
           fi
       - name: Redeploy the site with the new APK
         env:

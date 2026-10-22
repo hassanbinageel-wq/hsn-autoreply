@@ -63,7 +63,7 @@ export async function verifyTotp(secret: string, code: string, now = Date.now(),
   return null;
 }
 
-export const otpauthUri = (secret: string, account: string, issuer = "HSN AutoReply") =>
+export const otpauthUri = (secret: string, account: string, issuer = "Shayyek") =>
   `otpauth://totp/${encodeURIComponent(`${issuer}:${account}`)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 
 const RC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

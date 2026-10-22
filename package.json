@@ -2,7 +2,7 @@
   "name": "hsn-autoreply",
   "private": true,
   "version": "2.34.0",
-  "description": "HSN AutoReply — Instagram automation via the official Meta Instagram API",
+  "description": "Shayyek (شيّك) — Instagram automation via the official Meta Instagram API",
   "type": "module",
   "scripts": {
     "dev:web": "vite",

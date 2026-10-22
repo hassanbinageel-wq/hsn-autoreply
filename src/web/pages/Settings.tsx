@@ -242,7 +242,7 @@ function HolderSettings({ theme, setTheme, onLogout, username }: SettingsProps) 
             <Card title="النسخ الاحتياطي" action={<span className="chip surface-2 muted">بدون أسرار</span>} className="h-full">
               <p className="muted mb-4 text-sm">يشمل الإعدادات والحملات والقوالب فقط. لا يشمل التوكنات أو كلمات المرور أو بيانات المتفاعلين.</p>
               <div className="flex flex-wrap gap-2">
-                <button className="btn btn-ghost" onClick={() => download("/api/settings/backup", `hsn-autoreply-backup.json`).catch((e) => toast(e.message, "bad"))}>
+                <button className="btn btn-ghost" onClick={() => download("/api/settings/backup", `shayyek-backup.json`).catch((e) => toast(e.message, "bad"))}>
                   <Icon name="download" size={17} />تنزيل نسخة احتياطية
                 </button>
                 <label className="btn btn-ghost cursor-pointer">

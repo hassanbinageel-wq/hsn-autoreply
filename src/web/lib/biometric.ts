@@ -58,7 +58,7 @@ export async function enableBio(username: string, password: string): Promise<voi
 /** Asks for the fingerprint and returns the saved sign-in, or null if cancelled / unavailable. */
 export async function bioCredentials(): Promise<{ username: string; password: string } | null> {
   const { NativeBiometric } = await mod();
-  const c = await NativeBiometric.getSecureCredentials({ server: SERVER, title: "الدخول بالبصمة", subtitle: "HSN AutoReply", reason: "سجّل دخولك بالبصمة" });
+  const c = await NativeBiometric.getSecureCredentials({ server: SERVER, title: "الدخول بالبصمة", subtitle: "شيّك", reason: "سجّل دخولك بالبصمة" });
   return c?.username && c?.password ? { username: c.username, password: c.password } : null;
 }
 

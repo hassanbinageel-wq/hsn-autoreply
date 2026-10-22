@@ -172,7 +172,7 @@ export async function diagnoseTenant(db: D1Database, tenantId: number, appVersio
   checks.sort((a, b) => order[a.level] - order[b.level]);
   const ts = (x: number | null | undefined) => (x ? new Date(x).toISOString() : null);
   return {
-    report: "HSN AutoReply — customer diagnosis",
+    report: "Shayyek — customer diagnosis",
     generated_at: new Date(now).toISOString(),
     app_version: appVersion,
     customer: { id: t.id, name: t.name, status: t.status, plan: ent.plan?.name ?? t.plan_id, plan_active: ent.active, plan_expires_at: ts(t.plan_expires_at), created_at: ts(t.created_at) },

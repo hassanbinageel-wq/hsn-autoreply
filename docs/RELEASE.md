@@ -38,6 +38,6 @@ bash scripts/create-signing-key.sh hassanbinageel-wq/hsn-autoreply
 - **iOS:** غير مشمول في التوزيع المجاني؛ استخدم PWA.
 
 ## التثبيت
-1. نزّل `hsn-autoreply-vX.Y.Z.apk` وقارن SHA-256: `sha256sum hsn-autoreply-vX.Y.Z.apk`.
+1. نزّل `shayyek-vX.Y.Z.apk` وقارن SHA-256: `sha256sum shayyek-vX.Y.Z.apk`.
 2. اسمح بالتثبيت من المصدر عند الطلب.
 3. التحديثات تُثبت فوق القديمة لأن المفتاح ثابت.

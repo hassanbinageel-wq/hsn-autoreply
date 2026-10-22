@@ -252,7 +252,7 @@ export async function buildDailyReport(db: D1Database, tenantId: number, now = D
     first<{ n: number }>(db, `SELECT COUNT(*) AS n FROM action_jobs WHERE account_id IN ${ACC} AND is_demo = 0 AND status IN ('failed','uncertain') AND updated_at >= ?`, tenantId, since),
   ]);
   const lines = [
-    "📊 تقرير HSN AutoReply — آخر 24 ساعة",
+    "📊 تقرير شيّك — آخر 24 ساعة",
     "",
     `💬 تعليقات مستلمة: ${comments?.n ?? 0}`,
     `👥 أشخاص تفاعلوا: ${t?.people ?? 0}`,
@@ -432,7 +432,7 @@ export async function remindExpiringSubscriptions(env: Env, now = Date.now()): P
   for (const r of rows) {
     const days = Math.max(1, Math.ceil((r.plan_expires_at - now) / 86_400_000));
     await env.DB.prepare("UPDATE tenants SET expiry_notice_at = ? WHERE id = ?").bind(now, r.id).run();
-    await notify(env, r.id, "expiry", `⏳ اشتراكك في HSN AutoReply ينتهي خلال ${days} ${days === 1 ? "يوم" : "أيام"}. جدّده بكود تفعيل جديد من صفحة «اشتراكي» حتى لا تتوقف الردود.`);
+    await notify(env, r.id, "expiry", `⏳ اشتراكك في شيّك ينتهي خلال ${days} ${days === 1 ? "يوم" : "أيام"}. جدّده بكود تفعيل جديد من صفحة «اشتراكي» حتى لا تتوقف الردود.`);
   }
   return rows.length;
 }

@@ -14,7 +14,7 @@ export async function sendEmail(env: Env, m: { to: string; subject: string; text
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: env.EMAIL_FROM || "HSN AutoReply <no-reply@hsnreply.online>", to: [m.to], subject: m.subject, text: m.text, html: m.html }),
+      body: JSON.stringify({ from: env.EMAIL_FROM || "شيّك Shayyek <no-reply@hsnreply.online>", to: [m.to], subject: m.subject, text: m.text, html: m.html }),
       signal: AbortSignal.timeout(10_000),
     });
     if (!r.ok) return { ok: false, error: sanitize(`resend ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`) };
@@ -33,7 +33,7 @@ export function emailLayout(o: { title: string; lines: string[]; button?: { labe
   const code = o.code ? `<p style="margin:18px 0;font-size:30px;letter-spacing:8px;font-weight:bold;color:#0f172a;direction:ltr;text-align:center">${esc(o.code)}</p>` : "";
   return `<!doctype html><html lang="ar" dir="rtl"><body style="margin:0;background:#f5f3ff;font-family:Tahoma,Arial,sans-serif">
 <div style="max-width:520px;margin:0 auto;padding:24px 16px"><div style="background:#fff;border-radius:18px;padding:24px;border:1px solid #ede9fe">
-<p style="margin:0 0 6px;font-size:13px;font-weight:bold;color:#7c3aed">HSN AutoReply</p>
+<p style="margin:0 0 6px;font-size:13px;font-weight:bold;color:#7c3aed">شيّك</p>
 <h1 style="margin:0 0 16px;font-size:20px;color:#0f172a">${esc(o.title)}</h1>${p}${code}${btn}
 <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:#94a3b8">${esc(o.footer ?? "إذا ما طلبت هذا، تجاهل الرسالة — حسابك بأمان ولن يتغير شيء.")}</p>
 </div></div></body></html>`;

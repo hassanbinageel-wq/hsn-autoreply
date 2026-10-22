@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.hsn.autoreply"
+    namespace = "sa.shayyek.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.hsn.autoreply"
+        applicationId "sa.shayyek.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Set by CI: ./gradlew assembleRelease -PversionCode=<n> -PversionName=<x.y.z>

@@ -25,7 +25,7 @@ export default defineConfig(async () => {
             PUBLIC_BASE_URL: "https://hsn.example.workers.dev",
             ALLOWED_APP_ORIGINS: "https://localhost,capacitor://localhost",
             APP_VERSION: "1.0.0-test",
-            APP_DEEP_LINK: "com.hsn.autoreply://oauth-done",
+            APP_DEEP_LINK: "sa.shayyek.app://oauth-done",
             SALLA_CLIENT_ID: "salla_test_client",
             SALLA_CLIENT_SECRET: "salla_test_secret",
             SALLA_WEBHOOK_SECRET: "salla_webhook_secret_test",

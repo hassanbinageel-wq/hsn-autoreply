@@ -66,7 +66,7 @@ export async function initNative(handlers: { onDeepLink: (url: string) => void; 
   ]);
   App.addListener("appUrlOpen", async ({ url }) => {
     // Only our own scheme is accepted; the payload is never trusted — the app re-fetches state from the server.
-    if (url.startsWith("com.hsn.autoreply://")) {
+    if (url.startsWith("sa.shayyek.app://")) {
       await Browser.close().catch(() => undefined);
       handlers.onDeepLink(url);
     }

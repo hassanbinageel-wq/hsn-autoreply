@@ -1,4 +1,4 @@
-package com.hsn.autoreply;
+package sa.shayyek.app;
 
 import com.getcapacitor.BridgeActivity;
 

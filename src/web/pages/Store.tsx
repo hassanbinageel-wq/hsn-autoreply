@@ -499,7 +499,7 @@ function PdfButton({ target, title, subtitle, disabled }: { target: string; titl
         setBusy(true);
         try {
           const { elementToPdf } = await import("../lib/elementPdf");
-          await saveFile(await elementToPdf(el, { title, subtitle }), `HSN-${target}-${new Date().toISOString().slice(0, 10)}.pdf`, title);
+          await saveFile(await elementToPdf(el, { title, subtitle }), `Shayyek-${target}-${new Date().toISOString().slice(0, 10)}.pdf`, title);
         } catch (e: any) {
           toast(e?.message || "تعذر إنشاء ملف PDF", "bad");
         } finally {

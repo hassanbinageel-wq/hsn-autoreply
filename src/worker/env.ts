@@ -11,7 +11,7 @@ export interface Env {
   PUBLIC_BASE_URL: string; // https://<worker>.workers.dev  (used for OAuth redirect + webhooks)
   ALLOWED_APP_ORIGINS: string; // comma separated, e.g. "https://localhost,capacitor://localhost"
   APP_VERSION: string;
-  APP_DEEP_LINK: string; // e.g. "com.hsn.autoreply://oauth-done"
+  APP_DEEP_LINK: string; // e.g. "sa.shayyek.app://oauth-done"
   RELEASES_URL?: string; // GitHub releases page
   APK_DOWNLOAD_URL?: string; // optional authorized public download location
   PBKDF2_ITERATIONS?: string;

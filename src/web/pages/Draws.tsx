@@ -752,7 +752,7 @@ export function DrawPage({ id }: { id: number }) {
         : []),
       { text: "تم الاختيار عشوائيًا على الخادم بمولد أرقام عشوائية آمن (crypto.getRandomValues) بتوزيع غير منحاز.", size: 18, color: "#6b7280", gap: 0 },
     ];
-    saveBlob(canvasesToPdf(renderPages(lines, `HSN AutoReply — ${d.name}`)), `draw-${id}-results.pdf`);
+    saveBlob(canvasesToPdf(renderPages(lines, `شيّك — ${d.name}`)), `draw-${id}-results.pdf`);
   };
 
   const firstPickOk = d.fetch_status === "complete" && (d.status !== "draft" || (pv.max_winners != null && d.winners_count <= pv.max_winners && pv.eligible_count > 0));

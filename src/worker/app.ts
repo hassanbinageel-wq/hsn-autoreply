@@ -393,7 +393,7 @@ export function createApp() {
     if (!st) {
       // Installed from Salla's side (app store / partner portal): connect the store, then let the signed-in customer
       // claim it with a one-time token (the session cookie is SameSite=Strict, so it is not sent on this redirect).
-      if (!code || c.req.query("error")) return c.html(oauthResultPage(false, "رابط ربط المتجر غير صالح أو منتهي. ابدأ الربط من صفحة الربط في HSN.", "web", c.env.APP_DEEP_LINK), 400);
+      if (!code || c.req.query("error")) return c.html(oauthResultPage(false, "رابط ربط المتجر غير صالح أو منتهي. ابدأ الربط من صفحة الربط في شيّك.", "web", c.env.APP_DEEP_LINK), 400);
       const r = await completeSallaOAuth(c.env, code, 0);
       if (!r.ok) return c.html(oauthResultPage(false, `تعذر ربط متجر سلة: ${sanitize(r.error ?? "")}`, "web", c.env.APP_DEEP_LINK), 502);
       c.executionCtx.waitUntil(syncProducts(c.env, r.storeId!).catch(() => undefined));
@@ -3420,7 +3420,7 @@ export function createApp() {
     if (blocked) return blocked;
     const p = await parseBody(c, z.object({ kind: z.enum(["test", "report"]).default("test") }));
     if (!p.ok) return p.res;
-    const text = p.data.kind === "report" ? await buildDailyReport(c.env.DB, T(c)) : "✅ تم ربط إشعارات HSN AutoReply بنجاح. ستصلك التنبيهات والتقرير اليومي هنا.";
+    const text = p.data.kind === "report" ? await buildDailyReport(c.env.DB, T(c)) : "✅ تم ربط إشعارات شيّك بنجاح. ستصلك التنبيهات والتقرير اليومي هنا.";
     const r = await sendTelegram(c.env, T(c), text);
     if (!r.ok) return apiError(c, 422, "telegram", r.error ?? "تعذر الإرسال");
     return c.json({ ok: true });
@@ -3756,7 +3756,7 @@ export function createApp() {
       all(c.env.DB, "SELECT kind, name, body FROM templates WHERE tenant_id = ?", t),
     ]);
     const settings = Object.entries(settingsObj).map(([key, value]) => ({ key, value: JSON.stringify(value) }));
-    c.header("Content-Disposition", `attachment; filename="hsn-autoreply-backup-${new Date().toISOString().slice(0, 10)}.json"`);
+    c.header("Content-Disposition", `attachment; filename="shayyek-backup-${new Date().toISOString().slice(0, 10)}.json"`);
     return c.json({ format: "hsn-autoreply-backup", version: 1, exported_at: new Date().toISOString(), settings, campaigns, keywords, media, templates });
   });
 

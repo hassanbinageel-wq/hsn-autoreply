@@ -142,7 +142,7 @@ function ReferralCard() {
   if (!data || !data.days_per_referral) return null;
   const link = `${location.origin}/#/register?ref=${data.code}`;
   const share = async () => {
-    const text = `أستخدم HSN AutoReply للرد التلقائي على تعليقات إنستقرام 🚀 اشترك من رابطي وتاخذ ${data.days_per_referral} أيام هدية:\n${link}`;
+    const text = `أستخدم شيّك للرد التلقائي على تعليقات إنستقرام 🚀 اشترك من رابطي وتاخذ ${data.days_per_referral} أيام هدية:\n${link}`;
     try {
       if (navigator.share) await navigator.share({ text });
       else {

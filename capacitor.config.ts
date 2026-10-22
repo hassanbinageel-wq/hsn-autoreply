@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-  appId: "com.hsn.autoreply",
-  appName: "HSN AutoReply",
+  appId: "sa.shayyek.app",
+  appName: "شيّك",
   webDir: "dist/app",
   server: {
     // UI files are bundled inside the APK and served from https://localhost

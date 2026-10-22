@@ -272,7 +272,7 @@ const num = (n: number) => Math.round(n).toLocaleString("en-US");
 export function weeklyText(r: Awaited<ReturnType<typeof weeklyReport>>, link?: string): string {
   const a = r.activity;
   const lines = [
-    "🗓️ تقريرك الأسبوعي — HSN AutoReply",
+    "🗓️ تقريرك الأسبوعي — شيّك",
     "آخر 7 أيام مقارنة بالأسبوع اللي قبله",
     "",
     `💬 تعليقات: ${num(a.comments.now)}${change(a.comments.now, a.comments.prev)}`,

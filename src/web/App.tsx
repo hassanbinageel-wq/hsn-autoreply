@@ -331,7 +331,7 @@ export function App() {
   const current = NAV.find((n) => isActive(n.to));
   // A distinct tab title per screen (browser tabs, history, screen-reader page announcements).
   const pageTitle = m ? (m[1] === "new" ? "حملة جديدة" : "تعديل الحملة") : ms ? "إحصائيات الحملة" : mdr ? "السحب" : route === "/draws/designs" ? "تصاميم البطاقات" : current?.label ?? "الصفحة غير موجودة";
-  if (document.title !== `${pageTitle} · HSN AutoReply`) document.title = `${pageTitle} · HSN AutoReply`;
+  if (document.title !== `${pageTitle} · شيّك`) document.title = `${pageTitle} · شيّك`;
   // Sections a customer's plan does not include: the menu item shows a lock and opens the upgrade box.
   const lockedFeature = (to: string): string | null => {
     if (isOwner || !limits) return null;
@@ -365,7 +365,7 @@ export function App() {
         <Link to="/" className="mb-5 flex items-center gap-3 px-2">
           <span className="grad flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-lg shadow-violet-500/30"><Icon name="zap" size={22} /></span>
           <span className="leading-tight">
-            <b className="font-display block text-[17px] font-extrabold">HSN AutoReply</b>
+            <b className="font-display block text-[17px] font-extrabold">شيّك</b>
             <span className="muted text-xs">أتمتة إنستقرام الرسمية</span>
           </span>
         </Link>
@@ -416,7 +416,7 @@ export function App() {
             <span className="grad flex h-9 w-9 items-center justify-center rounded-xl text-white"><Icon name="zap" size={19} /></span>
           </Link>
           <div className="min-w-0">
-            <div className="font-display truncate text-[15px] font-bold lg:text-base">{current?.label ?? "HSN AutoReply"}</div>
+            <div className="font-display truncate text-[15px] font-bold lg:text-base">{current?.label ?? "شيّك"}</div>
           </div>
           <div className="mr-auto flex items-center gap-2">
             <button className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)]" title="المظهر" aria-label="تبديل المظهر" onClick={() => setTheme(nextTheme)}>

@@ -24,7 +24,7 @@ export function DownloadPage() {
             المستودع خاص: تنزيل ملف الإصدار من GitHub يتطلب تسجيل الدخول بحساب GitHub مخوّل للوصول للمستودع. لا نضع أي Token داخل الرابط.
           </Alert>
           <ol className="list-inside list-decimal space-y-1">
-            <li>نزّل ملف <code>hsn-autoreply-vX.Y.Z.apk</code> وتحقق من بصمة SHA-256 المنشورة مع الإصدار.</li>
+            <li>نزّل ملف <code>shayyek-vX.Y.Z.apk</code> وتحقق من بصمة SHA-256 المنشورة مع الإصدار.</li>
             <li>اسمح بتثبيت التطبيقات من هذا المصدر عند الطلب.</li>
             <li>التحديثات تُثبَّت فوق النسخة الحالية لأنها موقّعة بنفس المفتاح.</li>
           </ol>

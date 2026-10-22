@@ -46,7 +46,7 @@ function NewCustomer({ onClose, onDone }: { onClose: () => void; onDone: () => v
     }
   };
   if (created) {
-    const text = `بيانات دخولك على HSN AutoReply:\nاسم الحساب (على الإنستقرام): ${created.username}\nكلمة المرور: ${created.password}\n${location.origin}`;
+    const text = `بيانات دخولك على شيّك:\nاسم الحساب (على الإنستقرام): ${created.username}\nكلمة المرور: ${created.password}\n${location.origin}`;
     return (
       <Modal open onClose={onClose} title="تم إنشاء العميل ✅">
         <Alert tone="warn">أرسل بيانات الدخول للعميل بنفسك عبر قناة خاصة. كلمة المرور لا تظهر مرة ثانية (تقدر تعيد تعيينها لاحقًا).</Alert>

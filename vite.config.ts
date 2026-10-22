@@ -29,8 +29,8 @@ export default defineConfig(({ mode }) => {
           injectRegister: false,
           includeAssets: ["icons/*.png", "favicon.svg"],
           manifest: {
-            name: "HSN AutoReply",
-            short_name: "HSN AutoReply",
+            name: "شيّك — Shayyek",
+            short_name: "شيّك",
             description: "أتمتة الردود على تعليقات وستوري إنستقرام",
             lang: "ar",
             dir: "rtl",

@@ -71,7 +71,7 @@ export async function startCardPayment(env: Env, tenantId: number, planId: strin
       body: {
         amount,
         currency: "SAR",
-        description: `HSN AutoReply — ${plan.name} (${days} يوم)`,
+        description: `شيّك — ${plan.name} (${days} يوم)`,
         callback_url: `${base}/webhooks/moyasar`,
         success_url: `${site}/#/subscription?paid=${id}`,
         back_url: `${site}/#/subscription`,

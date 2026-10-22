@@ -59,7 +59,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/apk"
-          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'hsn-autoreply-v*.apk' --dir "$RUNNER_TEMP/apk" --clobber; then
+          # Newest release: shayyek-v*.apk (older releases were named hsn-autoreply-v*.apk)
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'shayyek-v*.apk' --dir "$RUNNER_TEMP/apk" --clobber \
+             || gh release download --repo "$GITHUB_REPOSITORY" --pattern 'hsn-autoreply-v*.apk' --dir "$RUNNER_TEMP/apk" --clobber; then
             cp "$(ls "$RUNNER_TEMP"/apk/*.apk | head -1)" dist/web/app.apk
             ls -l dist/web/app.apk
           else

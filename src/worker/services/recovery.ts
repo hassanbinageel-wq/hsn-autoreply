@@ -36,7 +36,7 @@ export async function sendEmailCode(env: Env, userId: number, email: string, now
   const r = await sendEmail(env, {
     to: e,
     subject: `رمز تأكيد إيميلك: ${code}`,
-    text: `رمز تأكيد إيميلك في HSN AutoReply: ${code}\nصالح 15 دقيقة.\nإذا ما طلبت هذا، تجاهل الرسالة.`,
+    text: `رمز تأكيد إيميلك في شيّك: ${code}\nصالح 15 دقيقة.\nإذا ما طلبت هذا، تجاهل الرسالة.`,
     html: emailLayout({ title: "تأكيد إيميلك", lines: ["اكتب هذا الرمز في التطبيق لتأكيد إيميلك. نستخدمه فقط لاسترجاع حسابك إذا نسيت كلمة المرور.", "الرمز صالح 15 دقيقة."], code }),
   });
   return r;
@@ -77,7 +77,7 @@ export async function requestPasswordReset(env: Env, login: string, baseUrl: str
   const link = `${baseUrl.replace(/\/$/, "")}/#/reset?token=${encodeURIComponent(token)}`;
   const r = await sendEmail(env, {
     to: u.email,
-    subject: "استرجاع كلمة المرور — HSN AutoReply",
+    subject: "استرجاع كلمة المرور — شيّك",
     text: `طلبت تغيير كلمة المرور لحساب «${u.username}».\nافتح الرابط خلال 30 دقيقة (يشتغل مرة وحدة):\n${link}\nإذا ما طلبت هذا، تجاهل الرسالة — كلمة مرورك ما تتغير.`,
     html: emailLayout({
       title: "استرجاع كلمة المرور",
@@ -107,7 +107,7 @@ export async function resetPassword(env: Env, token: string, password: string, n
   if (u?.email)
     await sendEmail(env, {
       to: u.email,
-      subject: "تم تغيير كلمة المرور — HSN AutoReply",
+      subject: "تم تغيير كلمة المرور — شيّك",
       text: `تم تغيير كلمة المرور لحساب «${u.username}» وتسجيل الخروج من كل الأجهزة.\nإذا ما سويت هذا بنفسك، تواصل مع الدعم فورًا.`,
       html: emailLayout({ title: "تم تغيير كلمة المرور ✅", lines: [`تم تغيير كلمة المرور لحساب «${u.username}» وتسجيل الخروج من كل الأجهزة.`], footer: "إذا ما سويت هذا بنفسك، تواصل مع الدعم فورًا." }),
     }).catch(() => undefined);
@@ -163,7 +163,7 @@ export async function confirmPasswordChange(env: Env, userId: number, keepSessio
   if (u?.email)
     await sendEmail(env, {
       to: u.email,
-      subject: "تم تغيير كلمة المرور — HSN AutoReply",
+      subject: "تم تغيير كلمة المرور — شيّك",
       text: `تم تغيير كلمة المرور لحساب «${u.username}» وتسجيل الخروج من الأجهزة الأخرى.\nإذا ما سويت هذا بنفسك، تواصل مع الدعم فورًا.`,
       html: emailLayout({ title: "تم تغيير كلمة المرور ✅", lines: [`تم تغيير كلمة المرور لحساب «${u.username}» وتسجيل الخروج من الأجهزة الأخرى.`], footer: "إذا ما سويت هذا بنفسك، تواصل مع الدعم فورًا." }),
     }).catch(() => undefined);

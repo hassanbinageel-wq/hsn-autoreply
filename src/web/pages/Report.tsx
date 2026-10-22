@@ -44,7 +44,7 @@ export function ReportPage() {
     try {
       const { elementToPdf } = await import("../lib/elementPdf");
       const day = new Date(data.to).toISOString().slice(0, 10);
-      await saveFile(await elementToPdf(el), `HSN-weekly-report-${day}.pdf`, "التقرير الأسبوعي");
+      await saveFile(await elementToPdf(el), `Shayyek-weekly-report-${day}.pdf`, "التقرير الأسبوعي");
     } catch (e: any) {
       toast(e?.message || "تعذر إنشاء ملف PDF", "bad");
     } finally {
