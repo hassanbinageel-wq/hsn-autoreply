@@ -154,7 +154,7 @@ export const planUpdateSchema = z.object({
   price_amount: z.number().min(0).max(1_000_000).nullable().optional(),
   /** The old price (same currency), shown struck through; empty = none. */
   price_before: z.number().min(0).max(1_000_000).nullable().optional(),
-  price_currency: z.enum(["USD", "SAR", "YER", "YER_SAN"]).optional(),
+  price_currency: z.enum(["SAR", "USD"]).optional(),
   price_period: z.enum(["month", "quarter", "year", "once"]).optional(),
   /** Fixed card price in SAR (Moyasar); empty = no card payment for this plan. */
   card_price_sar: z.number().min(0).max(100_000).nullable().optional(),
@@ -265,20 +265,18 @@ const logoSchema = z
   .max(200_000, "الشعار كبير — اختر صورة أصغر")
   .refine((v) => /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(v), "صيغة الشعار غير مدعومة");
 export const paymentProviderSchema = z.object({
-  name: text(80).min(1, "اكتب اسم البنك أو الصرافة"),
-  kind: z.enum(["bank", "exchange", "wallet"]).default("bank"),
+  name: text(80).min(1, "اكتب اسم البنك"),
+  kind: z.enum(["bank", "wallet"]).default("bank"),
   logo: logoSchema.nullable().optional(),
 });
 export const paymentAccountSchema = z.object({
   holder: text(120).min(1, "اكتب اسم الحساب"),
   number: text(80).min(1, "اكتب رقم الحساب"),
-  currency: z.enum(["USD", "SAR", "YER", "YER_SAN"]).nullable().optional(),
+  currency: z.enum(["SAR", "USD"]).nullable().optional(),
   note: text(200).optional(),
 });
 export const exchangeRatesSchema = z.object({
   SAR: z.number().positive().max(1_000_000),
-  YER: z.number().positive().max(1_000_000),
-  YER_SAN: z.number().positive().max(1_000_000),
 });
 
 const shortText = (n: number) => z.string().trim().max(n);

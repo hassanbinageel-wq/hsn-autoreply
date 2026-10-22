@@ -498,7 +498,6 @@ function PlansTab() {
           </Field>
         </div>
       </Card>
-      <RatesCard rates={settings.exchange_rates} onSaved={reloadSettings} />
       <FeaturedCard plans={data} />
       {catalog && <FeatureOrderCard saved={orderFeatures(catalog.feature_order)} onSaved={reloadCatalog} />}
       <div className="grid gap-5 xl:grid-cols-3">
@@ -520,7 +519,7 @@ function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onS
       const before = f.price_before === "" || f.price_before == null ? null : Number(f.price_before);
       await api(`/api/owner/plans/${plan.id}`, {
         method: "PUT",
-        body: { name: f.name, price_amount: amount, price_before: before, price_currency: f.price_currency || "SAR", price_period: f.price_period || "month", card_price_sar: cardSar, description: f.description || undefined, active: !!f.active, limits: f.limits },
+        body: { name: f.name, price_amount: amount, price_before: before, price_currency: "SAR", price_period: f.price_period || "month", card_price_sar: cardSar, description: f.description || undefined, active: !!f.active, limits: f.limits },
       });
       toast(`تم حفظ باقة «${f.name}»`);
       onSaved();
@@ -534,12 +533,10 @@ function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onS
     <Card title={f.name || plan.id} action={<span className="chip surface-2 muted" dir="ltr">{plan.id}</span>}>
       <div className="space-y-3">
         <Field label="الاسم"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={40} /></Field>
-        <Field label="السعر" hint={f.price_amount === "" || f.price_amount == null ? "فارغ = يظهر «تواصل معنا»" : `يظهر للعملاء: ${formatPrice(Number(f.price_amount), f.price_currency || "SAR", f.price_period || "month")}`}>
+        <Field label="السعر" hint={f.price_amount === "" || f.price_amount == null ? "فارغ = يظهر «تواصل معنا»" : `يظهر للعملاء: ${formatPrice(Number(f.price_amount), "SAR", f.price_period || "month")}`}>
           <div className="grid grid-cols-2 gap-2">
             <input className="input col-span-2 text-lg font-bold" type="number" min={0} step="any" dir="ltr" value={f.price_amount ?? ""} onChange={(e) => setF({ ...f, price_amount: e.target.value })} placeholder="المبلغ، مثل 99" aria-label="المبلغ" />
-            <select className="input min-w-0 text-sm" value={f.price_currency || "SAR"} onChange={(e) => setF({ ...f, price_currency: e.target.value })} aria-label="العملة">
-              {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-            </select>
+            <span className="input flex min-w-0 items-center text-sm">ريال سعودي</span>
             <select className="input min-w-0 text-sm" value={f.price_period || "month"} onChange={(e) => setF({ ...f, price_period: e.target.value })} aria-label="المدة">
               {Object.entries(PRICE_PERIODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
@@ -615,37 +612,6 @@ export function OwnerPage() {
   );
 }
 
-function RatesCard({ rates, onSaved }: { rates: Record<string, number>; onSaved: () => void }) {
-  const [r, setR] = useState(() => ({ SAR: String(rates.SAR ?? ""), YER: String(rates.YER ?? ""), YER_SAN: String(rates.YER_SAN ?? "") }));
-  const [busy, setBusy] = useState(false);
-  const save = async () => {
-    setBusy(true);
-    try {
-      await api("/api/owner/settings", { method: "PUT", body: { exchange_rates: { SAR: Number(r.SAR), YER: Number(r.YER), YER_SAN: Number(r.YER_SAN) } } });
-      toast("تم حفظ أسعار الصرف");
-      onSaved();
-    } catch (e: any) {
-      toast(e.message, "bad");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const ok = [r.SAR, r.YER, r.YER_SAN].every((v) => Number(v) > 0);
-  return (
-    <Card title="أسعار الصرف">
-      <p className="muted mb-3 text-sm">يشوف العميل سعر كل باقة بالعملة اللي يختارها، محسوبًا بأسعارك هذه. السعر الأساسي يبقى بالعملة اللي حددتها في الباقة.</p>
-      <div className="grid gap-3 sm:grid-cols-4 sm:items-end">
-        {([["SAR", "ريال سعودي"], ["YER", "ريال يمني"], ["YER_SAN", "ريال يمني / صنعاء"]] as const).map(([k, l]) => (
-          <Field key={k} label={`1 دولار = ? ${l}`}>
-            <input className="input" type="number" min={0} step="any" dir="ltr" value={r[k]} onChange={(e) => setR({ ...r, [k]: e.target.value })} />
-          </Field>
-        ))}
-        <button className="btn btn-primary" disabled={busy || !ok} onClick={save}>{busy ? "…" : "حفظ الأسعار"}</button>
-      </div>
-    </Card>
-  );
-}
-
 /** Resizes an image file to a small square logo (data URL) so it stays light in the database. */
 async function logoDataUrl(file: File): Promise<string> {
   if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) throw new Error("اختر صورة PNG أو JPG أو WEBP");
@@ -686,116 +652,6 @@ function LogoPicker({ value, onChange }: { value: string | null; onChange: (v: s
       </label>
       {value && <button type="button" className="btn btn-ghost min-h-9 text-xs text-red-600" onClick={() => onChange(null)}>إزالة</button>}
     </div>
-  );
-}
-
-const KIND_LABEL: Record<string, string> = { bank: "بنك", exchange: "صرافة", wallet: "محفظة" };
-const CUR_NAME = (code: string | null) => (code ? CURRENCIES.find((c) => c.code === code)?.name ?? code : "—");
-
-function AccountForm({ initial, onSubmit, onCancel }: { initial?: any; onSubmit: (v: any) => Promise<void>; onCancel?: () => void }) {
-  const [f, setF] = useState({ holder: initial?.holder ?? "", number: initial?.number ?? "", currency: initial?.currency ?? "", note: initial?.note ?? "" });
-  const [busy, setBusy] = useState(false);
-  return (
-    <form
-      className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setBusy(true);
-        try {
-          await onSubmit({ holder: f.holder.trim(), number: f.number.trim(), currency: f.currency || null, note: f.note.trim() || undefined });
-          if (!initial) setF({ holder: "", number: "", currency: "", note: "" });
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      <input className="input" placeholder="اسم الحساب" value={f.holder} onChange={(e) => setF({ ...f, holder: e.target.value })} maxLength={120} required />
-      <input className="input" placeholder="رقم الحساب / الآيبان" dir="ltr" value={f.number} onChange={(e) => setF({ ...f, number: e.target.value })} maxLength={80} required />
-      <select className="input" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })} aria-label="العملة">
-        <option value="">العملة (اختياري)</option>
-        {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-      </select>
-      <input className="input sm:col-span-2" placeholder="ملاحظة (اختياري) — مثل: الفرع، اسم المستفيد بالإنجليزي" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} maxLength={200} />
-      <div className="flex gap-2">
-        <button className="btn btn-primary flex-1" disabled={busy}>{busy ? "…" : initial ? "حفظ" : "إضافة الحساب"}</button>
-        {onCancel && <button type="button" className="btn btn-ghost" onClick={onCancel}>إلغاء</button>}
-      </div>
-    </form>
-  );
-}
-
-function ProviderCard({ p, first, last, reload }: { p: any; first: boolean; last: boolean; reload: () => void }) {
-  const [edit, setEdit] = useState(false);
-  const [name, setName] = useState(p.name);
-  const [kind, setKind] = useState(p.kind);
-  const [logo, setLogo] = useState<string | null>(p.logo);
-  const [editing, setEditing] = useState<number | null>(null);
-  const [adding, setAdding] = useState(!p.accounts.length);
-  const call = async (fn: () => Promise<unknown>, msg: string) => {
-    try {
-      await fn();
-      toast(msg);
-      reload();
-    } catch (e: any) {
-      toast(e.message, "bad");
-      throw e;
-    }
-  };
-  return (
-    <Card
-      title={
-        <span className="flex items-center gap-2.5">
-          {p.logo ? <img src={p.logo} alt="" className="h-8 w-8 rounded-lg bg-white object-contain p-0.5 ring-1 ring-[var(--border)]" /> : <Icon name="bank" size={20} />}
-          {p.name}
-          <span className="chip surface-2 muted text-[11px]">{KIND_LABEL[p.kind] ?? "بنك"}</span>
-        </span>
-      }
-      action={
-        <span className="flex gap-1">
-          <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={first} aria-label="تحريك لأعلى" onClick={() => call(() => api(`/api/owner/payment-providers/${p.id}/move`, { body: { dir: "up" } }), "تم")}>↑</button>
-          <button className="btn btn-ghost min-h-8 px-2 text-xs" disabled={last} aria-label="تحريك لأسفل" onClick={() => call(() => api(`/api/owner/payment-providers/${p.id}/move`, { body: { dir: "down" } }), "تم")}>↓</button>
-          <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => setEdit(!edit)}>تعديل</button>
-          <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" onClick={async () => (await askConfirm({ title: `حذف «${p.name}»؟`, message: "تنحذف الجهة مع كل حساباتها من صفحة الباقات.", confirmLabel: "حذف", danger: true })) && call(() => api(`/api/owner/payment-providers/${p.id}`, { method: "DELETE" }), "تم الحذف")}>حذف</button>
-        </span>
-      }
-    >
-      {edit && (
-        <div className="mb-4 space-y-3 rounded-2xl bg-[var(--surface-2)] p-3">
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} aria-label="الاسم" />
-            <select className="input" value={kind} onChange={(e) => setKind(e.target.value)} aria-label="النوع"><option value="bank">بنك</option><option value="exchange">صرافة</option><option value="wallet">محفظة</option></select>
-          </div>
-          <LogoPicker value={logo} onChange={setLogo} />
-          <button className="btn btn-primary w-full" onClick={() => call(() => api(`/api/owner/payment-providers/${p.id}`, { method: "PUT", body: { name: name.trim(), kind, logo } }), "تم الحفظ").then(() => setEdit(false), () => undefined)}>حفظ</button>
-        </div>
-      )}
-      <ul className="space-y-2">
-        {p.accounts.map((a: any) =>
-          editing === a.id ? (
-            <li key={a.id} className="rounded-2xl border border-violet-400 p-3">
-              <AccountForm initial={a} onCancel={() => setEditing(null)} onSubmit={(v) => call(() => api(`/api/owner/payment-accounts/${a.id}`, { method: "PUT", body: v }), "تم الحفظ").then(() => setEditing(null))} />
-            </li>
-          ) : (
-            <li key={a.id} className="flex items-center gap-3 rounded-2xl border border-[var(--border)] px-3 py-2.5">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-1.5 text-xs"><span className="chip bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">{CUR_NAME(a.currency)}</span><span className="muted">{a.holder}</span></div>
-                <div className="font-mono font-bold" dir="ltr" style={{ textAlign: "right" }}>{a.number}</div>
-                {a.note && <div className="muted text-[11px]">{a.note}</div>}
-              </div>
-              <button className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => setEditing(a.id)}>تعديل</button>
-              <button className="btn btn-ghost min-h-8 px-2 text-xs text-red-600" onClick={async () => (await askConfirm({ title: "حذف هذا الحساب البنكي؟", confirmLabel: "حذف", danger: true })) && call(() => api(`/api/owner/payment-accounts/${a.id}`, { method: "DELETE" }), "تم الحذف")}>حذف</button>
-            </li>
-          ),
-        )}
-      </ul>
-      {adding ? (
-        <div className="mt-3 rounded-2xl border border-dashed border-[var(--border)] p-3">
-          <AccountForm onSubmit={(v) => call(() => api(`/api/owner/payment-providers/${p.id}/accounts`, { body: v }), "تمت إضافة الحساب")} onCancel={p.accounts.length ? () => setAdding(false) : undefined} />
-        </div>
-      ) : (
-        <button className="btn btn-ghost mt-3 w-full text-xs" onClick={() => setAdding(true)}><Icon name="plus" size={15} />إضافة حساب آخر</button>
-      )}
-    </Card>
   );
 }
 

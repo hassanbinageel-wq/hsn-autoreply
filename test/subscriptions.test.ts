@@ -249,27 +249,28 @@ describe("owner tools", () => {
 
   it("payment methods: banks with several accounts and a logo, shown publicly; owner only", async () => {
     const logo = "data:image/png;base64,iVBORw0KGgo=";
-    const prov = await call("/api/owner/payment-providers", OWNER, "POST", { name: "بنك الكريمي", kind: "bank", logo });
+    const prov = await call("/api/owner/payment-providers", OWNER, "POST", { name: "بنك الراجحي", kind: "bank", logo });
     expect(prov.status).toBe(200);
-    for (const [currency, number] of [["YER", "111"], ["SAR", "222"], ["USD", "333"]]) {
+    for (const [currency, number] of [["SAR", "111"], ["SAR", "222"], ["USD", "333"]]) {
       expect((await call(`/api/owner/payment-providers/${prov.body.id}/accounts`, OWNER, "POST", { holder: "حسن", number, currency })).status).toBe(200);
     }
-    const ex = await call("/api/owner/payment-providers", OWNER, "POST", { name: "صرافة النجم", kind: "exchange" });
-    await call(`/api/owner/payment-providers/${ex.body.id}/accounts`, OWNER, "POST", { holder: "حسن", number: "444", currency: "YER" });
+    expect((await call("/api/owner/payment-providers", OWNER, "POST", { name: "x", kind: "exchange" })).status).toBe(422);
+    const ex = await call("/api/owner/payment-providers", OWNER, "POST", { name: "محفظة STC", kind: "wallet" });
+    await call(`/api/owner/payment-providers/${ex.body.id}/accounts`, OWNER, "POST", { holder: "حسن", number: "444", currency: "SAR" });
     await call(`/api/owner/payment-providers/${ex.body.id}/move`, OWNER, "POST", { dir: "up" });
     // a bank with no account yet is not shown to buyers (the owner still sees it)
     await call("/api/owner/payment-providers", OWNER, "POST", { name: "جهة فارغة", kind: "bank" });
     expect((await call("/api/owner/payment-methods", OWNER)).body.map((p: any) => p.name)).toContain("جهة فارغة");
     const pub = (await call("/api/public/plans")).body;
-    expect(pub.payment_methods.map((p: any) => p.name)).toEqual(["صرافة النجم", "بنك الكريمي"]);
+    expect(pub.payment_methods.map((p: any) => p.name)).toEqual(["محفظة STC", "بنك الراجحي"]);
     const bank = pub.payment_methods[1];
     expect(bank.logo).toBe(logo);
-    expect(bank.accounts.map((a: any) => a.currency)).toEqual(["YER", "SAR", "USD"]);
+    expect(bank.accounts.map((a: any) => a.currency)).toEqual(["SAR", "SAR", "USD"]);
     // edit + delete an account, bad logo rejected
     const aid = bank.accounts[0].id;
-    expect((await call(`/api/owner/payment-accounts/${aid}`, OWNER, "PUT", { holder: "حسن علي", number: "999", currency: "YER_SAN" })).status).toBe(200);
+    expect((await call(`/api/owner/payment-accounts/${aid}`, OWNER, "PUT", { holder: "حسن علي", number: "999", currency: "USD" })).status).toBe(200);
     await call(`/api/owner/payment-accounts/${bank.accounts[1].id}`, OWNER, "DELETE");
-    expect((await call("/api/public/plans")).body.payment_methods[1].accounts.map((a: any) => [a.number, a.currency])).toEqual([["999", "YER_SAN"], ["333", "USD"]]);
+    expect((await call("/api/public/plans")).body.payment_methods[1].accounts.map((a: any) => [a.number, a.currency])).toEqual([["999", "USD"], ["333", "USD"]]);
     expect((await call("/api/owner/payment-providers", OWNER, "POST", { name: "x", logo: "javascript:alert(1)" })).status).toBe(422);
     expect((await call(`/api/owner/payment-providers/${prov.body.id}/accounts`, OWNER, "POST", { holder: "a", number: "1", currency: "EUR" })).status).toBe(422);
     // customers cannot change them
@@ -280,14 +281,15 @@ describe("owner tools", () => {
     expect((await DB.prepare("SELECT COUNT(*) AS n FROM payment_accounts WHERE provider_id = ?").bind(prov.body.id).first<any>()).n).toBe(0);
   });
 
-  it("exchange rates are the owner's and come with the catalog; only four currencies", async () => {
-    expect((await call("/api/owner/settings", OWNER, "PUT", { exchange_rates: { SAR: 3.8, YER: 1700, YER_SAN: 530 } })).status).toBe(200);
-    expect((await call("/api/public/plans")).body.rates).toEqual({ USD: 1, SAR: 3.8, YER: 1700, YER_SAN: 530 });
-    expect((await call("/api/owner/settings", OWNER, "PUT", { exchange_rates: { SAR: 0, YER: 1, YER_SAN: 1 } })).status).toBe(422);
+  it("prices are in riyals (dollars only for old plans); old stored rates for other currencies are not shown", async () => {
+    await DB.prepare("INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('exchange_rates', ?, 0)").bind(JSON.stringify({ USD: 1, SAR: 3.8, YER: 1700, YER_SAN: 530 })).run();
+    expect((await call("/api/public/plans")).body.rates).toEqual({ USD: 1, SAR: 3.8 });
+    expect((await call("/api/owner/settings", OWNER, "PUT", { exchange_rates: { SAR: 0 } })).status).toBe(422);
     const pro = (await call("/api/owner/plans", OWNER)).body.find((p: any) => p.id === "pro");
     expect((await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, active: true, limits: pro.limits, price_amount: 10, price_currency: "EUR" })).status).toBe(422);
-    expect((await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, active: true, limits: pro.limits, price_amount: 5000, price_currency: "YER_SAN" })).status).toBe(200);
-    expect((await call("/api/public/plans")).body.plans.find((p: any) => p.id === "pro")).toMatchObject({ price_amount: 5000, price_currency: "YER_SAN", price_label: "5,000 ر.ي (صنعاء) / شهريًا" });
+    expect((await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, active: true, limits: pro.limits, price_amount: 50, price_currency: "YER_SAN" })).status).toBe(422);
+    expect((await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, active: true, limits: pro.limits, price_amount: 5000, price_currency: "SAR" })).status).toBe(200);
+    expect((await call("/api/public/plans")).body.plans.find((p: any) => p.id === "pro")).toMatchObject({ price_amount: 5000, price_currency: "SAR", price_label: "5,000 ر.س / شهريًا" });
   });
 
   it("codes keep who used them after the customer is deleted, and any code can be deleted", async () => {
@@ -371,7 +373,7 @@ describe("owner tools", () => {
     const { h } = await customerWithAccount();
     expect((await call("/api/owner/featured-plan", h, "PUT", { plan_id: "max", label: "x" })).status).toBe(403);
     const w = await call("/api/owner/payment-providers", OWNER, "POST", { name: "محفظة جيب", kind: "wallet" });
-    await call(`/api/owner/payment-providers/${w.body.id}/accounts`, OWNER, "POST", { holder: "حسن", number: "777", currency: "YER" });
+    await call(`/api/owner/payment-providers/${w.body.id}/accounts`, OWNER, "POST", { holder: "حسن", number: "777", currency: "SAR" });
     expect(w.status).toBe(200);
     expect((await call("/api/public/plans")).body.payment_methods[0].kind).toBe("wallet");
   });

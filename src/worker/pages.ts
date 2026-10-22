@@ -133,7 +133,7 @@ export function termsPage(lang: Lang = "ar"): string {
 <h2>3. Acceptable use</h2>
 <p>You agree to follow Meta's and Instagram's policies (including the Platform Terms and the Community Standards on spam) and the laws of the Kingdom of Saudi Arabia. It is not allowed to: send unsolicited bulk messages, message people who have not interacted with your account, get around platform limits, send unlawful, misleading or offensive content, or try to access other customers' data or attack the service.</p>
 <h2>4. Plans and payment</h2>
-<ul><li>Plans are paid in advance for a fixed period (for example a month, 3 months or a year). Prices are in Saudi riyals and include 15% VAT, and they are shown before payment.</li>
+<ul><li>Plans are paid in advance, monthly. Prices are in Saudi riyals and include 15% VAT, and they are shown before payment.</li>
 <li>Payment is by card through the licensed gateway Moyasar, by bank transfer, or by an activation code. Plans do not renew automatically and nothing is charged again without your action.</li>
 <li>Each plan has usage limits (such as the number of automatic messages per period) shown on the plans page.</li>
 <li>Refunds follow the <a href="${href("/refund", lang)}">refund and cancellation policy</a>.</li></ul>
@@ -166,7 +166,7 @@ ${contact(lang)}
 <h2>3. الاستخدام المقبول</h2>
 <p>تلتزم بسياسات Meta وإنستقرام (ومنها شروط المنصة ومعايير المجتمع الخاصة بالرسائل غير المرغوبة) وبأنظمة المملكة العربية السعودية. ويُمنع: إرسال رسائل جماعية غير مرغوبة، أو مراسلة من لم يتفاعل مع حسابك، أو التحايل على حدود المنصة، أو إرسال محتوى مخالف للأنظمة أو مضلّل أو مسيء، أو محاولة الوصول لبيانات عملاء آخرين أو مهاجمة الخدمة.</p>
 <h2>4. الباقات والدفع</h2>
-<ul><li>الباقات تُدفع مقدمًا لمدة محددة (مثل شهر أو 3 أشهر أو سنة). الأسعار بالريال السعودي شاملة ضريبة القيمة المضافة 15%، وتظهر قبل الدفع.</li>
+<ul><li>الباقات تُدفع مقدمًا بشكل شهري. الأسعار بالريال السعودي شاملة ضريبة القيمة المضافة 15%، وتظهر قبل الدفع.</li>
 <li>الدفع بالبطاقة عبر بوابة الدفع المرخّصة «ميسّر»، أو بالتحويل البنكي، أو بكود تفعيل. لا تتجدد الباقات تلقائيًا، ولا يُخصم أي مبلغ مرة ثانية بدون إجراء منك.</li>
 <li>لكل باقة حدود استخدام (مثل عدد الرسائل التلقائية في الفترة) موضّحة في صفحة الباقات.</li>
 <li>الاسترجاع حسب <a href="/refund">سياسة الاسترجاع والإلغاء</a>.</li></ul>
@@ -194,7 +194,7 @@ export function refundPage(lang: Lang = "ar"): string {
     return layout(
       "Refund and Cancellation Policy",
       `<h1>Refund and Cancellation Policy</h1>
-<p>Shayyek is a digital subscription (a software service) paid in advance for a fixed period: a month (30 days), 3 months (90 days) or a year (365 days), depending on the plan. Prices are in Saudi riyals, include VAT, and are shown before payment.</p>
+<p>Shayyek is a digital subscription (a software service) paid in advance for one month (30 days). Prices are in Saudi riyals, include VAT, and are shown before payment.</p>
 <h2>Activation</h2><p>The plan is activated automatically after a successful card payment. If you already have an active subscription, the new period is added after its end date. There is no automatic renewal and no recurring charge on your card.</p>
 <h2>Refunds</h2><ul>
 <li>You may request a full refund within <b>3 days</b> of payment if the service has not sent any automatic reply from your account since the payment.</li>
@@ -203,7 +203,7 @@ export function refundPage(lang: Lang = "ar"): string {
 <li>A suspension caused by breaking Meta's policies or the terms of use is not eligible for a refund.</li></ul>
 <h2>How to request</h2><p>Request the refund from the «Support» page inside your account, or by email to <a href="mailto:${OPERATOR.email}">${OPERATOR.email}</a>, with the transaction number. The amount goes back to the same card used for the payment, usually within 5 to 14 business days depending on the issuing bank.</p>
 <h2>Cancellation</h2><p>Because the subscription does not renew automatically, simply do not renew. You can also delete your account and data at any time from the settings.</p>
-<p class="muted">Other payment methods (bank transfer or exchange) follow the same periods, and the amount is returned the same way it was paid. If the Arabic and English versions differ, the Arabic version prevails.</p>`,
+<p class="muted">Payment by bank transfer follows the same periods, and the amount is returned by bank transfer. If the Arabic and English versions differ, the Arabic version prevails.</p>`,
       "",
       lang,
       "/refund",
@@ -211,7 +211,7 @@ export function refundPage(lang: Lang = "ar"): string {
   return layout(
     "سياسة الاسترجاع والإلغاء",
     `<h1>سياسة الاسترجاع والإلغاء</h1>
-<p>شيّك اشتراك رقمي (خدمة برمجية) يُدفع مقدمًا لمدة محددة: شهر (30 يومًا) أو 3 أشهر (90 يومًا) أو سنة (365 يومًا) حسب الباقة. الأسعار بالريال السعودي شاملة الضريبة وتظهر قبل الدفع.</p>
+<p>شيّك اشتراك رقمي (خدمة برمجية) يُدفع مقدمًا لمدة شهر (30 يومًا). الأسعار بالريال السعودي شاملة الضريبة وتظهر قبل الدفع.</p>
 <h2>التفعيل</h2><p>تتفعّل الباقة تلقائيًا بعد نجاح الدفع بالبطاقة، وإذا كان عندك اشتراك فعّال تُضاف المدة الجديدة بعد تاريخ انتهائه. لا يوجد تجديد تلقائي ولا خصم متكرر من بطاقتك.</p>
 <h2>الاسترجاع</h2><ul>
 <li>يحق لك طلب استرجاع كامل المبلغ خلال <b>3 أيام</b> من الدفع إذا لم تُرسل الخدمة أي رد تلقائي من حسابك بعد الدفع.</li>
@@ -220,7 +220,7 @@ export function refundPage(lang: Lang = "ar"): string {
 <li>توقّف الخدمة بسبب مخالفة سياسات Meta أو شروط الاستخدام لا يستحق استرجاعًا.</li></ul>
 <h2>طريقة الطلب</h2><p>اطلب الاسترجاع من صفحة «الدعم» داخل حسابك، أو بالإيميل على <a href="mailto:${OPERATOR.email}">${OPERATOR.email}</a>، مع رقم العملية. يُعاد المبلغ إلى نفس البطاقة المستخدمة في الدفع، ويصل عادةً خلال 5 إلى 14 يوم عمل حسب البنك المُصدِر.</p>
 <h2>الإلغاء</h2><p>لأن الاشتراك لا يتجدد تلقائيًا، يكفي ألا تجدّد. يمكنك أيضًا حذف حسابك وبياناتك في أي وقت من الإعدادات.</p>
-<p class="muted">طرق الدفع الأخرى (التحويل البنكي أو الصرافة) تخضع لنفس المدد، ويُعاد المبلغ بنفس طريقة الدفع.</p>`,
+<p class="muted">الدفع بالتحويل البنكي يخضع لنفس المدد، ويُعاد المبلغ بتحويل بنكي.</p>`,
     "",
     lang,
     "/refund",

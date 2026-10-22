@@ -48,7 +48,7 @@ jobs:
           echo "::add-mask::$PASS"
           keytool -genkeypair -keystore "$D/hsn-autoreply-release.jks" -storetype PKCS12 -alias hsn-autoreply \
             -keyalg RSA -keysize 4096 -validity 10000 -storepass "$PASS" -keypass "$PASS" \
-            -dname "CN=HSN AutoReply, O=HSN, C=YE" >/dev/null 2>&1
+            -dname "CN=Shayyek, O=Shayyek, C=SA" >/dev/null 2>&1
           printf '%s' "$PASS" > "$D/keystore-password.txt"
           keytool -list -v -keystore "$D/hsn-autoreply-release.jks" -storepass "$PASS" | grep -m1 "SHA256:" | tee "$D/certificate-sha256.txt"
           base64 -w0 "$D/hsn-autoreply-release.jks" | gh secret set ANDROID_KEYSTORE_BASE64 --repo "$GITHUB_REPOSITORY"

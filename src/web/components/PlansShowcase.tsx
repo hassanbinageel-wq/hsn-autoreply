@@ -9,7 +9,7 @@ export interface Catalog {
   rates: ExchangeRates;
   featured?: { plan_id: string | null; label: string };
   feature_order?: string[];
-  payment_methods: Array<{ id: number; name: string; kind: "bank" | "exchange" | "wallet"; logo: string | null; accounts: Array<{ id: number; holder: string; number: string; currency: string | null; note: string | null }> }>;
+  payment_methods: Array<{ id: number; name: string; kind: "bank" | "wallet"; logo: string | null; accounts: Array<{ id: number; holder: string; number: string; currency: string | null; note: string | null }> }>;
   sales_contact: string | null;
   card_button_label?: string;
   /** Note next to every price (e.g. «شامل الضريبة المضافة 15%»); empty = none. */
@@ -114,7 +114,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
               <div className="mt-3 border-y border-[var(--border)] py-3">
                 {price !== null ? (
                   <div className="flex flex-wrap items-baseline gap-1.5">
-                    <span className={`font-display font-extrabold text-violet-600 dark:text-violet-300 ${cur.startsWith("YER") ? "text-2xl" : "text-3xl"}`}>{formatAmount(price, cur)}</span>
+                    <span className={`font-display font-extrabold text-violet-600 dark:text-violet-300 text-3xl`}>{formatAmount(price, cur)}</span>
                     <span className="muted text-sm">/ {PRICE_PERIODS[p.price_period] ?? PRICE_PERIODS.month}</span>
                     {catalog.price_note && <span className="muted w-full text-[11px]">({catalog.price_note})</span>}
                     {old !== null && price !== null && old > price && (

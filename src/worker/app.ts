@@ -213,6 +213,9 @@ async function appDownloadUrl(c: C): Promise<string> {
 
 const DEFAULT_PRICE_NOTE = "شامل الضريبة المضافة 15%";
 
+/** The stored rates, limited to the offered currencies (old settings may hold others). */
+const knownRates = (r: ExchangeRates): ExchangeRates => ({ USD: 1, SAR: Number(r?.SAR) > 0 ? Number(r.SAR) : DEFAULT_RATES.SAR });
+
 /** What a buyer needs to see: active plans (with structured prices), exchange rates, payment accounts and the contact link. */
 async function publicCatalog(c: C) {
   const [plans, rates, payment_methods, contact, featured, order, cardLabel, priceNote] = await Promise.all([
@@ -240,8 +243,8 @@ async function publicCatalog(c: C) {
     card_button_label: cardLabel || "اشترك الآن",
     // Small note next to every price (owner-set; empty hides it).
     price_note: priceNote ?? DEFAULT_PRICE_NOTE,
-    rates: { ...DEFAULT_RATES, ...rates, USD: 1 },
-    // A bank / office with no account yet would show buyers an empty box.
+    rates: knownRates(rates),
+    // A bank / wallet with no account yet would show buyers an empty box.
     payment_methods: payment_methods.filter((p) => p.accounts.length > 0),
     sales_contact: contact || null,
     // Which plan carries the highlight badge (default: the "pro" plan, "الأكثر طلبًا").
@@ -1706,7 +1709,7 @@ export function createApp() {
     return c.json({ ok: true });
   });
 
-  // ---- Payment methods (banks / exchange offices and their accounts), shown to buyers
+  // ---- Payment methods (banks / wallets and their accounts), shown to buyers
   owner.get("/payment-methods", async (c) => c.json(await listPaymentMethods(c.env.DB)));
   owner.post("/payment-providers", async (c) => {
     const p = await parseBody(c, paymentProviderSchema);
@@ -1766,7 +1769,7 @@ export function createApp() {
       card_button_label: await getSetting<string>(c.env.DB, OWNER_TENANT, "card_button_label", ""),
       silence_alert: await getSetting<boolean>(c.env.DB, OWNER_TENANT, "silence_alert", true),
       price_note: (await getSetting<string | null>(c.env.DB, OWNER_TENANT, "price_note", null)) ?? DEFAULT_PRICE_NOTE,
-      exchange_rates: { ...DEFAULT_RATES, ...(await getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES)), USD: 1 },
+      exchange_rates: knownRates(await getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES)),
     }),
   );
   owner.put("/settings", async (c) => {

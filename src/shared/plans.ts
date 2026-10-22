@@ -147,25 +147,23 @@ export function normalizeCode(raw: string): string {
   return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^HSN/, "");
 }
 
-/** The four currencies offered (symbol as shown to customers). YER_SAN = the Sana'a rate of the Yemeni rial. */
+/** Prices are in Saudi riyals (USD stays only so an old plan priced in dollars still shows). */
 export const CURRENCIES: Array<{ code: string; label: string; name: string }> = [
-  { code: "USD", label: "$", name: "دولار" },
   { code: "SAR", label: "ر.س", name: "ريال سعودي" },
-  { code: "YER", label: "ر.ي", name: "ريال يمني" },
-  { code: "YER_SAN", label: "ر.ي (صنعاء)", name: "ريال يمني / صنعاء" },
+  { code: "USD", label: "$", name: "دولار" },
 ];
 /** How many units of each currency equal 1 USD (set by the owner). */
 export type ExchangeRates = Record<string, number>;
-export const DEFAULT_RATES: ExchangeRates = { USD: 1, SAR: 3.75, YER: 1600, YER_SAN: 535 };
+export const DEFAULT_RATES: ExchangeRates = { USD: 1, SAR: 3.75 };
 
-/** Converts an amount between the four currencies using the owner's rates (null if a rate is missing). */
+/** Converts an amount between the currencies using the owner's rates (null if a rate is missing). */
 export function convertPrice(amount: number, from: string, to: string, rates: ExchangeRates): number | null {
   if (from === to) return amount;
   const rf = from === "USD" ? 1 : rates[from];
   const rt = to === "USD" ? 1 : rates[to];
   if (!rf || !rt) return null;
   const v = (amount / rf) * rt;
-  return to.startsWith("YER") ? Math.round(v) : Math.round(v * 100) / 100;
+  return Math.round(v * 100) / 100;
 }
 export const PRICE_PERIODS: Record<string, string> = { month: "شهريًا", quarter: "كل 3 أشهر", year: "سنويًا", once: "مرة واحدة" };
 

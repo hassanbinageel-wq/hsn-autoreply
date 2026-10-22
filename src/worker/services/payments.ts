@@ -10,12 +10,12 @@ export interface PaymentAccount {
 export interface PaymentProvider {
   id: number;
   name: string;
-  kind: "bank" | "exchange" | "wallet";
+  kind: "bank" | "wallet";
   logo: string | null;
   accounts: PaymentAccount[];
 }
 
-/** Banks / exchange offices with their accounts, in the owner's order (platform-wide, shown to everyone). */
+/** Banks / wallets with their accounts, in the owner's order (platform-wide, shown to everyone). */
 export async function listPaymentMethods(db: D1Database): Promise<PaymentProvider[]> {
   const [providers, accounts] = await Promise.all([
     all<Omit<PaymentProvider, "accounts">>(db, "SELECT id, name, kind, logo FROM payment_providers ORDER BY sort, id"),
