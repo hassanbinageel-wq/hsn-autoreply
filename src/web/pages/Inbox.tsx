@@ -1,3 +1,4 @@
+import { DmMenuEditor } from "../components/DmMenuEditor";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Alert, Badge, PageHeader, Spinner, fmtTime, toast } from "../components/ui";
@@ -156,6 +157,29 @@ function Thread({ id, onSent, onBack }: { id: number; onSent: () => void; onBack
 }
 
 export function InboxPage() {
+  const [view, setView] = useState<"chats" | "menu">(() => (location.hash.includes("view=menu") ? "menu" : "chats"));
+  if (view === "menu")
+    return (
+      <div className="space-y-4">
+        <PageHeader title="الرسائل" subtitle="القائمة التلقائية: رسالة بخيارات لكل من يراسلك، وكل خيار يرد برد جاهز." />
+        <InboxTabs view={view} setView={setView} />
+        <DmMenuEditor />
+      </div>
+    );
+  return <Chats tabs={<InboxTabs view={view} setView={setView} />} />;
+}
+
+function InboxTabs({ view, setView }: { view: "chats" | "menu"; setView: (v: "chats" | "menu") => void }) {
+  return (
+    <div className="flex gap-1.5">
+      {([["chats", "المحادثات"], ["menu", "القائمة التلقائية"]] as const).map(([k, l]) => (
+        <button key={k} type="button" onClick={() => setView(k)} className={`rounded-xl border px-3 py-1.5 text-sm font-bold ${view === k ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300" : "border-[var(--border)] muted"}`}>{l}</button>
+      ))}
+    </div>
+  );
+}
+
+function Chats({ tabs }: { tabs: React.ReactNode }) {
   const [list, setList] = useState<any[] | null>(null);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<number | null>(null);
@@ -191,6 +215,7 @@ export function InboxPage() {
     <div className="space-y-4">
       <div className={open !== null ? "hidden lg:block" : ""}>
         <PageHeader title="الرسائل" subtitle="المحادثات التي بدأتها الأتمتة أو وصلتك عبر الخاص. الرد اليدوي متاح خلال 24 ساعة من آخر رسالة من الشخص." />
+        <div className="mt-3">{tabs}</div>
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
         <div className={`card min-w-0 p-2 sm:p-3 ${open !== null ? "hidden lg:block" : ""}`}>

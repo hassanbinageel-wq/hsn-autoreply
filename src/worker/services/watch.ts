@@ -5,7 +5,8 @@ import { notify } from "./notify";
 
 /**
  * Every 10 minutes: problems that hit the whole service (not one customer) — a wave of failed sends, events that
- * fail to process, Meta going silent, many accounts losing their connection at once, scheduled posts failing.
+ * fail to process, many accounts losing their connection at once, scheduled posts failing. (A quiet spell is not
+ * one of them: see `checkSilence`.)
  * The owner is told once when it starts (again every 3 hours while it lasts), and once when it is back to normal.
  */
 
@@ -46,18 +47,6 @@ export async function systemIssues(db: D1Database, now = Date.now(), prevKeys: s
   const ev = await first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM webhook_events WHERE is_demo = 0 AND status = 'failed' AND received_at >= ?", since);
   if ((ev?.n ?? 0) >= 5) issues.push({ key: "events", text: `⚙️ ${ev!.n} تعليق/رسالة فشلت معالجتها آخر 30 دقيقة (خلل في الخادم؟)` });
 
-  // 3) Meta went silent: nothing for 3 hours although the day before was busy
-  const quiet = await first<{ recent: number; before: number }>(
-    db,
-    `SELECT COUNT(CASE WHEN received_at >= ? THEN 1 END) AS recent, COUNT(CASE WHEN received_at < ? THEN 1 END) AS before
-       FROM webhook_events WHERE is_demo = 0 AND event_type != 'echo' AND received_at >= ?`,
-    now - 3 * H,
-    now - 3 * H,
-    now - 27 * H,
-  );
-  // (once reported, it stays reported until something arrives again)
-  if (quiet && quiet.recent === 0 && (quiet.before >= 24 || prevKeys.includes("silence"))) issues.push({ key: "silence", text: "🔇 ما وصل أي تعليق أو رسالة من Meta من 3 ساعات، مع إن اليوم اللي قبله كان فيه نشاط — ممكن انقطاع عند Meta أو مشكلة في الـ webhook." });
-
   // 4) many accounts lost their connection at once
   const reauth = await first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM instagram_accounts WHERE is_demo = 0 AND status = 'needs_reauth' AND updated_at >= ?", now - 2 * H);
   if ((reauth?.n ?? 0) >= 3) issues.push({ key: "reauth", text: `🔌 ${reauth!.n} حسابات إنستقرام انقطع ربطها آخر ساعتين (تغيير من Meta أو مشكلة في التطبيق؟)` });
@@ -69,10 +58,41 @@ export async function systemIssues(db: D1Database, now = Date.now(), prevKeys: s
   return issues;
 }
 
+/**
+ * A quiet spell is usually just quiet (nights, weekends), so it is never a «service problem». The owner gets one calm
+ * note (at most once a day) only when there are running campaigns, nothing arrived for 6 hours, and the same hours
+ * were busy on most of the last 7 days. The owner can turn it off ("silence_alert" = false).
+ */
+export async function checkSilence(env: Env, now = Date.now()): Promise<boolean> {
+  if (!(await getSetting<boolean>(env.DB, OWNER_TENANT, "silence_alert", true))) return false;
+  const WINDOW = 6 * H;
+  const DAY = 24 * H;
+  const recent = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM webhook_events WHERE is_demo = 0 AND event_type != 'echo' AND received_at >= ?", now - WINDOW);
+  if ((recent?.n ?? 0) > 0) return false;
+  const running = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM campaigns WHERE status = 'active' AND deleted_at IS NULL");
+  if (!running?.n) return false;
+  let busyDays = 0;
+  for (let d = 1; d <= 7; d++) {
+    const r = await first<{ n: number }>(
+      env.DB,
+      "SELECT COUNT(*) AS n FROM webhook_events WHERE is_demo = 0 AND event_type != 'echo' AND received_at >= ? AND received_at < ?",
+      now - d * DAY - WINDOW, now - d * DAY,
+    );
+    if ((r?.n ?? 0) >= 3) busyDays++;
+  }
+  if (busyDays < 4) return false;
+  const last = await getSetting<number>(env.DB, OWNER_TENANT, "silence_notice_at", 0);
+  if (now - last < DAY) return false;
+  await setSetting(env.DB, OWNER_TENANT, "silence_notice_at", now);
+  await notify(env, OWNER_TENANT, "usage", "ℹ️ هدوء غير معتاد: ما وصل أي تعليق أو رسالة من 6 ساعات، مع إن هذا الوقت عادةً فيه نشاط.\nغالبًا هدوء طبيعي — وإذا استمر، افتح «صحة العملاء» أو «التشخيص». (تقدر توقف هذا التنبيه من «صحة العملاء»)");
+  return true;
+}
+
 type WatchState = { keys: string[]; since: number | null; last_alert: number | null };
 
 export async function runSystemWatch(env: Env, now = Date.now()): Promise<"alert" | "recovered" | null> {
   if (Math.floor(now / MIN) % 10 !== 5) return null;
+  await checkSilence(env, now).catch(() => false);
   const prev = await getSetting<WatchState>(env.DB, OWNER_TENANT, "system_watch", { keys: [], since: null, last_alert: null });
   const issues = await systemIssues(env.DB, now, prev.keys);
   const keys = issues.map((i) => i.key).sort();

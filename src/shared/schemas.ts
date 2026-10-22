@@ -180,7 +180,27 @@ export const planUpdateSchema = z.object({
     store: z.boolean().default(false),
     utm: z.boolean().default(false),
     staff: z.number().int().min(0).max(10).nullable().default(0),
+    dm_menu: z.boolean().default(false),
   }),
+});
+
+type MenuNodeIn = { key: string; label: string; text: string; link?: { title: string; url: string } | null; style: "buttons" | "quick"; children: MenuNodeIn[] };
+const menuNodeSchema: z.ZodType<MenuNodeIn> = z.lazy(() =>
+  z.object({
+    key: z.string().regex(/^[A-Za-z0-9]{4,16}$/),
+    label: z.string().trim().max(20),
+    text: z.string().trim().max(640),
+    link: z.object({ title: z.string().trim().max(20), url: z.string().trim().max(500) }).nullable().optional(),
+    style: z.enum(["buttons", "quick"]),
+    children: z.array(menuNodeSchema).max(13),
+  }),
+);
+/** The customer's DM menu (deeper checks: menuProblem). */
+export const dmMenuSchema = z.object({
+  enabled: z.boolean(),
+  trigger: z.enum(["first", "daily", "every"]),
+  pause_hours: z.number().int().min(0).max(168),
+  root: menuNodeSchema,
 });
 
 export const settingsSchema = z.object({

@@ -24,6 +24,8 @@ export interface PlanLimits {
   utm?: boolean;
   /** Staff logins the customer may add: 0 = none, null = up to the service maximum (10). */
   staff?: number | null;
+  /** «القائمة التلقائية» in direct messages (options with a reply each). */
+  dm_menu?: boolean;
 }
 
 /** The owner's own workspace: everything, no expiry. */
@@ -47,6 +49,7 @@ export const OWNER_LIMITS: PlanLimits = {
   store: true,
   utm: true,
   staff: null,
+  dm_menu: true,
 };
 
 export const FEATURE_LABELS: Record<string, string> = {
@@ -64,6 +67,7 @@ export const FEATURE_LABELS: Record<string, string> = {
   scheduling: "جدولة نشر المنشورات والريلز والستوري",
   store: "ربط المتجر (سلة) وتحليل الطلبات والمبيعات",
   utm: "روابط Google Analytics (UTM) لكل حملة",
+  dm_menu: "القائمة التلقائية في الرسائل",
 };
 
 /** The four limit rows shown before the on/off features, by key. */
@@ -86,6 +90,7 @@ export const DEFAULT_FEATURE_ORDER: string[] = [
   "link_tracking",
   "campaign_stats",
   "inbox_manual",
+  "dm_menu",
   "public_reply",
   "staff",
   "telegram",
@@ -122,6 +127,7 @@ export const FEATURE_HINTS: Record<string, string> = {
   campaign_stats: "لكل حملة: عدد التعليقات والأشخاص، من استلم الرسالة، من ضغط الرابط، من تابع، وأداء كل منشور.",
   undo: "رجوع عن آخر 10 عمليات (حذف حملة، تعديل، إيقاف...) من صفحة السجل.",
   scheduling: "ترفع الصورة أو الفيديو وتحدد الوقت، والنظام ينشره على حسابك تلقائيًا عبر واجهة Meta الرسمية، ويقدر يشغّل حملة على المنشور أول ما يُنشر.",
+  dm_menu: "أي شخص يراسلك توصله قائمة أزرار (مثل الأسعار، مناطق التوصيل، طرق الدفع)، وكل زر يرسل له رد جاهز تكتبه أنت — وتقدر تسوي قوائم فرعية. كل رسالة يرسلها النظام تنحسب من رسائل الباقة.",
   store: "تربط متجرك في سلة وتشوف كم طلب ومبيعات جابت كل حملة (بكود الخصم) ولكل منتج: تعليقات ← ضغطات ← طلبات.",
 };
 

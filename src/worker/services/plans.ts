@@ -49,6 +49,7 @@ const NONE: PlanLimits = {
   store: false,
   utm: false,
   staff: 0,
+  dm_menu: false,
 };
 
 export function parseLimits(raw: string): PlanLimits {

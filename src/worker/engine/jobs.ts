@@ -1,6 +1,6 @@
 import { all, first, run } from "../lib/db";
 
-export type JobKind = "process_event" | "send_message" | "public_reply" | "follow_check";
+export type JobKind = "process_event" | "send_message" | "public_reply" | "follow_check" | "menu_send";
 
 /** follow_check purposes: a check the person asked for, and the one quiet automatic re-check that may follow it. */
 export const VERIFY_CHECK = "verify";
@@ -17,7 +17,7 @@ export const MAX_REMINDER_MINUTES = 23 * 60;
 export const PROBE_CHECK = "probe";
 
 /** Jobs whose Meta call has side effects: an interrupted call means an uncertain outcome. */
-export const SIDE_EFFECT_KINDS: readonly JobKind[] = ["send_message", "public_reply"];
+export const SIDE_EFFECT_KINDS: readonly JobKind[] = ["send_message", "public_reply", "menu_send"];
 
 export interface JobRow {
   id: number;
@@ -99,7 +99,7 @@ export async function recoverStaleLeases(db: D1Database, now: number): Promise<n
     `UPDATE action_jobs SET status = 'uncertain', lease_owner = NULL, lease_expires_at = NULL,
         last_error = 'lease expired after the Meta request started; outcome unknown', updated_at = ?
      WHERE status = 'processing' AND lease_expires_at < ? AND external_call_started_at IS NOT NULL
-       AND kind IN ('send_message','public_reply')`,
+       AND kind IN ('send_message','public_reply','menu_send')`,
     now,
     now,
   );

@@ -21,6 +21,8 @@ import {
   type ParticipantRow,
 } from "./context";
 import { buttonPayload, processEvent, type EventRow } from "./events";
+import { loadMenu, menuMessage } from "./menu";
+import { findNode } from "../../shared/menu";
 import {
   AUTO_RECHECK,
   AUTO_RECHECK_DELAY_MS,
@@ -35,6 +37,7 @@ import {
   scheduleRetry,
   VERIFY_CHECK,
   PROBE_CHECK,
+  SIDE_EFFECT_KINDS,
   type JobRow,
 } from "./jobs";
 
@@ -205,6 +208,8 @@ export async function executeJob(ctx: EngineContext, job: JobRow, owner: string)
       return execSendMessage(ctx, job, owner);
     case "public_reply":
       return execPublicReply(ctx, job, owner);
+    case "menu_send":
+      return execMenuSend(ctx, job, owner);
   }
   await finishJob(ctx.db, job, owner, "failed", ctx.now(), { error: "unknown job kind" });
   return { outcome: "failed" };
@@ -647,6 +652,68 @@ async function execPublicReply(ctx: EngineContext, job: JobRow, owner: string): 
   return { outcome: status, error: e };
 }
 
+/** DM menu: the menu message, or the reply of a tapped option (with its own options). */
+async function execMenuSend(ctx: EngineContext, job: JobRow, owner: string): Promise<ExecResult> {
+  const p = JSON.parse(job.payload || "{}") as { participant_id?: number; node?: string; root?: boolean };
+  const cancel = async (why: string): Promise<ExecResult> => {
+    await finishJob(ctx.db, job, owner, "cancelled", ctx.now(), { error: why });
+    return { outcome: "cancelled" };
+  };
+  const account = job.account_id ? await loadAccount(ctx.db, job.account_id) : null;
+  const participant = p.participant_id ? await loadParticipant(ctx.db, p.participant_id) : null;
+  if (!account || !participant || participant.account_id !== account.id) return cancel("missing account or person");
+  if (account.status !== "active" || account.tenant_status !== "active") return cancel("account not active");
+  const menu = await loadMenu(ctx.db, account.tenant_id);
+  const node = menu?.enabled && p.node ? findNode(menu.root, p.node) : null;
+  if (!node) return cancel("menu off or option removed");
+  let now = ctx.now();
+  if (!windowOpen(participant, now)) {
+    await finishJob(ctx.db, job, owner, "failed", now, { error: "messaging window closed (24h since last user message)" });
+    return { outcome: "failed" };
+  }
+  const token = await ctx.getAccessToken(account);
+  if (!token) {
+    await finishJob(ctx.db, job, owner, "failed", now, { error: "no access token" });
+    return { outcome: "failed" };
+  }
+  if (!(await markExternalStart(ctx.db, job, owner, now))) return { outcome: "lease_lost" };
+  const msg = menuMessage(node);
+  const started = now;
+  const r = await ctx.meta(account.is_demo === 1).sendMessage(token, account.ig_user_id, participant.igsid, msg);
+  now = ctx.now();
+  if (r.ok) {
+    await recordAttempt(ctx.db, job, started, now, "accepted", { httpStatus: r.httpStatus });
+    if (!account.is_demo) await countMessage(ctx.db, account.tenant_id, now);
+    if (p.root) await run(ctx.db, "UPDATE participants SET menu_sent_at = ? WHERE id = ?", now, participant.id);
+    await finishJob(ctx.db, job, owner, "accepted", now, { result: { message_id: r.data.message_id, node: node.key } });
+    await recordMessage(ctx.db, {
+      accountId: account.id,
+      participantId: participant.id,
+      direction: "out",
+      source: "bot",
+      kind: "menu",
+      text: [node.text, node.link ? `[${node.link.title}]` : "", ...node.children.map((c) => `• ${c.label}`)].filter(Boolean).join("\n"),
+      mid: r.data.message_id ?? null,
+      isDemo: account.is_demo === 1,
+      at: now,
+    });
+    return { outcome: "accepted" };
+  }
+  const e = r.error;
+  await recordAttempt(ctx.db, job, started, now, e.kind, { httpStatus: e.httpStatus, errorCode: e.code !== undefined ? String(e.code) : e.kind, errorMessage: e.message, retryAfterMs: e.retryAfterMs });
+  if (e.kind === "uncertain") {
+    await finishJob(ctx.db, job, owner, "uncertain", now, { error: e.message });
+    return { outcome: "uncertain", error: e };
+  }
+  if (e.kind === "rate_limited" || e.kind === "retryable") {
+    const st = await scheduleRetry(ctx.db, job, owner, now, e.message, e.retryAfterMs, { rateLimited: e.kind === "rate_limited" });
+    return { outcome: st, error: e };
+  }
+  if (e.kind === "auth") await ctx.onAuthError?.(account, e.message);
+  await finishJob(ctx.db, job, owner, "failed", now, { error: `${e.kind}: ${e.message}` });
+  return { outcome: "failed", error: e };
+}
+
 export interface RunQueueOptions {
   owner?: string;
   maxJobs?: number;
@@ -695,7 +762,7 @@ export async function runQueue(ctx: EngineContext, o: RunQueueOptions = {}): Pro
       const msg = String((err as Error)?.message ?? err).slice(0, 300);
       const fresh = await first<JobRow>(ctx.db, "SELECT * FROM action_jobs WHERE id = ?", job.id);
       if (fresh && fresh.status === "processing" && fresh.lease_owner === owner) {
-        if (fresh.external_call_started_at && (fresh.kind === "send_message" || fresh.kind === "public_reply")) {
+        if (fresh.external_call_started_at && SIDE_EFFECT_KINDS.includes(fresh.kind)) {
           await finishJob(ctx.db, fresh, owner, "uncertain", ctx.now(), { error: `internal error after send: ${msg}` });
         } else {
           await scheduleRetry(ctx.db, fresh, owner, ctx.now(), `internal error: ${msg}`);

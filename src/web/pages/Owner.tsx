@@ -322,9 +322,9 @@ function SetPlan({ t, plans, onClose, onDone }: { t: any; plans: any[]; onClose:
           </div>
         )}
         <Field label="أو حدّد تاريخ انتهاء بالضبط">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="space-y-2">
             <DateTimeField dateOnly clearable={false} label="تاريخ انتهاء الاشتراك" value={date} onChange={setDate} />
-            <button className="btn btn-ghost shrink-0" disabled={busy || !planId || !date} onClick={() => save({ plan_id: planId, expires_at: new Date(`${date}T23:59:59`).getTime() }, "تم تحديد تاريخ الانتهاء")}>حفظ التاريخ</button>
+            <button className="btn btn-ghost w-full" disabled={busy || !planId || !date} onClick={() => save({ plan_id: planId, expires_at: new Date(`${date}T23:59:59`).getTime() }, "تم تحديد تاريخ الانتهاء")}>حفظ التاريخ</button>
           </div>
         </Field>
         {active && <button className="btn btn-ghost w-full text-red-600" disabled={busy} onClick={async () => (await askConfirm({ title: "إنهاء اشتراك العميل الآن؟", message: "تتوقف ردوده التلقائية فورًا.", confirmLabel: "إنهاء الاشتراك", danger: true })) && save({ plan_id: t.plan_id, expires_at: Date.now() }, "تم إنهاء الاشتراك")}>إنهاء الاشتراك الآن</button>}
@@ -1324,6 +1324,22 @@ const RISK: Record<string, { label: string; cls: string }> = {
 };
 
 /** Customer health: who may be about to leave, why, and a message button. */
+/** The «unusual quiet» note (no comments or messages for hours) can be turned off. */
+function SilenceToggle() {
+  const { data, reload } = useAsync(() => api<{ silence_alert: boolean }>("/api/owner/settings"), []);
+  if (!data) return null;
+  return (
+    <div className="card px-4 py-1">
+      <Toggle
+        checked={data.silence_alert}
+        onChange={async (v) => { try { await api("/api/owner/settings", { method: "PUT", body: { silence_alert: v } }); reload(); } catch (e: any) { toast(e.message, "bad"); } }}
+        label="تنبيه «هدوء غير معتاد»"
+        description="ملاحظة هادئة (مرة باليوم كحد أقصى) إذا ما وصل أي تعليق أو رسالة 6 ساعات في وقت عادةً فيه نشاط. ما تعتبر مشكلة عامة، والتنبيهات الحقيقية تبقى شغّالة."
+      />
+    </div>
+  );
+}
+
 function HealthTab() {
   const { data, reload } = useAsync(() => api<any>("/api/owner/health"), []);
   const [messageFor, setMessageFor] = useState<any | null>(null);
@@ -1334,6 +1350,7 @@ function HealthTab() {
   const count = (r: string) => data.customers.filter((c: any) => c.risk === r).length;
   return (
     <div className="space-y-4">
+      <SilenceToggle />
       <div className="grid grid-cols-3 gap-2">
         {(["high", "medium", "good"] as const).map((r) => (
           <button key={r} type="button" onClick={() => setFilter(filter === r ? "all" : r)} className={`card p-3 text-right ${filter === r ? "ring-2 ring-violet-500" : ""}`}>

@@ -370,9 +370,35 @@ export class HttpMetaClient implements MetaClient {
   sendMessage(token: string, igUserId: string, recipientId: string, msg: OutgoingMessage) {
     const url = `${this.graphBase}/${encodeURIComponent(igUserId)}/messages`;
     const plain = () => this.request<{ message_id?: string }>(url, this.authJson(token, { recipient: { id: recipientId }, message: this.messageBody(msg) }), true);
+    if (msg.menu) return this.sendMenu(token, url, { id: recipientId }, msg);
     if (msg.linkButton) return this.sendLinkButton(token, url, { id: recipientId }, msg.linkButton, plain, msg.accountButton);
     if (msg.accountButton) return this.sendAccountButtons(token, url, { id: recipientId }, msg, plain);
     return plain();
+  }
+
+  /**
+   * DM menu message. «buttons»: one button template (link button first, then postback options; at most 3 buttons,
+   * text ≤ 640). «quick»: text with up to 13 quick-reply chips (the link, if any, goes in the text). A template that
+   * Meta rejects definitively is re-sent once as text with chips — never after an uncertain outcome.
+   */
+  private async sendMenu(token: string, url: string, recipient: Record<string, string>, msg: OutgoingMessage) {
+    const m = msg.menu!;
+    const chips = m.options.slice(0, 13).map((o) => ({ content_type: "text", title: o.title.slice(0, 20), payload: o.payload }));
+    const withLink = m.link ? `${msg.text}\n${m.link.url}` : msg.text;
+    const asText = () =>
+      this.request<{ message_id?: string }>(url, this.authJson(token, { recipient, message: { text: withLink.slice(0, 1000), ...(chips.length ? { quick_replies: chips } : {}) } }), true);
+    if (m.style === "quick" || (!m.options.length && !m.link)) return asText();
+    const buttons = [
+      ...(m.link ? [{ type: "web_url", url: m.link.url, title: m.link.title.slice(0, 20) }] : []),
+      ...m.options.map((o) => ({ type: "postback", title: o.title.slice(0, 20), payload: o.payload })),
+    ].slice(0, 3);
+    const r = await this.request<{ message_id?: string }>(
+      url,
+      this.authJson(token, { recipient, message: { attachment: { type: "template", payload: { template_type: "button", text: msg.text.slice(0, 640), buttons } } } }),
+      true,
+    );
+    if (!r.ok && (r.error.kind === "permanent" || r.error.kind === "permission")) return asText();
+    return r;
   }
 
   /**

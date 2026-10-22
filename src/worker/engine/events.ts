@@ -19,6 +19,7 @@ import { PROBE_CHECK, enqueue, VERIFY_CHECK } from "./jobs";
 import { recordMessage } from "../services/inbox";
 import { getEntitlement, monthlyMessages } from "../services/plans";
 import { cacheMediaStmt } from "../services/media";
+import { isMenuPayload, menuForMessage, menuTap } from "./menu";
 
 export interface EventRow {
   id: number;
@@ -105,6 +106,7 @@ export async function processEvent(ctx: EngineContext, row: EventRow, opts: { fo
     case "quick_reply":
     case "postback":
       if (ev.buttonPayload && BUTTON_RE.test(ev.buttonPayload)) return routeButton(ctx, row, ev, participant);
+      if (isMenuPayload(ev.buttonPayload)) return menuTap(ctx, row, ev.buttonPayload!, account, participant);
       return routeControl(ctx, row, ev, participant, account);
     case "message":
       return routeControl(ctx, row, ev, participant, account);
@@ -380,7 +382,8 @@ async function routeButton(ctx: EngineContext, row: EventRow, ev: NormalizedEven
 
 async function routeControl(ctx: EngineContext, row: EventRow, ev: NormalizedEvent, participant: ParticipantRow, account: AccountRow): Promise<ProcessOutcome> {
   const flows = await openFlows(ctx.db, participant.id);
-  if (!flows.length) return { status: "ignored", reason: "plain_message_no_trigger" };
+  // Not inside a campaign conversation: the customer's DM menu (if they set one up).
+  if (!flows.length) return ev.kind === "message" ? menuForMessage(ctx, row, account, participant) : { status: "ignored", reason: "plain_message_no_trigger" };
   const text = ev.text ?? "";
   const awaitingStart = flows.find((f) => f.state === "awaiting_user_interaction");
   const awaitingFollow = flows.find((f) => f.state === "awaiting_follow");

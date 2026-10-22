@@ -46,6 +46,12 @@ export interface OutgoingMessage {
    * template (Meta allows up to 3 buttons: web_url + postback), so the person can open the account in one tap.
    */
   accountButton?: { title: string; url: string };
+  /**
+   * DM menu options: "buttons" = a button template (≤ 3 buttons, an optional web_url link button first, then postback
+   * buttons); "quick" = quick-reply chips (≤ 13). Falls back once to plain text with quick replies on a definitive
+   * rejection of the template.
+   */
+  menu?: { style: "buttons" | "quick"; options: QuickReply[]; link?: { title: string; url: string } | null };
 }
 
 export interface MeProfile {

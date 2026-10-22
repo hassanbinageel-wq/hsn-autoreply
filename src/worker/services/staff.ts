@@ -15,7 +15,7 @@ const RULES: Rule[] = [
   { re: /^\/app-notifications(\/.*)?$/, perms: "any" },
   { re: /^\/(dashboard|account|settings|subscription|usage)$/, perms: "any", read: true },
 
-  { re: /^\/(inbox|inbox-labels|saved-replies)(\/.*)?$/, perms: ["inbox"] },
+  { re: /^\/(inbox|inbox-labels|saved-replies|dm-menu)(\/.*)?$/, perms: ["inbox"] },
   { re: /^\/(campaigns|templates)(\/.*)?$/, perms: ["campaigns"] },
   { re: /^\/campaigns(\/.*)?$/, perms: ["analytics"], read: true },
   { re: /^\/simulate$/, perms: ["campaigns"] },

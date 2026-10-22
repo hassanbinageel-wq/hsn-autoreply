@@ -1,0 +1,169 @@
+import { exports } from "cloudflare:workers";
+import { beforeEach, describe, expect, it } from "vitest";
+import { DB, MockMeta, deliver, messagePayload, resetDb, seedAccount } from "./helpers";
+import { HttpMetaClient } from "../src/worker/meta/client";
+import { menuProblem, type DmMenu } from "../src/shared/menu";
+
+const BASE = "https://hsn.example.workers.dev";
+const SELF = (exports as any).default as { fetch: (r: Request) => Promise<Response> };
+type H = Record<string, string>;
+async function call(path: string, h: H = {}, method = "GET", body?: unknown) {
+  const r = await SELF.fetch(new Request(BASE + path, { method, headers: { "Content-Type": "application/json", ...h }, body: body === undefined ? undefined : JSON.stringify(body) }));
+  return { status: r.status, body: (await r.json().catch(() => null)) as any };
+}
+async function login(username: string, password: string): Promise<H> {
+  const r = await call("/api/auth/login", {}, "POST", { username, password, client: "app" });
+  if (!r.body?.token) throw new Error(`login failed: ${JSON.stringify(r.body)}`);
+  return { Authorization: `Bearer ${r.body.token}` };
+}
+
+const MENU: DmMenu = {
+  enabled: true,
+  trigger: "daily",
+  pause_hours: 12,
+  root: {
+    key: "root0001",
+    label: "",
+    text: "أهلًا 👋 اختر:",
+    link: null,
+    style: "buttons",
+    children: [
+      { key: "price001", label: "التسعيرة العادية", text: "السعر 210 وتدفعي 110", link: { title: "رابط المنحة", url: "https://example.com/p" }, style: "buttons", children: [] },
+      { key: "north001", label: "سعر المناطق الشمالية", text: "اختر المنطقة:", link: null, style: "quick", children: [
+        { key: "tabuk001", label: "تبوك", text: "تبوك: 25 ريال", link: null, style: "buttons", children: [] },
+      ] },
+      { key: "areas001", label: "مناطق التغطية", text: "تريم – الفرع الرئيسي", link: null, style: "buttons", children: [] },
+    ],
+  },
+};
+const setMenu = (m: DmMenu, tenant = 1) =>
+  DB.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, 0) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(tenant === 1 ? "dm_menu" : `t${tenant}:dm_menu`, JSON.stringify(m)).run();
+const usage = async () => (await DB.prepare("SELECT COALESCE(SUM(messages), 0) AS n FROM usage_counters WHERE tenant_id = 1").first<any>()).n as number;
+
+beforeEach(async () => {
+  await resetDb();
+  await seedAccount();
+});
+
+describe("DM menu: someone writes → menu; taps an option → its reply", () => {
+  it("sends the menu with its options, the reply of a tapped option (with a sub-menu), counts every message, and logs taps", async () => {
+    await setMenu(MENU);
+    const meta = new MockMeta();
+    await deliver(messagePayload({ text: "السلام عليكم" }), meta);
+    const sends = meta.calls.filter((c) => c.kind === "dm");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].msg!.text).toBe("أهلًا 👋 اختر:");
+    expect(sends[0].msg!.menu).toMatchObject({ style: "buttons", options: [{ title: "التسعيرة العادية", payload: "hsn:menu:price001" }, { title: "سعر المناطق الشمالية" }, { title: "مناطق التغطية" }] });
+    expect(await usage()).toBe(1);
+
+    // a tap (button template = postback) on the option with a link
+    await deliver(messagePayload({ postback: "hsn:menu:price001" }), meta);
+    let last = meta.calls.filter((c) => c.kind === "dm").at(-1)!;
+    expect(last.msg!.text).toBe("السعر 210 وتدفعي 110");
+    expect(last.msg!.menu).toMatchObject({ options: [], link: { url: "https://example.com/p" } });
+    // a sub-menu shown as quick replies, then its option
+    await deliver(messagePayload({ postback: "hsn:menu:north001" }), meta);
+    last = meta.calls.filter((c) => c.kind === "dm").at(-1)!;
+    expect(last.msg!.menu).toMatchObject({ style: "quick", options: [{ title: "تبوك", payload: "hsn:menu:tabuk001" }] });
+    await deliver(messagePayload({ quickReply: "hsn:menu:tabuk001", text: "تبوك" }), meta);
+    expect(meta.calls.filter((c) => c.kind === "dm").at(-1)!.msg!.text).toBe("تبوك: 25 ريال");
+    expect(await usage()).toBe(4);
+    const taps = (await DB.prepare("SELECT node_key, taps FROM dm_menu_taps WHERE tenant_id = 1 ORDER BY node_key").all<any>()).results;
+    expect(taps.map((t) => [t.node_key, t.taps])).toEqual([["north001", 1], ["price001", 1], ["tabuk001", 1]]);
+    // shown in the inbox as the account's message
+    const out = (await DB.prepare("SELECT source, kind, text FROM messages WHERE direction = 'out' ORDER BY id").all<any>()).results;
+    expect(out[0]).toMatchObject({ source: "bot", kind: "menu" });
+    expect(out[0].text).toContain("• مناطق التغطية");
+  });
+
+  it("trigger rules: once a day by default, first message only, or every message; quiet after a manual reply; off = nothing", async () => {
+    await setMenu(MENU);
+    const meta = new MockMeta();
+    const dms = () => meta.calls.filter((c) => c.kind === "dm").length;
+    await deliver(messagePayload({ text: "مرحبا" }), meta);
+    await deliver(messagePayload({ text: "موجودين؟" }), meta);
+    expect(dms()).toBe(1); // daily
+    await setMenu({ ...MENU, trigger: "every" });
+    await deliver(messagePayload({ text: "طيب" }), meta);
+    expect(dms()).toBe(2);
+    // the account replied by hand → the menu stays quiet for this person
+    const p = await DB.prepare("SELECT id, account_id FROM participants WHERE igsid = 'igsid_user_1'").first<any>();
+    await DB.prepare("INSERT INTO messages (account_id, participant_id, direction, source, kind, text, created_at) VALUES (?, ?, 'out', 'manual', 'message', 'أهلين', ?)").bind(p.account_id, p.id, Date.now()).run();
+    await deliver(messagePayload({ text: "تمام" }), meta);
+    expect(dms()).toBe(2);
+    // first-only: another person gets it once
+    await setMenu({ ...MENU, trigger: "first" });
+    await deliver(messagePayload({ from: "igsid_user_2", text: "هلا" }), meta);
+    await deliver(messagePayload({ from: "igsid_user_2", text: "هلا مرة ثانية" }), meta);
+    expect(dms()).toBe(3);
+    // switched off: nothing, and old buttons do nothing
+    await setMenu({ ...MENU, enabled: false });
+    await deliver(messagePayload({ from: "igsid_user_3", text: "هلا" }), meta);
+    await deliver(messagePayload({ from: "igsid_user_3", postback: "hsn:menu:price001" }), meta);
+    expect(dms()).toBe(3);
+  });
+
+  it("a removed option is ignored; Instagram's own button template is built with the link first (≤ 3 buttons)", async () => {
+    await setMenu(MENU);
+    const meta = new MockMeta();
+    await deliver(messagePayload({ postback: "hsn:menu:gone0001" }), meta);
+    expect(meta.calls.filter((c) => c.kind === "dm")).toHaveLength(0);
+
+    const calls: any[] = [];
+    const f = async (_u: string, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init!.body)));
+      return new Response(JSON.stringify({ message_id: "m1" }), { status: 200 });
+    };
+    const http = new HttpMetaClient({ apiVersion: "v26.0", appId: "1", appSecret: "s", fetch: f as any });
+    await http.sendMessage("t", "ig1", "u1", { text: "اختر", menu: { style: "buttons", options: [{ title: "أ", payload: "hsn:menu:aaaa" }, { title: "ب", payload: "hsn:menu:bbbb" }], link: { title: "الموقع", url: "https://x.example" } } });
+    const b = calls[0].message.attachment.payload;
+    expect(b.template_type).toBe("button");
+    expect(b.buttons.map((x: any) => x.type)).toEqual(["web_url", "postback", "postback"]);
+    await http.sendMessage("t", "ig1", "u1", { text: "اختر", menu: { style: "quick", options: [{ title: "أ", payload: "hsn:menu:aaaa" }], link: { title: "الموقع", url: "https://x.example" } } });
+    expect(calls[1].message.quick_replies).toEqual([{ content_type: "text", title: "أ", payload: "hsn:menu:aaaa" }]);
+    expect(calls[1].message.text).toContain("https://x.example");
+  });
+});
+
+describe("DM menu: settings API", () => {
+  let OWNER: H;
+  beforeEach(async () => {
+    await call("/api/auth/setup", {}, "POST", { setup_token: "test_setup_token_123456", username: "admin", password: "a-very-strong-password" });
+    OWNER = await login("admin", "a-very-strong-password");
+  });
+  async function customer(username: string) {
+    const code = (await call("/api/owner/codes", OWNER, "POST", { plan_id: "basic", days: 10, count: 1 })).body.codes[0];
+    expect((await call("/api/auth/register", {}, "POST", { name: `متجر ${username}`, username, password: "another-strong-password", code })).status).toBe(200);
+    return login(username, "another-strong-password");
+  }
+
+  it("checks the limits (3 buttons with a link counting as one, 20-char titles, https links, depth)", () => {
+    expect(menuProblem(MENU.root)).toBeNull();
+    const four = { ...MENU.root, children: [...MENU.root.children, { ...MENU.root.children[2], key: "extra001" }] };
+    expect(menuProblem(four)).toContain("الحد 3");
+    expect(menuProblem({ ...four, style: "quick" })).toBeNull();
+    expect(menuProblem({ ...MENU.root, link: { title: "رابط", url: "https://a.b" } })).toContain("الحد 2");
+    expect(menuProblem({ ...MENU.root, children: [{ ...MENU.root.children[0], link: { title: "رابط", url: "http://a.b" } }] })).toContain("https://");
+    const deep = (d: number): any => ({ key: `k${d}aaaa`, label: "خيار", text: "نص", link: null, style: "quick", children: d ? [deep(d - 1)] : [] });
+    expect(menuProblem({ ...MENU.root, children: [deep(3)] })).toContain("مستويات");
+  });
+
+  it("a plan without the menu can build it but not switch it on; each customer sees only their own menu and taps", async () => {
+    const A = await customer("shop_a");
+    const B = await customer("shop_b");
+    let r = await call("/api/dm-menu", A);
+    expect(r.body).toMatchObject({ available: false, menu: { enabled: false } });
+    expect((await call("/api/dm-menu", A, "PUT", { ...MENU, enabled: false })).status).toBe(200);
+    expect((await call("/api/dm-menu", A, "PUT", MENU)).status).toBe(403);
+    // the owner adds the menu to the plan → it can be switched on
+    await DB.prepare("UPDATE plans SET limits = json_set(limits, '$.dm_menu', json('true')) WHERE id = 'basic'").run();
+    expect((await call("/api/dm-menu", A, "PUT", MENU)).status).toBe(200);
+    r = await call("/api/dm-menu", A);
+    expect(r.body).toMatchObject({ available: true, menu: { enabled: true, root: { key: "root0001" } } });
+    // isolation: B still has the empty default
+    const rb = await call("/api/dm-menu", B);
+    expect(rb.body.menu.enabled).toBe(false);
+    expect(rb.body.menu.root.key).not.toBe("root0001");
+    expect((await call("/api/dm-menu", A, "PUT", { ...MENU, root: { ...MENU.root, text: "" } })).status).toBe(422);
+  });
+});

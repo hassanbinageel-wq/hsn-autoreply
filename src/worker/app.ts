@@ -44,6 +44,7 @@ import {
   paymentAccountSchema,
   exchangeRatesSchema,
   brandingSchema,
+  dmMenuSchema,
   featuredSchema,
   featureOrderSchema,
   campaignInputSchema,
@@ -92,6 +93,7 @@ import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/mess
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
 import { parseFaqText } from "../shared/support";
+import { emptyMenu, menuProblem, type DmMenu, type MenuNode } from "../shared/menu";
 import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
 import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { cardEnabled, cardPriceHalalas, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
@@ -1756,17 +1758,19 @@ export function createApp() {
       sales_contact: await getSetting<string>(c.env.DB, OWNER_TENANT, "sales_contact", ""),
       app_download_url: await getSetting<string>(c.env.DB, OWNER_TENANT, "app_download_url", ""),
       card_button_label: await getSetting<string>(c.env.DB, OWNER_TENANT, "card_button_label", ""),
+      silence_alert: await getSetting<boolean>(c.env.DB, OWNER_TENANT, "silence_alert", true),
       exchange_rates: { ...DEFAULT_RATES, ...(await getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES)), USD: 1 },
     }),
   );
   owner.put("/settings", async (c) => {
     const httpsOrEmpty = z.string().trim().max(300).refine((v) => v === "" || /^https:\/\//.test(v), "الرابط يجب أن يبدأ بـ https://");
-    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional(), card_button_label: z.string().trim().max(40).optional(), exchange_rates: exchangeRatesSchema.optional() }));
+    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional(), card_button_label: z.string().trim().max(40).optional(), silence_alert: z.boolean().optional(), exchange_rates: exchangeRatesSchema.optional() }));
     if (!p.ok) return p.res;
     if (p.data.exchange_rates) await setSetting(c.env.DB, OWNER_TENANT, "exchange_rates", { USD: 1, ...p.data.exchange_rates });
     if (p.data.sales_contact !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "sales_contact", p.data.sales_contact);
     if (p.data.app_download_url !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "app_download_url", p.data.app_download_url);
     if (p.data.card_button_label !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "card_button_label", p.data.card_button_label);
+    if (p.data.silence_alert !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "silence_alert", p.data.silence_alert);
     return c.json({ ok: true });
   });
 
@@ -3620,6 +3624,27 @@ export function createApp() {
       return apiError(c, 422, "size", "الملف أكبر من المسموح");
     }
     await run(c.env.DB, "UPDATE support_messages SET att_key = ?, att_mime = ?, att_size = ? WHERE id = ?", key, mime, obj.size, m.id);
+    return c.json({ ok: true });
+  });
+
+  // ---- DM menu («القائمة التلقائية»): the customer's own menu, and how often each option was tapped
+  api.get("/dm-menu", async (c) => {
+    const e = await ENT(c);
+    const menu = (await getSetting<DmMenu | null>(c.env.DB, T(c), "dm_menu", null)) ?? emptyMenu();
+    const taps = await all<{ node_key: string; taps: number }>(c.env.DB, "SELECT node_key, taps FROM dm_menu_taps WHERE tenant_id = ?", T(c));
+    return c.json({ menu, available: e.owner || (e.active && !!e.limits.dm_menu), taps: Object.fromEntries(taps.map((t) => [t.node_key, t.taps])) });
+  });
+  api.put("/dm-menu", async (c) => {
+    const p = await parseBody(c, dmMenuSchema);
+    if (!p.ok) return p.res;
+    const problem = menuProblem(p.data.root as MenuNode);
+    if (problem) return apiError(c, 422, "validation", problem);
+    if (p.data.enabled) {
+      const e = await ENT(c);
+      if (!e.owner && !(e.active && e.limits.dm_menu)) return apiError(c, 403, "plan_feature", "القائمة التلقائية مو ضمن باقتك — رقّ باقتك من «اشتراكي»");
+    }
+    await setSetting(c.env.DB, T(c), "dm_menu", p.data);
+    await audit(c.env.DB, T(c), c.get("session").username, "dm_menu.saved", p.data.enabled ? "on" : "off");
     return c.json({ ok: true });
   });
 
