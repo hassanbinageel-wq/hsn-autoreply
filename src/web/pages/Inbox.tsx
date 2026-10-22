@@ -176,7 +176,7 @@ export function InboxPage() {
         <PageHeader
           title="الرسائل"
           subtitle="ثلاث طرق تخلي العميل يوصل للرد بضغطة — شغّل اللي تحتاجه منها."
-          actions={<button type="button" className="btn btn-ghost min-h-10 text-sm" onClick={() => setHelp(true)}>❔ وش الفرق بين القوائم؟</button>}
+          actions={<button type="button" className="min-h-10 px-1 text-sm font-bold underline decoration-red-500 decoration-1 underline-offset-[6px] hover:text-red-600" onClick={() => setHelp(true)}>وش الفرق بين القوائم؟</button>}
         />
         <MenuHelp open={help} onClose={() => setHelp(false)} />
         <InboxTabs view={view} setView={setView} />
