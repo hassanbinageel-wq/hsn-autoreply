@@ -18,7 +18,7 @@ export function DmMenuEditor() {
   const [taps, setTaps] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [open, setOpen] = useState<"auto" | "ice" | "pm" | null>("auto");
+  const [open, setOpen] = useState<"auto" | "ice" | "pm" | null>(null);
   const [profile, setProfile] = useState<ProfileRow[] | null>(null);
   useEffect(() => {
     api<{ menu: DmMenu; available: boolean; taps: Record<string, number> }>("/api/dm-menu")
