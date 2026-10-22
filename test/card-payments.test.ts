@@ -199,6 +199,26 @@ describe("plan page: price before the discount and the card button text", () => 
 });
 
 describe("plan page: note next to the price", () => {
+  it("activation-code box: shown by default, the owner edits its texts and button link, or hides it; customers cannot", async () => {
+    const { h } = await register("shop_a");
+    let box = (await call("/api/subscription", h)).body.code_box;
+    expect(box).toMatchObject({ enabled: true, title: "عندك كود تفعيل؟", button_url: "" });
+    expect(box.text).toContain("HSN-");
+    // no own link → the sales contact
+    await call("/api/owner/settings", OWNER, "PUT", { sales_contact: "https://wa.me/966500000000" });
+    expect((await call("/api/subscription", h)).body.code_box.button_url).toBe("https://wa.me/966500000000");
+    const mine = { enabled: true, title: "كود؟", text: "سطر 1\nسطر 2", button_label: "راسلنا", button_url: "mailto:support@shayyek.sa" };
+    expect((await call("/api/owner/settings", OWNER, "PUT", { code_box: mine })).status).toBe(200);
+    expect((await call("/api/subscription", h)).body.code_box).toEqual(mine);
+    expect((await call("/api/owner/settings", OWNER)).body.code_box).toEqual(mine);
+    expect((await call("/api/owner/settings", OWNER, "PUT", { code_box: { ...mine, button_url: "javascript:alert(1)" } })).status).toBe(422);
+    expect((await call("/api/owner/settings", OWNER, "PUT", { code_box: { ...mine, enabled: false } })).status).toBe(200);
+    expect((await call("/api/public/plans")).body.code_box.enabled).toBe(false);
+    expect((await call("/api/owner/settings", h, "PUT", { code_box: mine })).status).toBe(403);
+    box = (await call("/api/subscription", h)).body.code_box;
+    expect(box.enabled).toBe(false);
+  });
+
   it("shows «شامل الضريبة المضافة 15%» by default; the owner can change it or clear it", async () => {
     expect((await call("/api/public/plans")).body.price_note).toBe("شامل الضريبة المضافة 15%");
     expect((await call("/api/owner/settings", OWNER, "PUT", { price_note: "السعر شامل الضريبة" })).status).toBe(200);

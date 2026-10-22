@@ -213,13 +213,23 @@ async function appDownloadUrl(c: C): Promise<string> {
 }
 
 const DEFAULT_PRICE_NOTE = "شامل الضريبة المضافة 15%";
+/** The activation-code box on «اشتراكي» (owner-editable; card payment is the main way, a code is the other one). */
+type CodeBox = { enabled: boolean; title: string; text: string; button_label: string; button_url: string };
+const DEFAULT_CODE_BOX: CodeBox = {
+  enabled: true,
+  title: "عندك كود تفعيل؟",
+  text: "طريقة ثانية للاشتراك: إذا وصلك كود تفعيل (يبدأ بـ HSN-) اكتبه هنا وتتفعّل باقتك فورًا. وإذا اشتراكك فعّال تنضاف المدة بعد تاريخ انتهائه.",
+  button_label: "تواصل معنا",
+  button_url: "",
+};
+const codeBoxOf = async (db: D1Database) => ({ ...DEFAULT_CODE_BOX, ...(await getSetting<Partial<CodeBox> | null>(db, OWNER_TENANT, "code_box", null)) });
 
 /** The stored rates, limited to the offered currencies (old settings may hold others). */
 const knownRates = (r: ExchangeRates): ExchangeRates => ({ USD: 1, SAR: Number(r?.SAR) > 0 ? Number(r.SAR) : DEFAULT_RATES.SAR });
 
 /** What a buyer needs to see: active plans (with structured prices), exchange rates, payment accounts and the contact link. */
 async function publicCatalog(c: C) {
-  const [plans, rates, payment_methods, contact, featured, order, cardLabel, priceNote] = await Promise.all([
+  const [plans, rates, payment_methods, contact, featured, order, cardLabel, priceNote, codeBox] = await Promise.all([
     listPlans(c.env.DB),
     getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES),
     listPaymentMethods(c.env.DB),
@@ -228,6 +238,7 @@ async function publicCatalog(c: C) {
     getSetting<string[] | null>(c.env.DB, OWNER_TENANT, "feature_order", null),
     getSetting<string>(c.env.DB, OWNER_TENANT, "card_button_label", ""),
     getSetting<string | null>(c.env.DB, OWNER_TENANT, "price_note", null),
+    codeBoxOf(c.env.DB),
   ]);
   return {
     plans: plans
@@ -248,6 +259,8 @@ async function publicCatalog(c: C) {
     // A bank / wallet with no account yet would show buyers an empty box.
     payment_methods: payment_methods.filter((p) => p.accounts.length > 0),
     sales_contact: contact || null,
+    // The activation-code box; its button goes to the owner's link, else the sales contact (no link = no button).
+    code_box: { ...codeBox, button_url: codeBox.button_url || contact || "" },
     // Which plan carries the highlight badge (default: the "pro" plan, "الأكثر طلبًا").
     featured: featured ?? { plan_id: "pro", label: "الأكثر طلبًا" },
     // The order the plan points are listed in (set by the owner by dragging).
@@ -1840,11 +1853,20 @@ export function createApp() {
       silence_alert: await getSetting<boolean>(c.env.DB, OWNER_TENANT, "silence_alert", true),
       price_note: (await getSetting<string | null>(c.env.DB, OWNER_TENANT, "price_note", null)) ?? DEFAULT_PRICE_NOTE,
       exchange_rates: knownRates(await getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES)),
+      code_box: await codeBoxOf(c.env.DB),
     }),
   );
   owner.put("/settings", async (c) => {
     const httpsOrEmpty = z.string().trim().max(300).refine((v) => v === "" || /^https:\/\//.test(v), "الرابط يجب أن يبدأ بـ https://");
-    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional(), card_button_label: z.string().trim().max(40).optional(), silence_alert: z.boolean().optional(), price_note: z.string().trim().max(60).optional(), exchange_rates: exchangeRatesSchema.optional() }));
+    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional(), card_button_label: z.string().trim().max(40).optional(), silence_alert: z.boolean().optional(), price_note: z.string().trim().max(60).optional(), exchange_rates: exchangeRatesSchema.optional(),
+      code_box: z.object({
+        enabled: z.boolean(),
+        title: z.string().trim().max(60),
+        text: z.string().trim().max(400),
+        button_label: z.string().trim().max(40),
+        // WhatsApp / Instagram / any https link, or an email (mailto:).
+        button_url: z.string().trim().max(300).refine((v) => v === "" || /^(https:\/\/|mailto:)/.test(v), "الرابط يبدأ بـ https:// أو mailto:"),
+      }).optional() }));
     if (!p.ok) return p.res;
     if (p.data.exchange_rates) await setSetting(c.env.DB, OWNER_TENANT, "exchange_rates", { USD: 1, ...p.data.exchange_rates });
     if (p.data.sales_contact !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "sales_contact", p.data.sales_contact);
@@ -1852,6 +1874,7 @@ export function createApp() {
     if (p.data.card_button_label !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "card_button_label", p.data.card_button_label);
     if (p.data.silence_alert !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "silence_alert", p.data.silence_alert);
     if (p.data.price_note !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "price_note", p.data.price_note);
+    if (p.data.code_box) await setSetting(c.env.DB, OWNER_TENANT, "code_box", p.data.code_box);
     return c.json({ ok: true });
   });
 

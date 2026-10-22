@@ -445,13 +445,13 @@ const LIMIT_FIELDS: Array<[string, string]> = [
 function PlansTab() {
   const { data, reload } = useAsync(() => api<any[]>("/api/owner/plans"), []);
   const { data: catalog, reload: reloadCatalog } = useAsync(() => api<any>("/api/public/plans"), []);
-  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string; card_button_label: string; price_note: string; exchange_rates: Record<string, number> }>("/api/owner/settings"), []);
+  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string; card_button_label: string; price_note: string; exchange_rates: Record<string, number>; code_box: CodeBox }>("/api/owner/settings"), []);
   const [contact, setContact] = useState<string | null>(null);
   const [download, setDownload] = useState<string | null>(null);
   const [cardLabel, setCardLabel] = useState<string | null>(null);
   const [priceNote, setPriceNote] = useState<string | null>(null);
   if (!data || !settings) return <Spinner />;
-  const saveSetting = async (body: Record<string, string>) => {
+  const saveSetting = async (body: Record<string, unknown>) => {
     try {
       await api("/api/owner/settings", { method: "PUT", body });
       toast("تم الحفظ");
@@ -498,6 +498,7 @@ function PlansTab() {
           </Field>
         </div>
       </Card>
+      <CodeBoxCard saved={settings.code_box} onSave={(code_box) => saveSetting({ code_box })} />
       <FeaturedCard plans={data} />
       {catalog && <FeatureOrderCard saved={orderFeatures(catalog.feature_order)} onSaved={reloadCatalog} />}
       <div className="grid gap-5 xl:grid-cols-3">
@@ -691,6 +692,29 @@ function UpgradesCard() {
             ))}
           </tbody>
         </table>
+      </div>
+    </Card>
+  );
+}
+
+type CodeBox = { enabled: boolean; title: string; text: string; button_label: string; button_url: string };
+
+/** The activation-code box on the customer's «اشتراكي» page: shown or hidden, its texts and where its button goes. */
+function CodeBoxCard({ saved, onSave }: { saved: CodeBox; onSave: (v: CodeBox) => void }) {
+  const [f, setF] = useState<CodeBox>(saved);
+  const set = (k: keyof CodeBox, v: string | boolean) => setF({ ...f, [k]: v });
+  const changed = JSON.stringify(f) !== JSON.stringify(saved);
+  return (
+    <Card title="بوكس «كود التفعيل» في صفحة اشتراكي" action={<Toggle checked={f.enabled} onChange={(v) => { setF({ ...f, enabled: v }); onSave({ ...f, enabled: v }); }} label="إظهار البوكس" />}>
+      <p className="muted mb-3 text-xs">الاشتراك الأساسي بالدفع بالبطاقة، وهذا البوكس طريقة ثانية لمن وصله كود. تقدر تخفيه كامل من المفتاح فوق.</p>
+      <div className={`space-y-3 ${f.enabled ? "" : "pointer-events-none opacity-50"}`}>
+        <Field label="العنوان"><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} maxLength={60} /></Field>
+        <Field label="النص"><textarea className="input min-h-20" value={f.text} onChange={(e) => set("text", e.target.value)} maxLength={400} /></Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="نص الزر" hint="فارغ = ما يظهر الزر"><input className="input" value={f.button_label} onChange={(e) => set("button_label", e.target.value)} maxLength={40} placeholder="تواصل معنا" /></Field>
+          <Field label="رابط الزر" hint="واتساب https://wa.me/966… أو إنستقرام https://instagram.com/… أو إيميل mailto:you@… — فارغ = رابط التواصل للشراء"><input className="input" dir="ltr" value={f.button_url} onChange={(e) => set("button_url", e.target.value)} maxLength={300} placeholder="https://wa.me/966..." /></Field>
+        </div>
+        <button className="btn btn-primary" disabled={!changed} onClick={() => onSave({ ...f, title: f.title.trim(), text: f.text.trim(), button_label: f.button_label.trim(), button_url: f.button_url.trim() })}>حفظ</button>
       </div>
     </Card>
   );

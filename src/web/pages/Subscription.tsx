@@ -136,16 +136,26 @@ export function SubscriptionPage() {
       <ReferralCard />
       <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
       <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
-      <Card title="تفعيل كود">
-          <p className="muted mb-3 text-sm">أدخل <b>كود التفعيل</b> اللي وصلك بعد الدفع (يبدأ بـ HSN-). إذا كان اشتراكك ما زال فعّالًا، تُضاف المدة الجديدة بعد تاريخ انتهائه. <b>كود الخصم</b> مكانه فوق في الباقات ← «عندك كود خصم؟».</p>
+      {data.code_box?.enabled && (
+        <Card title={data.code_box.title || "عندك كود تفعيل؟"}>
+          {data.code_box.text && <p className="muted mb-3 whitespace-pre-line text-sm">{data.code_box.text}</p>}
           <div className="flex gap-2">
             <input className="input" dir="ltr" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="HSN-XXXX-XXXX-XXXX" aria-label="كود التفعيل" />
             <button className="btn btn-primary shrink-0" disabled={busy || code.trim().length < 4} onClick={redeem}>{busy ? "…" : "تفعيل"}</button>
           </div>
-          {data.sales_contact && (
-            <a className="btn btn-ghost mt-4 w-full" href={data.sales_contact} target="_blank" rel="noopener"><Icon name="send" size={17} />تواصل معنا لشراء أو ترقية الباقة</a>
+          {data.code_box.button_url && data.code_box.button_label && (
+            <a
+              className="btn btn-ghost mt-4 w-full"
+              href={data.code_box.button_url}
+              target="_blank"
+              rel="noopener"
+              onClick={(e) => { if (isNative) { e.preventDefault(); openExternal(data.code_box.button_url); } }}
+            >
+              <Icon name="send" size={17} />{data.code_box.button_label}
+            </a>
           )}
         </Card>
+      )}
     </div>
   );
 }
