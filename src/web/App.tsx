@@ -365,7 +365,7 @@ export function App() {
         <Link to="/" className="mb-5 flex items-center gap-3 px-2">
           <span className="grad flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-lg shadow-violet-500/30"><Icon name="zap" size={22} /></span>
           <span className="leading-tight">
-            <b className="font-display block text-[17px] font-extrabold">Shayyek</b>
+            <b className="font-display block text-[17px] font-extrabold">Shayyek شيّك</b>
             <span className="muted text-xs">شيّك… وارتاح</span>
           </span>
         </Link>

@@ -179,7 +179,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         <form onSubmit={submit} className="w-full max-w-[400px] space-y-4">
           <div className="mb-6 flex items-center gap-3">
             <span className="grad flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-lg shadow-violet-500/30"><Icon name="zap" size={22} /></span>
-            <span className="leading-tight"><b className="font-display block text-lg font-extrabold">Shayyek</b><span className="muted text-xs">لوحة الإدارة</span></span>
+            <span className="leading-tight"><b className="font-display block text-lg font-extrabold">Shayyek شيّك</b><span className="muted text-xs">لوحة الإدارة</span></span>
           </div>
           <div>
             <h1 className="text-[28px] font-extrabold leading-tight">{status?.needs_setup ? "إعداد حساب الإدارة" : register ? "أنشئ حسابك ✨" : "أهلًا بعودتك 👋"}</h1>
@@ -310,7 +310,7 @@ function PublicPlansPage() {
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
           <a href="#/" className="flex items-center gap-2.5">
             <span className="grad flex h-9 w-9 items-center justify-center rounded-xl text-white"><Icon name="zap" size={18} /></span>
-            <b className="font-display max-[379px]:sr-only">Shayyek</b>
+            <b className="font-display max-[379px]:sr-only">Shayyek شيّك</b>
           </a>
           <div className="flex gap-2">
             <a href="#/" className="btn btn-ghost min-h-10 text-xs">تسجيل الدخول</a>

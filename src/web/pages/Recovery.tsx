@@ -10,7 +10,7 @@ export function RecoveryPage({ mode }: { mode: "forgot" | "reset" }) {
       <div className="w-full max-w-[400px] space-y-4">
         <div className="mb-6 flex items-center gap-3">
           <span className="grad flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-lg shadow-violet-500/30"><Icon name="zap" size={22} /></span>
-          <span className="leading-tight"><b className="font-display block text-lg font-extrabold">Shayyek</b><span className="muted text-xs">استرجاع الحساب</span></span>
+          <span className="leading-tight"><b className="font-display block text-lg font-extrabold">Shayyek شيّك</b><span className="muted text-xs">استرجاع الحساب</span></span>
         </div>
         {mode === "forgot" ? <Forgot /> : <Reset />}
         <p className="text-center text-sm">
