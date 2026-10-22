@@ -46,7 +46,7 @@ function NewCustomer({ onClose, onDone }: { onClose: () => void; onDone: () => v
     }
   };
   if (created) {
-    const text = `بيانات دخولك على HSN AutoReply:\nاسم المتجر: ${created.username}\nكلمة المرور: ${created.password}\n${location.origin}`;
+    const text = `بيانات دخولك على HSN AutoReply:\nاسم الحساب (على الإنستقرام): ${created.username}\nكلمة المرور: ${created.password}\n${location.origin}`;
     return (
       <Modal open onClose={onClose} title="تم إنشاء العميل ✅">
         <Alert tone="warn">أرسل بيانات الدخول للعميل بنفسك عبر قناة خاصة. كلمة المرور لا تظهر مرة ثانية (تقدر تعيد تعيينها لاحقًا).</Alert>
@@ -61,7 +61,7 @@ function NewCustomer({ onClose, onDone }: { onClose: () => void; onDone: () => v
   return (
     <Modal open onClose={onClose} title="عميل جديد">
       <div className="space-y-3">
-        <Field label="اسم المتجر (للدخول)" hint="بالإنجليزي بدون مسافات، مثل اسم حسابه في إنستقرام: shop_noor">
+        <Field label="اسم حسابه على الإنستقرام (للدخول)" hint="بالإنجليزي بدون مسافات، مثل: shop_noor">
           <input className="input" dir="ltr" value={username} onChange={(e) => setUsername(e.target.value.replace(/\s/g, ""))} maxLength={64} />
         </Field>
         <Field label="اسم المستخدم (اسم العميل)"><input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} /></Field>
@@ -117,7 +117,7 @@ function CustomersTab() {
       </div>
       <div className="relative max-w-md">
         <span className="muted pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"><Icon name="search" size={18} /></span>
-        <input className="input pr-10" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث باسم المتجر أو اسم المستخدم" aria-label="بحث في العملاء" />
+        <input className="input pr-10" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث بالاسم أو اسم الحساب على الإنستقرام" aria-label="بحث في العملاء" />
       </div>
       {q && data && <p className="muted text-sm">{customers.length ? `${customers.length} نتيجة` : "ما فيه عميل بهذا الاسم"}</p>}
       {loading && !data ? <Spinner /> : error ? <Alert tone="bad">{error}</Alert> : !all.length ? (
@@ -130,7 +130,7 @@ function CustomersTab() {
                 <div className="min-w-0">
                   <b className="font-display block truncate text-base">{t.name}</b>
                   <span className="muted block text-xs">اسم المستخدم: <b className="text-[var(--text)]">{t.name}</b></span>
-                  <span className="muted block text-xs">اسم المتجر (الدخول): <b className="text-[var(--text)]" dir="ltr">{t.username ?? "—"}</b></span>
+                  <span className="muted block text-xs">اسم الحساب على الإنستقرام (الدخول): <b className="text-[var(--text)]" dir="ltr">{t.username ?? "—"}</b></span>
                   {!t.is_owner && <span className="muted block text-xs">الإيميل: {t.email ? <><b className="text-[var(--text)]" dir="ltr">{t.email}</b> {t.email_verified_at ? <span className="text-emerald-600">✓ مؤكَّد</span> : <span className="text-amber-600">(غير مؤكَّد)</span>}</> : "—"}</span>}
                   {!t.is_owner && !!t.totp_enabled_at && (
                     <span className="muted flex flex-wrap items-center gap-2 text-xs">
@@ -444,10 +444,11 @@ const LIMIT_FIELDS: Array<[string, string]> = [
 function PlansTab() {
   const { data, reload } = useAsync(() => api<any[]>("/api/owner/plans"), []);
   const { data: catalog, reload: reloadCatalog } = useAsync(() => api<any>("/api/public/plans"), []);
-  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string; card_button_label: string; exchange_rates: Record<string, number> }>("/api/owner/settings"), []);
+  const { data: settings, reload: reloadSettings } = useAsync(() => api<{ sales_contact: string; app_download_url: string; card_button_label: string; price_note: string; exchange_rates: Record<string, number> }>("/api/owner/settings"), []);
   const [contact, setContact] = useState<string | null>(null);
   const [download, setDownload] = useState<string | null>(null);
   const [cardLabel, setCardLabel] = useState<string | null>(null);
+  const [priceNote, setPriceNote] = useState<string | null>(null);
   if (!data || !settings) return <Spinner />;
   const saveSetting = async (body: Record<string, string>) => {
     try {
@@ -484,6 +485,14 @@ function PlansTab() {
             <div className="flex gap-2">
               <input className="input" value={cardLabel ?? settings.card_button_label} onChange={(e) => setCardLabel(e.target.value)} maxLength={40} placeholder="اشترك الآن" />
               <button className="btn btn-primary shrink-0" onClick={() => saveSetting({ card_button_label: (cardLabel ?? settings.card_button_label).trim() })}>حفظ</button>
+            </div>
+          </Field>
+        </div>
+        <div className="mt-4">
+          <Field label="نص بجانب السعر" hint="يظهر تحت سعر كل باقة بين قوسين. فارغ = ما يظهر شي">
+            <div className="flex gap-2">
+              <input className="input" value={priceNote ?? settings.price_note} onChange={(e) => setPriceNote(e.target.value)} maxLength={60} />
+              <button className="btn btn-primary shrink-0" onClick={() => saveSetting({ price_note: (priceNote ?? settings.price_note).trim() })}>حفظ</button>
             </div>
           </Field>
         </div>
@@ -1364,7 +1373,7 @@ function HealthTab() {
           {list.map((c: any) => (
             <Card key={c.id} title={<span className="flex items-center gap-2">{c.name}<span className={`chip !py-0 text-[10.5px] ${RISK[c.risk].cls}`}>{RISK[c.risk].label}</span></span>} action={<span className="flex gap-1"><button className="btn btn-ghost min-h-9 text-xs" onClick={() => setDiagnoseFor(c)}>🩺 تشخيص</button><button className="btn btn-ghost min-h-9 text-xs" onClick={() => setMessageFor(c)}><Icon name="send" size={14} />رسالة</button></span>}>
               <div className="muted mb-2 text-xs">
-                اسم المستخدم: <b className="text-[var(--text)]">{c.name}</b> · اسم المتجر (الدخول): <b className="text-[var(--text)]" dir="ltr">{c.usernames ?? "—"}</b>
+                اسم المستخدم: <b className="text-[var(--text)]">{c.name}</b> · اسم الحساب على الإنستقرام (الدخول): <b className="text-[var(--text)]" dir="ltr">{c.usernames ?? "—"}</b>
                 {c.ig_username ? <> · إنستقرام: <b className="text-[var(--text)]" dir="ltr">@{c.ig_username}</b></> : null}
                 {c.store_name ? <> · المتجر: <b className="text-[var(--text)]">🛍️ {c.store_name}</b></> : null}
               </div>
@@ -1514,7 +1523,7 @@ function SentMessages() {
                   <div className="text-sm font-semibold">{expanded === m.id ? "▾" : "◂"} {m.title}</div>
                   <div className="muted text-xs">
                     {m.tenant_id ? (
-                      <>إلى: <b className="text-[var(--text)]">{m.tenant_name ?? "عميل محذوف"}</b>{m.tenant_usernames ? <> · اسم المتجر: <b className="text-[var(--text)]" dir="ltr">{m.tenant_usernames}</b></> : null}</>
+                      <>إلى: <b className="text-[var(--text)]">{m.tenant_name ?? "عميل محذوف"}</b>{m.tenant_usernames ? <> · اسم الحساب: <b className="text-[var(--text)]" dir="ltr">{m.tenant_usernames}</b></> : null}</>
                     ) : "إلى: كل العملاء"}
                     {" · "}{fmtTime(m.created_at)}
                     {m.reminders ? ` · ذكّرت ${m.reminders} مرة` : ""}

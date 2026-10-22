@@ -51,9 +51,9 @@ function Forgot() {
     <form onSubmit={submit} className="space-y-4">
       <div>
         <h1 className="text-[26px] font-extrabold">نسيت كلمة المرور؟</h1>
-        <p className="muted mt-1.5 text-sm">اكتب اسم متجرك (اللي تدخل فيه) أو إيميلك، ونرسل لك رابط تعيّن فيه كلمة مرور جديدة.</p>
+        <p className="muted mt-1.5 text-sm">اكتب اسم حسابك على الإنستقرام (اللي تدخل فيه) أو إيميلك، ونرسل لك رابط تعيّن فيه كلمة مرور جديدة.</p>
       </div>
-      <Field label="اسم المتجر أو الإيميل">
+      <Field label="اسم حسابك على الإنستقرام أو الإيميل">
         <input className="input" dir="ltr" autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)} required minLength={2} />
       </Field>
       {error && <Alert tone="bad">{error}</Alert>}
@@ -90,7 +90,7 @@ function Reset() {
     return (
       <div className="space-y-3">
         <h1 className="text-[26px] font-extrabold">تم تغيير كلمة المرور ✅</h1>
-        <Alert tone="good">سجّلنا خروجك من كل الأجهزة. ادخل الحين باسم متجرك <b dir="ltr">{done}</b> وكلمة المرور الجديدة.</Alert>
+        <Alert tone="good">سجّلنا خروجك من كل الأجهزة. ادخل الحين باسم حسابك <b dir="ltr">{done}</b> وكلمة المرور الجديدة.</Alert>
         <a href="#/" className="btn btn-primary min-h-12 w-full">تسجيل الدخول</a>
       </div>
     );

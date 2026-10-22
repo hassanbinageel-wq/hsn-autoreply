@@ -12,6 +12,8 @@ export interface Catalog {
   payment_methods: Array<{ id: number; name: string; kind: "bank" | "exchange" | "wallet"; logo: string | null; accounts: Array<{ id: number; holder: string; number: string; currency: string | null; note: string | null }> }>;
   sales_contact: string | null;
   card_button_label?: string;
+  /** Note next to every price (e.g. «شامل الضريبة المضافة 15%»); empty = none. */
+  price_note?: string;
 }
 
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
@@ -114,6 +116,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
                   <div className="flex flex-wrap items-baseline gap-1.5">
                     <span className={`font-display font-extrabold text-violet-600 dark:text-violet-300 ${cur.startsWith("YER") ? "text-2xl" : "text-3xl"}`}>{formatAmount(price, cur)}</span>
                     <span className="muted text-sm">/ {PRICE_PERIODS[p.price_period] ?? PRICE_PERIODS.month}</span>
+                    {catalog.price_note && <span className="muted w-full text-[11px]">({catalog.price_note})</span>}
                     {old !== null && price !== null && old > price && (
                       <span className="w-full text-xs"><s className="muted text-sm">{formatAmount(old, cur)}</s> <b className="text-emerald-600">خصم {pct > 0 ? pct : Math.round((1 - price / old) * 100)}%</b></span>
                     )}

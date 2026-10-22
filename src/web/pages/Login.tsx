@@ -218,10 +218,10 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             </>
           )}
           <Field
-            label={status?.needs_setup ? "اسم المستخدم" : register ? "اسم متجرك (في إنستقرام)" : "اسم متجرك"}
-            hint={register && !status?.needs_setup ? "بالإنجليزي بدون مسافات، مثل: hsn.store — وهو اللي تسجّل فيه دخولك للحساب" : undefined}
+            label={status?.needs_setup ? "اسم المستخدم" : "اسم حسابك (على الإنستقرام)"}
+            hint={register && !status?.needs_setup ? "بالإنجليزي بدون مسافات، مثل: shayyek.sa — وهو اللي تسجّل فيه دخولك للحساب" : undefined}
           >
-            <input className="input" dir="ltr" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={status?.needs_setup ? undefined : "hsn.store"} required />
+            <input className="input" dir="ltr" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder={status?.needs_setup ? undefined : "shayyek.sa"} required />
           </Field>
           {register && !status?.needs_setup && (
             <Field label="إيميلك" hint="لاسترجاع حسابك إذا نسيت كلمة المرور — يوصلك رمز تأكيد عليه. ما نرسل عليه إعلانات.">

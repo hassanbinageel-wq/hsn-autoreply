@@ -659,7 +659,7 @@ function Who({ t }: { t: any }) {
     <span className="text-xs">
       <b className="text-[var(--primary)]">{t.tenant_name}</b>
       <span className="muted">
-        {t.tenant_usernames ? ` · اسم المتجر (الدخول): ${t.tenant_usernames}` : ""}
+        {t.tenant_usernames ? ` · اسم الحساب (الدخول): ${t.tenant_usernames}` : ""}
         {t.ig_username ? ` · @${t.ig_username}` : ""}
         {t.store_name ? ` · 🛍️ ${t.store_name}` : ""}
       </span>

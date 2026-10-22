@@ -194,3 +194,13 @@ describe("plan page: price before the discount and the card button text", () => 
     expect(pub.card_button_label).toBe("اشترك الآن");
   });
 });
+
+describe("plan page: note next to the price", () => {
+  it("shows «شامل الضريبة المضافة 15%» by default; the owner can change it or clear it", async () => {
+    expect((await call("/api/public/plans")).body.price_note).toBe("شامل الضريبة المضافة 15%");
+    expect((await call("/api/owner/settings", OWNER, "PUT", { price_note: "السعر شامل الضريبة" })).status).toBe(200);
+    expect((await call("/api/public/plans")).body.price_note).toBe("السعر شامل الضريبة");
+    expect((await call("/api/owner/settings", OWNER, "PUT", { price_note: "" })).status).toBe(200);
+    expect((await call("/api/public/plans")).body.price_note).toBe("");
+  });
+});

@@ -211,9 +211,11 @@ async function appDownloadUrl(c: C): Promise<string> {
   return custom || `${new URL(c.req.url).origin}/app.apk`;
 }
 
+const DEFAULT_PRICE_NOTE = "شامل الضريبة المضافة 15%";
+
 /** What a buyer needs to see: active plans (with structured prices), exchange rates, payment accounts and the contact link. */
 async function publicCatalog(c: C) {
-  const [plans, rates, payment_methods, contact, featured, order, cardLabel] = await Promise.all([
+  const [plans, rates, payment_methods, contact, featured, order, cardLabel, priceNote] = await Promise.all([
     listPlans(c.env.DB),
     getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES),
     listPaymentMethods(c.env.DB),
@@ -221,6 +223,7 @@ async function publicCatalog(c: C) {
     getSetting<{ plan_id: string | null; label: string } | null>(c.env.DB, OWNER_TENANT, "featured_plan", null),
     getSetting<string[] | null>(c.env.DB, OWNER_TENANT, "feature_order", null),
     getSetting<string>(c.env.DB, OWNER_TENANT, "card_button_label", ""),
+    getSetting<string | null>(c.env.DB, OWNER_TENANT, "price_note", null),
   ]);
   return {
     plans: plans
@@ -235,6 +238,8 @@ async function publicCatalog(c: C) {
     card_payments: cardEnabled(c.env),
     // Text of the card pay button (owner-set), no currency or price in it.
     card_button_label: cardLabel || "اشترك الآن",
+    // Small note next to every price (owner-set; empty hides it).
+    price_note: priceNote ?? DEFAULT_PRICE_NOTE,
     rates: { ...DEFAULT_RATES, ...rates, USD: 1 },
     // A bank / office with no account yet would show buyers an empty box.
     payment_methods: payment_methods.filter((p) => p.accounts.length > 0),
@@ -712,7 +717,7 @@ export function createApp() {
     } else if (!p.data.plan_id || !(await payablePlan(c.env, p.data.plan_id))) {
       return apiError(c, 422, "code_required", "أدخل كود التفعيل، أو اختر باقة من صفحة الباقات وادفع بالبطاقة");
     }
-    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم المتجر هذا مسجّل من قبل — اختر غيره");
+    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم الحساب هذا مسجّل من قبل — اختر غيره");
     const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
     const t = await first<{ id: number }>(c.env.DB, "INSERT INTO tenants (name, created_at, updated_at) VALUES (?, ?, ?) RETURNING id", p.data.name, now, now);
     const tid = t!.id;
@@ -1478,7 +1483,7 @@ export function createApp() {
   owner.post("/tenants", async (c) => {
     const p = await parseBody(c, tenantCreateSchema);
     if (!p.ok) return p.res;
-    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم المتجر هذا مسجّل من قبل — اختر غيره");
+    if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم الحساب هذا مسجّل من قبل — اختر غيره");
     const now = Date.now();
     const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
     const t = await first<{ id: number }>(c.env.DB, "INSERT INTO tenants (name, notes, created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id", p.data.name, p.data.notes ?? null, now, now);
@@ -1760,18 +1765,20 @@ export function createApp() {
       app_download_url: await getSetting<string>(c.env.DB, OWNER_TENANT, "app_download_url", ""),
       card_button_label: await getSetting<string>(c.env.DB, OWNER_TENANT, "card_button_label", ""),
       silence_alert: await getSetting<boolean>(c.env.DB, OWNER_TENANT, "silence_alert", true),
+      price_note: (await getSetting<string | null>(c.env.DB, OWNER_TENANT, "price_note", null)) ?? DEFAULT_PRICE_NOTE,
       exchange_rates: { ...DEFAULT_RATES, ...(await getSetting<ExchangeRates>(c.env.DB, OWNER_TENANT, "exchange_rates", DEFAULT_RATES)), USD: 1 },
     }),
   );
   owner.put("/settings", async (c) => {
     const httpsOrEmpty = z.string().trim().max(300).refine((v) => v === "" || /^https:\/\//.test(v), "الرابط يجب أن يبدأ بـ https://");
-    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional(), card_button_label: z.string().trim().max(40).optional(), silence_alert: z.boolean().optional(), exchange_rates: exchangeRatesSchema.optional() }));
+    const p = await parseBody(c, z.object({ sales_contact: httpsOrEmpty.optional(), app_download_url: httpsOrEmpty.optional(), card_button_label: z.string().trim().max(40).optional(), silence_alert: z.boolean().optional(), price_note: z.string().trim().max(60).optional(), exchange_rates: exchangeRatesSchema.optional() }));
     if (!p.ok) return p.res;
     if (p.data.exchange_rates) await setSetting(c.env.DB, OWNER_TENANT, "exchange_rates", { USD: 1, ...p.data.exchange_rates });
     if (p.data.sales_contact !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "sales_contact", p.data.sales_contact);
     if (p.data.app_download_url !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "app_download_url", p.data.app_download_url);
     if (p.data.card_button_label !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "card_button_label", p.data.card_button_label);
     if (p.data.silence_alert !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "silence_alert", p.data.silence_alert);
+    if (p.data.price_note !== undefined) await setSetting(c.env.DB, OWNER_TENANT, "price_note", p.data.price_note);
     return c.json({ ok: true });
   });
 
