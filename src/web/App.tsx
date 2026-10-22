@@ -365,8 +365,8 @@ export function App() {
         <Link to="/" className="mb-5 flex items-center gap-3 px-2">
           <span className="grad flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-lg shadow-violet-500/30"><Icon name="zap" size={22} /></span>
           <span className="leading-tight">
-            <b className="font-display block text-[17px] font-extrabold">شيّك</b>
-            <span className="muted text-xs">أتمتة إنستقرام الرسمية</span>
+            <b className="font-display block text-[17px] font-extrabold">Shayyek</b>
+            <span className="muted text-xs">شيّك… وارتاح</span>
           </span>
         </Link>
         <Link to="/connection" className="mb-3 flex items-center gap-2.5 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5">
@@ -416,7 +416,7 @@ export function App() {
             <span className="grad flex h-9 w-9 items-center justify-center rounded-xl text-white"><Icon name="zap" size={19} /></span>
           </Link>
           <div className="min-w-0">
-            <div className="font-display truncate text-[15px] font-bold lg:text-base">{current?.label ?? "شيّك"}</div>
+            <div className="font-display truncate text-[15px] font-bold lg:text-base">{current?.label ?? "Shayyek"}</div>
           </div>
           <div className="mr-auto flex items-center gap-2">
             <button className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)]" title="المظهر" aria-label="تبديل المظهر" onClick={() => setTheme(nextTheme)}>
