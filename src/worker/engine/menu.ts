@@ -1,3 +1,5 @@
+import { matchKeyword } from "../../shared/match";
+import { normalizeText } from "../../shared/normalize";
 import { findNode, MENU_PAYLOAD, menuParts, menuPayload, type DmMenu, type MenuNode } from "../../shared/menu";
 import { first, getSetting, run } from "../lib/db";
 import type { OutgoingMessage } from "../meta/types";
@@ -41,10 +43,14 @@ async function blocked(ctx: EngineContext, account: AccountRow, participant: Par
 }
 
 /** A plain message (no campaign conversation open): send the menu if its trigger rule allows. */
-export async function menuForMessage(ctx: EngineContext, row: EventRow, account: AccountRow, participant: ParticipantRow): Promise<ProcessOutcome> {
+export async function menuForMessage(ctx: EngineContext, row: EventRow, account: AccountRow, participant: ParticipantRow, text = ""): Promise<ProcessOutcome> {
   const menu = await loadMenu(ctx.db, account.tenant_id);
   const why = await blocked(ctx, account, participant, menu);
   if (why) return { status: "ignored", reason: why === "menu_off" ? "plain_message_no_trigger" : why };
+  if (menu!.trigger === "keywords") {
+    const norm = normalizeText(text, { unifyAlef: true });
+    if (!(menu!.keywords ?? []).some((k) => k.trim() && matchKeyword(norm, k, "contains", { unifyAlef: true }))) return { status: "ignored", reason: "menu_no_keyword" };
+  }
   const last = (participant as ParticipantRow & { menu_sent_at?: number | null }).menu_sent_at ?? null;
   if (menu!.trigger === "first" && last) return { status: "ignored", reason: "menu_already_sent" };
   if (menu!.trigger === "daily" && last && ctx.now() - last < 24 * H) return { status: "ignored", reason: "menu_sent_today" };

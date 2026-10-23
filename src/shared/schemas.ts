@@ -198,7 +198,8 @@ const menuNodeSchema: z.ZodType<MenuNodeIn> = z.lazy(() =>
 /** The customer's DM menu (deeper checks: menuProblem). */
 export const dmMenuSchema = z.object({
   enabled: z.boolean(),
-  trigger: z.enum(["first", "daily", "every"]),
+  trigger: z.enum(["first", "daily", "every", "keywords"]),
+  keywords: z.array(z.string().trim().max(40)).max(30).default([]),
   pause_hours: z.number().int().min(0).max(168),
   root: menuNodeSchema,
   ice_breakers: z.array(z.object({ question: z.string().trim().max(80), key: z.string().regex(/^[A-Za-z0-9]{4,16}$/) })).max(4).default([]),

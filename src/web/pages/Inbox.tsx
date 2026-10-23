@@ -175,8 +175,8 @@ export function InboxPage() {
       <div className="space-y-4">
         <PageHeader
           title="الرسائل"
-          subtitle="ثلاث طرق تخلي العميل يوصل للرد بضغطة — شغّل اللي تحتاجه منها."
-          actions={<button type="button" className="min-h-10 px-1 text-sm font-bold underline decoration-red-500 decoration-1 underline-offset-[6px] hover:text-red-600" onClick={() => setHelp(true)}>وش الفرق بين القوائم؟</button>}
+          subtitle="رسالة بأزرار توصل للي يراسلك أو يكتب كلمة تحددها، وكل زر يفتح محتوى ورابط وأزرار جديدة."
+          actions={<button type="button" className="min-h-10 px-1 text-sm font-bold underline decoration-red-500 decoration-1 underline-offset-[6px] hover:text-red-600" onClick={() => setHelp(true)}>كيف تشتغل؟</button>}
         />
         <MenuHelp open={help} onClose={() => setHelp(false)} />
         <InboxTabs view={view} setView={setView} />

@@ -179,12 +179,12 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         <form onSubmit={submit} className="w-full max-w-[400px] space-y-4">
           <div className="mb-6 flex items-center gap-3">
             <span className="grad flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-lg shadow-violet-500/30"><Icon name="zap" size={22} /></span>
-            <span className="leading-tight"><b className="font-display block text-lg font-extrabold">Shayyek شيّك</b><span className="muted text-xs">لوحة الإدارة</span></span>
+            <span className="leading-tight"><b className="font-display block text-lg font-extrabold">Shayyek شيّك</b></span>
           </div>
           <div>
             <h1 className="text-[28px] font-extrabold leading-tight">{status?.needs_setup ? "إعداد حساب الإدارة" : register ? "أنشئ حسابك ✨" : "أهلًا بعودتك 👋"}</h1>
-            <p className="muted mt-1.5 text-sm">
-              {status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : cardSignup ? "أنشئ حسابك، وبعدها تنتقل مباشرة لصفحة الدفع الآمنة." : register ? "عندك كود تفعيل؟ أنشئ حسابك وابدأ مباشرة." : "سجّل دخولك لإدارة حملاتك ورسائلك وسحوباتك."}
+            <p className="muted mt-1.5 text-sm empty:hidden">
+              {status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : cardSignup ? "أنشئ حسابك، وبعدها تنتقل مباشرة لصفحة الدفع الآمنة." : register ? "عندك كود تفعيل؟ أنشئ حسابك وابدأ مباشرة." : ""}
             </p>
           </div>
           {isNative && !API_BASE && <Alert tone="bad">لم يُحدَّد عنوان الخادم في هذا الإصدار (VITE_API_BASE).</Alert>}

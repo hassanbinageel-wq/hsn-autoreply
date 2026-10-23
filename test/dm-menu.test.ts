@@ -137,6 +137,29 @@ describe("DM menu: settings API", () => {
     return login(username, "another-strong-password");
   }
 
+  it("keyword trigger: only messages with one of the words get the menu (every time, ignoring diacritics/alef)", async () => {
+    await setMenu({ ...MENU, trigger: "keywords", keywords: ["السعر", "التغطية"] });
+    const meta = new MockMeta();
+    const dms = () => meta.calls.filter((c) => c.kind === "dm").length;
+    await deliver(messagePayload({ text: "مرحبا" }), meta);
+    expect(dms()).toBe(0);
+    await deliver(messagePayload({ text: "كم السِّعر لو سمحت؟" }), meta);
+    expect(dms()).toBe(1);
+    expect(meta.calls.filter((c) => c.kind === "dm").at(-1)!.msg!.text).toBe("أهلًا 👋 اختر:");
+    await deliver(messagePayload({ text: "وين مناطق التغطيه والتغطية" }), meta);
+    expect(dms()).toBe(2);
+  });
+
+  it("saving through the API: keywords are checked, ice breakers and the persistent menu are cleared", async () => {
+    await call("/api/auth/setup", {}, "POST", { setup_token: "test_setup_token_123456", username: "admin", password: "a-very-strong-password" });
+    const h = await login("admin", "a-very-strong-password");
+    expect((await call("/api/dm-menu", h, "PUT", { ...MENU, trigger: "keywords", keywords: [] })).body.error.message).toContain("كلمة");
+    const r = await call("/api/dm-menu", h, "PUT", { ...MENU, trigger: "keywords", keywords: ["السعر", ""], ice_breakers: [{ question: "س؟", key: "price001" }], persistent: [{ title: "المناطق", key: "areas001" }] });
+    expect(r.status).toBe(200);
+    const saved = (await call("/api/dm-menu", h)).body.menu;
+    expect(saved).toMatchObject({ trigger: "keywords", keywords: ["السعر"], ice_breakers: [], persistent: [] });
+  });
+
   it("checks the limits (3 buttons with a link counting as one, 20-char titles, https links, depth)", () => {
     expect(menuProblem(MENU.root)).toBeNull();
     const four = { ...MENU.root, children: [...MENU.root.children, { ...MENU.root.children[2], key: "extra001" }] };
@@ -145,7 +168,8 @@ describe("DM menu: settings API", () => {
     expect(menuProblem({ ...MENU.root, link: { title: "رابط", url: "https://a.b" } })).toContain("الحد 2");
     expect(menuProblem({ ...MENU.root, children: [{ ...MENU.root.children[0], link: { title: "رابط", url: "http://a.b" } }] })).toContain("https://");
     const deep = (d: number): any => ({ key: `k${d}aaaa`, label: "خيار", text: "نص", link: null, style: "quick", children: d ? [deep(d - 1)] : [] });
-    expect(menuProblem({ ...MENU.root, children: [deep(3)] })).toContain("مستويات");
+    expect(menuProblem({ ...MENU.root, children: [deep(4)] })).toBeNull();
+    expect(menuProblem({ ...MENU.root, children: [deep(5)] })).toContain("مستويات");
   });
 
   it("a plan without the menu can build it but not switch it on; each customer sees only their own menu and taps", async () => {

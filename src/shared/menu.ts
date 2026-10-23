@@ -21,8 +21,13 @@ export interface MenuNode {
 
 export interface DmMenu {
   enabled: boolean;
-  /** When the menu is sent to someone who writes: their first message only, at most once a day, or every message. */
-  trigger: "first" | "daily" | "every";
+  /**
+   * When the menu is sent to someone who writes: their first message only, at most once a day, every message, or
+   * only when the message contains one of `keywords` (then every time).
+   */
+  trigger: "first" | "daily" | "every" | "keywords";
+  /** Words that send the menu (trigger "keywords"); matched inside the message, ignoring diacritics and case. */
+  keywords?: string[];
   /** After the account replies by hand to a person, the menu stays quiet for them this many hours (0 = never pause). */
   pause_hours: number;
   root: MenuNode;
@@ -38,7 +43,7 @@ export interface DmMenu {
   persistent_enabled?: boolean;
 }
 
-export const MENU_LIMITS = { depth: 3, buttons: 3, quick: 13, label: 20, text: 640, iceBreakers: 4, question: 80, persistent: 5, persistentTitle: 30 } as const;
+export const MENU_LIMITS = { depth: 5, keywords: 30, keyword: 40, buttons: 3, quick: 13, label: 20, text: 640, iceBreakers: 4, question: 80, persistent: 5, persistentTitle: 30 } as const;
 export const MENU_PAYLOAD = /^hsn:menu:([A-Za-z0-9]{4,16})$/;
 export const menuPayload = (key: string) => `hsn:menu:${key}`;
 
@@ -46,6 +51,7 @@ export const TRIGGER_LABELS: Record<DmMenu["trigger"], string> = {
   first: "أول رسالة من الشخص فقط",
   daily: "مرة كل 24 ساعة كحد أقصى",
   every: "مع كل رسالة",
+  keywords: "لما يرسل كلمة من الكلمات اللي تحددها",
 };
 
 export function newKey(): string {
@@ -93,6 +99,16 @@ export function menuProblem(root: MenuNode): string | null {
     return null;
   };
   return walk(root, 0, "رسالة القائمة");
+}
+
+/** Problems in the trigger words (only checked when the trigger is «keywords»). */
+export function keywordsProblem(m: Pick<DmMenu, "trigger" | "keywords">): string | null {
+  if (m.trigger !== "keywords") return null;
+  const k = (m.keywords ?? []).filter((w) => w.trim());
+  if (!k.length) return "اكتب كلمة واحدة على الأقل ترسل القائمة";
+  if (k.length > MENU_LIMITS.keywords) return `الحد ${MENU_LIMITS.keywords} كلمة`;
+  if (k.some((w) => w.length > MENU_LIMITS.keyword)) return `الكلمة أطول من ${MENU_LIMITS.keyword} حرف`;
+  return null;
 }
 
 /** Problems in the ice breakers / persistent menu (keys must point to existing options). */

@@ -383,7 +383,7 @@ async function routeButton(ctx: EngineContext, row: EventRow, ev: NormalizedEven
 async function routeControl(ctx: EngineContext, row: EventRow, ev: NormalizedEvent, participant: ParticipantRow, account: AccountRow): Promise<ProcessOutcome> {
   const flows = await openFlows(ctx.db, participant.id);
   // Not inside a campaign conversation: the customer's DM menu (if they set one up).
-  if (!flows.length) return ev.kind === "message" ? menuForMessage(ctx, row, account, participant) : { status: "ignored", reason: "plain_message_no_trigger" };
+  if (!flows.length) return ev.kind === "message" ? menuForMessage(ctx, row, account, participant, ev.text ?? "") : { status: "ignored", reason: "plain_message_no_trigger" };
   const text = ev.text ?? "";
   const awaitingStart = flows.find((f) => f.state === "awaiting_user_interaction");
   const awaitingFollow = flows.find((f) => f.state === "awaiting_follow");

@@ -93,7 +93,7 @@ import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/mess
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
 import { parseFaqText } from "../shared/support";
-import { emptyMenu, extrasProblem, menuParts, menuProblem, type DmMenu, type MenuNode } from "../shared/menu";
+import { emptyMenu, extrasProblem, keywordsProblem, menuParts, menuProblem, type DmMenu, type MenuNode } from "../shared/menu";
 import { syncMenuProfile } from "./services/menuProfile";
 import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
 import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
@@ -3748,7 +3748,11 @@ export function createApp() {
   api.put("/dm-menu", async (c) => {
     const p = await parseBody(c, dmMenuSchema);
     if (!p.ok) return p.res;
-    const problem = menuProblem(p.data.root as MenuNode) ?? extrasProblem(p.data as DmMenu);
+    // Only the automatic menu is offered now: ice breakers and the persistent menu are cleared (also on Instagram).
+    p.data.ice_breakers = [];
+    p.data.persistent = [];
+    p.data.keywords = p.data.keywords.filter((k) => k);
+    const problem = menuProblem(p.data.root as MenuNode) ?? keywordsProblem(p.data as DmMenu) ?? extrasProblem(p.data as DmMenu);
     if (problem) return apiError(c, 422, "validation", problem);
     const parts = menuParts(p.data as DmMenu);
     if (parts.auto || parts.ice || parts.persistent) {
