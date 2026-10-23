@@ -36,7 +36,7 @@ const b64 = (bytes: number[], pad = 0) => btoa(String.fromCharCode(...bytes, ...
 const WOFF2 = b64([0x77, 0x4f, 0x46, 0x32], 60); // "wOF2" + bytes
 
 describe("card fonts: the customer's own fonts, private and limited", () => {
-  it("uploads after confirming the license, serves it back, refuses non-fonts / big files / a 6th font, deletes", async () => {
+  it("uploads after confirming the license, serves it back, refuses non-fonts / big files / a 3rd font, deletes", async () => {
     const { h } = await register("shop_a");
     expect((await call("/api/card-fonts", h, "POST", { name: "خطي", data: WOFF2 })).status).toBe(422); // no license confirmation
     const up = await call("/api/card-fonts", h, "POST", { name: "خطي", data: `data:font/woff2;base64,${WOFF2}`, licensed: true });
@@ -50,11 +50,11 @@ describe("card fonts: the customer's own fonts, private and limited", () => {
     expect((await call("/api/card-fonts", h, "POST", { name: "صورة", data: b64([0x89, 0x50, 0x4e, 0x47], 20), licensed: true })).body.error.code).toBe("type");
     const big = btoa("wOF2" + "a".repeat(2 * 1024 * 1024));
     expect((await call("/api/card-fonts", h, "POST", { name: "كبير", data: big, licensed: true })).status).toBe(422);
-    for (let i = 0; i < 4; i++) expect((await call("/api/card-fonts", h, "POST", { name: `خط ${i}`, data: WOFF2, licensed: true })).status).toBe(200);
-    expect((await call("/api/card-fonts", h, "POST", { name: "سادس", data: WOFF2, licensed: true })).body.error.code).toBe("limit");
+    expect((await call("/api/card-fonts", h, "POST", { name: "خط 2", data: WOFF2, licensed: true })).status).toBe(200);
+    expect((await call("/api/card-fonts", h, "POST", { name: "ثالث", data: WOFF2, licensed: true })).body.error.code).toBe("limit");
     expect((await call(`/api/card-fonts/${id}`, h, "DELETE")).status).toBe(200);
     expect((await SELF.fetch(new Request(`${BASE}/api/card-fonts/${id}`, { headers: h }))).status).toBe(404);
-    expect((await call("/api/card-fonts", h)).body).toHaveLength(4);
+    expect((await call("/api/card-fonts", h)).body).toHaveLength(1);
   });
 
   it("isolation: another customer cannot read or delete the font", async () => {

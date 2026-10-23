@@ -102,7 +102,7 @@ function DragArea({ design, onMove, children }: { design: CardDesign; onMove: (t
 
 type CardFontRow = { id: string; name: string; size: number };
 
-/** The customer's own fonts: upload (with the license confirmation and a 2 MB limit), pick, delete. */
+/** The customer's own fonts: upload (with the license confirmation, 2 MB, two fonts at most), pick, delete. */
 function CustomFonts({ design, set }: { design: CardDesign; set: (p: Partial<CardDesign>) => void }) {
   const { data: fonts, reload } = useAsync(() => api<CardFontRow[]>("/api/card-fonts"), []);
   const [name, setName] = useState("");
@@ -151,7 +151,7 @@ function CustomFonts({ design, set }: { design: CardDesign; set: (p: Partial<Car
           <button type="button" className="btn btn-ghost min-h-9 px-2 text-xs text-red-600" onClick={() => remove(f)}>حذف</button>
         </div>
       ))}
-      {(fonts?.length ?? 0) < 5 && (
+      {(fonts?.length ?? 0) < 2 && (
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             <label className="btn btn-ghost cursor-pointer text-sm">
@@ -164,7 +164,7 @@ function CustomFonts({ design, set }: { design: CardDesign; set: (p: Partial<Car
             <>
               <label className="flex items-start gap-2 text-xs">
                 <input type="checkbox" className="mt-0.5" checked={ok} onChange={(e) => setOk(e.target.checked)} />
-                <span>⚠️ أتأكد إن عندي حق استخدام هذا الخط تجاريًا (ترخيص الخط مسؤوليتي). الحد 2 ميقا للخط و5 خطوط.</span>
+                <span>⚠️ أتأكد إن عندي حق استخدام هذا الخط تجاريًا (ترخيص الخط مسؤوليتي). الحد 2 ميقا للخط وخطّين فقط.</span>
               </label>
               <button type="button" className="btn btn-primary text-sm" disabled={!ok || busy} onClick={upload}>{busy ? "…" : "رفع الخط"}</button>
             </>

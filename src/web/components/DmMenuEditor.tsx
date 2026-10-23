@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./Icon";
-import { Alert, Field, Modal, Spinner, toast } from "./ui";
+import { Alert, Field, Modal, Spinner, toast, useAsync } from "./ui";
+import { matchKeyword } from "../../shared/match";
+import { normalizeText } from "../../shared/normalize";
 import { emptyMenu, keywordsProblem, menuProblem, MENU_LIMITS, newKey, type DmMenu, type MenuNode } from "../../shared/menu";
 
 /** Buttons under a message hold 3 (a link takes one); with more, they go out as quick replies (up to 13). */
@@ -178,7 +180,7 @@ export function DmMenuEditor() {
         </div>
       </div>
 
-      <p className="muted text-xs">كل رسالة يرسلها النظام تنحسب من رسائل باقتك، والضغط على الأزرار نفسه ما ينحسب. النظام يرد فقط على اللي راسلك أول.</p>
+      <p className="muted text-xs">كل رسالة يرسلها النظام تنحسب من رسائل باقتك، والضغط على الأزرار نفسه ما ينحسب. النظام يرد فقط على اللي راسلك أول. <a className="font-bold text-violet-700 underline dark:text-violet-300" href="#/simulator?tab=menu">جرّبها في المحاكاة ←</a></p>
       {(dirty || problem) && (
         <div className="sticky bottom-20 z-10 flex items-center gap-3 rounded-2xl border border-violet-300 bg-[var(--surface)] p-3 shadow-lg lg:bottom-4 dark:border-violet-800">
           <button className="btn btn-primary" disabled={busy || !!problem || !dirty} onClick={() => save()}>{busy ? "…" : "حفظ"}</button>
@@ -235,19 +237,77 @@ function TreeNode({ node, depth, selected, taps, onSelect, onAdd }: { node: Menu
   );
 }
 
-/** The same tree as an indented list, for phones. */
-function OutlineNode({ node, depth, selected, onSelect, onAdd }: { node: MenuNode; depth: number; selected: string; onSelect: (k: string) => void; onAdd: (n: MenuNode) => void }) {
+/** The same tree as a list for phones: the first message on top, then each button with an arrow under its parent. */
+function OutlineNode({ node, depth, parent, selected, onSelect, onAdd }: { node: MenuNode; depth: number; parent?: string; selected: string; onSelect: (k: string) => void; onAdd: (n: MenuNode) => void }) {
   const on = node.key === selected;
   return (
-    <div className={depth ? `border-s-2 ps-3 ${LINE}` : ""}>
-      <div className="flex items-center gap-2 py-1">
-        <button type="button" onClick={() => onSelect(node.key)} className={`min-w-0 flex-1 rounded-xl border-2 px-3 py-2 text-right ${on ? "border-emerald-500" : depth === 0 ? "border-violet-500" : "border-[var(--border)]"}`}>
-          <b className="block truncate text-sm">{depth === 0 ? "💬 الرسالة الأولى" : node.label || "زر جديد"}</b>
-          <span className="muted block truncate text-[11px]">{node.text || "اكتب الرد…"}</span>
+    <div className={depth > 1 ? "ms-5" : ""}>
+      <div className="flex items-center gap-1.5 py-1">
+        {depth > 0 && <span aria-hidden className="shrink-0 text-lg leading-none text-violet-500">↲</span>}
+        <button type="button" onClick={() => onSelect(node.key)} className={`min-w-0 flex-1 rounded-xl border-2 px-3 py-2 text-right ${on ? "border-emerald-500" : depth === 0 ? "border-violet-500 bg-violet-500/5" : "border-[var(--border)]"}`}>
+          <span className="flex items-center gap-1.5">
+            <b className="min-w-0 truncate text-sm">{depth === 0 ? "💬 الرسالة الأولى" : node.label || "زر جديد"}</b>
+            <span className={`chip shrink-0 !py-0 text-[10px] ${depth === 0 ? "bg-violet-500/15 text-violet-700 dark:text-violet-300" : "surface-2 muted"}`}>{depth === 0 ? "الرئيسية" : depth === 1 ? "زر رئيسي" : "زر فرعي"}</span>
+          </span>
+          <span className="muted block truncate text-[11px]">{depth > 1 && parent ? `تحت «${parent}» · ` : ""}{node.text || "اكتب الرد…"}</span>
         </button>
         {depth + 1 < MENU_LIMITS.depth && <button type="button" onClick={() => onAdd(node)} aria-label="إضافة زر تحته" className="btn btn-ghost min-h-9 shrink-0 px-3 text-sm">+</button>}
       </div>
-      {node.children.map((c) => <OutlineNode key={c.key} node={c} depth={depth + 1} selected={selected} onSelect={onSelect} onAdd={onAdd} />)}
+      {node.children.map((c) => <OutlineNode key={c.key} node={c} depth={depth + 1} parent={node.label || "زر"} selected={selected} onSelect={onSelect} onAdd={onAdd} />)}
+    </div>
+  );
+}
+
+/**
+ * Try the menu without Instagram: type a message (checked against the trigger words), get the menu, tap its buttons.
+ * Nothing is sent and nothing is counted.
+ */
+export function MenuSimulator() {
+  const { data } = useAsync(() => api<{ menu: DmMenu }>("/api/dm-menu"), []);
+  const [chat, setChat] = useState<Array<{ from: "user" | "bot" | "note"; text: string; node?: MenuNode }>>([]);
+  const [text, setText] = useState("");
+  if (!data) return <Spinner />;
+  const menu = data.menu ?? emptyMenu();
+  const bot = (n: MenuNode) => ({ from: "bot" as const, text: n.text, node: n });
+  const send = () => {
+    const t = text.trim();
+    if (!t) return;
+    setText("");
+    const next = [...chat, { from: "user" as const, text: t }];
+    if (!menu.root.children.length) next.push({ from: "note", text: "القائمة فاضية — أضف أزرار من «الرسائل ← القائمة التلقائية»." });
+    else if (menu.trigger === "keywords" && !(menu.keywords ?? []).some((k) => k.trim() && matchKeyword(normalizeText(t, { unifyAlef: true }), k, "contains", { unifyAlef: true })))
+      next.push({ from: "note", text: `ما فيها كلمة من كلماتك (${(menu.keywords ?? []).join("، ")}) — فما توصله القائمة.` });
+    else {
+      if (!menu.enabled) next.push({ from: "note", text: "القائمة متوقفة الحين — هذي معاينة لشكلها لو شغّلتها." });
+      next.push(bot(menu.root));
+    }
+    setChat(next);
+  };
+  const tap = (c: MenuNode) => setChat((x) => [...x, { from: "user", text: c.label || "زر" }, bot(c)]);
+  return (
+    <div className="space-y-3">
+      <div className="max-h-[480px] min-h-[260px] space-y-2 overflow-y-auto rounded-2xl bg-[#0b0d12] p-3" dir="rtl">
+        {!chat.length && <p className="pt-16 text-center text-xs text-white/50">اكتب رسالة كأنك عميل{menu.trigger === "keywords" ? ` — جرّب كلمة مثل «${menu.keywords?.[0] ?? "السعر"}»` : ""}</p>}
+        {chat.map((m, i) =>
+          m.from === "note" ? (
+            <p key={i} className="text-center text-[11px] text-amber-300/90">ℹ️ {m.text}</p>
+          ) : m.from === "user" ? (
+            <div key={i} className="me-auto max-w-[80%] rounded-2xl bg-violet-600 px-3.5 py-2 text-sm text-white" style={{ marginInlineStart: "auto", marginInlineEnd: 0 }}>{m.text}</div>
+          ) : (
+            <div key={i} className="max-w-[85%] space-y-1.5">
+              <div className="whitespace-pre-wrap break-words rounded-2xl bg-[#262a33] px-3.5 py-2.5 text-sm leading-relaxed text-white">{m.text || "…"}</div>
+              {m.node?.link && <a href={m.node.link.url} target="_blank" rel="noopener" className="block rounded-xl bg-[#1c1f26] px-3 py-2.5 text-center text-sm font-semibold text-white">{m.node.link.title || "الرابط"} ↗</a>}
+              {m.node?.children.map((c) => <button key={c.key} type="button" onClick={() => tap(c)} className="block w-full rounded-xl bg-[#1c1f26] px-3 py-2.5 text-center text-sm font-semibold text-white hover:bg-[#2a2e37]">{c.label || "زر"}</button>)}
+            </div>
+          ),
+        )}
+      </div>
+      <div className="flex gap-2">
+        <input className="input" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="اكتب رسالة…" aria-label="رسالة تجريبية" />
+        <button type="button" className="btn btn-primary shrink-0" onClick={send}>إرسال</button>
+        {chat.length > 0 && <button type="button" className="btn btn-ghost shrink-0" onClick={() => setChat([])}>مسح</button>}
+      </div>
+      <p className="muted text-xs">تجربة فقط: ما يُرسل شي لإنستقرام ولا ينحسب من باقتك. القائمة اللي تشوفها هي آخر نسخة محفوظة.</p>
     </div>
   );
 }

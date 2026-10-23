@@ -82,7 +82,7 @@ export function SubscriptionPage() {
     }
     const ok = await askConfirm({
       title: `الدفع بالبطاقة — ${plan.name}`,
-      message: `راح تنتقل لصفحة الدفع الآمنة (ميسّر) وتدفع ${plan.card_price.toLocaleString("en-US")} ر.س بمدى أو فيزا أو ماستركارد أو Apple Pay. بعد الدفع تتفعّل الباقة تلقائيًا${data.active && data.plan?.id === planId ? "، والمدة الجديدة تنضاف بعد تاريخ انتهاء اشتراكك الحالي" : data.active ? " — تنبيه: باقتك الحالية تتغيّر لهذي الباقة، والأيام المتبقية تنضاف لها" : ""}. أكواد الخصم ما تنطبق على الدفع بالبطاقة.`,
+      message: `راح تنتقل لصفحة الدفع الآمنة وتدفع ${plan.card_price.toLocaleString("en-US")} ر.س بمدى أو فيزا أو ماستركارد أو Apple Pay. بعد الدفع تتفعّل الباقة تلقائيًا${data.active && data.plan?.id === planId ? "، والمدة الجديدة تنضاف بعد تاريخ انتهاء اشتراكك الحالي" : data.active ? " — تنبيه: باقتك الحالية تتغيّر لهذي الباقة، والأيام المتبقية تنضاف لها" : ""}. أكواد الخصم ما تنطبق على الدفع بالبطاقة.`,
       confirmLabel: "انتقل للدفع",
     });
     if (!ok) return;
@@ -228,7 +228,7 @@ function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url:
     if (!chosen || !quote) return;
     const ok = await askConfirm({
       title: `ترقية إلى ${chosen.name}`,
-      message: `تدفع ${quote.amount.toLocaleString("en-US")} ر.س بالبطاقة (ميسّر)، وتترقى باقتك فورًا بعد الدفع. تاريخ انتهاء اشتراكك يبقى نفسه.`,
+      message: `تدفع ${quote.amount.toLocaleString("en-US")} ر.س عبر بوابة الدفع الآمنة، وتترقى باقتك فورًا بعد الدفع. تاريخ انتهاء اشتراكك يبقى نفسه.`,
       confirmLabel: "انتقل للدفع",
     });
     if (!ok) return;

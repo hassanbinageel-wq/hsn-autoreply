@@ -7,6 +7,7 @@ import { SimResult } from "./CampaignWizard";
 import { PhonePreview, type ButtonAction, type ChatMsg, type CommentMsg } from "../components/PhonePreview";
 import { openExternal } from "../platform";
 import { REASONS } from "./Logs";
+import { MenuSimulator } from "../components/DmMenuEditor";
 
 /** The common cases shown first; the rest are under «سيناريوهات أخرى». */
 const MAIN_SCENARIOS = ["non_follower_then_follow", "known_follower", "verify_fails", "follower"];
@@ -56,6 +57,7 @@ const SCENARIOS: Record<string, { label: string; script: any }> = {
 
 export function SimulatorPage() {
   const { data: campaigns } = useAsync(() => api<any[]>("/api/campaigns"), []);
+  const [simTab, setSimTab] = useState<"campaigns" | "menu">(() => (location.hash.includes("tab=menu") ? "menu" : "campaigns"));
   const [campaignId, setCampaignId] = useState<number | "">("");
   const [event, setEvent] = useState("comment");
   const [text, setText] = useState("أبغى الكورس");
@@ -172,6 +174,14 @@ export function SimulatorPage() {
         </div>
         <span className="chip bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"><span className="h-1.5 w-1.5 rounded-full bg-current" />وضع تجريبي</span>
       </header>
+      <div className="surface-2 inline-flex rounded-full p-1 text-sm" role="tablist">
+        {([["campaigns", "الحملات"], ["menu", "القائمة التلقائية"]] as const).map(([k, l]) => (
+          <button key={k} type="button" role="tab" aria-selected={simTab === k} onClick={() => setSimTab(k)} className={`rounded-full px-4 py-1.5 font-semibold ${simTab === k ? "bg-[var(--surface)] shadow" : "muted"}`}>{l}</button>
+        ))}
+      </div>
+      {simTab === "menu" ? (
+        <Card title="💬 تجربة القائمة التلقائية"><MenuSimulator /></Card>
+      ) : (<>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_330px_minmax(0,0.9fr)]">
         <Card title="السيناريو">
@@ -263,6 +273,7 @@ export function SimulatorPage() {
         </Card>
       </div>
       <p className="muted text-center text-xs">المحاكاة تمرّ عبر نفس محرك الإنتاج (الطابور، الحالات، منع التكرار) مع عميل Meta وهمي. «افتح حسابنا» يفتح حسابك الحقيقي. لا ينتقل النظام لهذا الوضع تلقائيًا أبدًا.</p>
+      </>)}
     </div>
   );
 }

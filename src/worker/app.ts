@@ -3391,7 +3391,7 @@ export function createApp() {
     await recordUndo(c.env.DB, T(c), c.get("session").username, "design.update", `design:${id}`, `تعديل تصميم التهنئة «${prev.name}»`, { row: prev });
     return c.json({ ok: true });
   });
-  // ---- Customer fonts for congratulation cards: stored privately in R2 (5 per customer, 2 MB each), read back
+  // ---- Customer fonts for congratulation cards: stored privately in R2 (2 per customer, 2 MB each), read back
   // by the card editor only. The customer confirms they have the right to use the font.
   type CardFont = { id: string; name: string; size: number; created_at: number };
   const FONT_BYTES = 2 * 1024 * 1024;
@@ -3409,7 +3409,7 @@ export function createApp() {
     const p = await parseBody(c, z.object({ name: z.string().trim().min(1).max(40), data: z.string().max(3_000_000), licensed: z.literal(true) }));
     if (!p.ok) return p.res;
     const fonts = await getSetting<CardFont[]>(c.env.DB, T(c), "card_fonts", []);
-    if (fonts.length >= 5) return apiError(c, 409, "limit", "الحد 5 خطوط — احذف خط قبل ما ترفع جديد");
+    if (fonts.length >= 2) return apiError(c, 409, "limit", "الحد خطّين — احذف خط قبل ما ترفع جديد");
     let bytes: Uint8Array;
     try {
       bytes = fromB64(p.data.data.replace(/^data:[^,]*,/, ""));
