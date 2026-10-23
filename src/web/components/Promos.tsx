@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { isNative, openExternal } from "../platform";
 import { OFFER_THEMES, type Offer } from "../../shared/promos";
@@ -22,8 +22,17 @@ async function goPay(r: { id: number; url: string }) {
   } else location.href = r.url;
 }
 
-/** The packs to buy, side by side like the plans, with the total and the payment button. */
+/** The packs window (from the out-of-messages window, offers, or a «اشحن» link). */
 export function TopupModal({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal open onClose={onClose} title="اشحن رسائل إضافية">
+      <TopupPicker onCancel={onClose} />
+    </Modal>
+  );
+}
+
+/** The packs to buy, side by side like the plans, with the total and the payment button. */
+export function TopupPicker({ onCancel }: { onCancel?: () => void }) {
   const [data, setData] = useState<any>(null);
   const [sel, setSel] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,7 +58,7 @@ export function TopupModal({ onClose }: { onClose: () => void }) {
   };
   const until = data?.resets_at ? new Date(data.resets_at).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { day: "numeric", month: "long" }) : null;
   return (
-    <Modal open onClose={onClose} title="اشحن رسائل إضافية">
+    <>
       {!data ? (
         <Spinner />
       ) : !data.packs.length ? (
@@ -92,17 +101,26 @@ export function TopupModal({ onClose }: { onClose: () => void }) {
           ) : (
             <div className="flex gap-2">
               <button className="btn btn-primary flex-1" disabled={!pack || busy} onClick={pay}>{busy ? "…" : `ادفع ${pack ? n(pack.price) : ""} ر.س عبر بوابة الدفع الآمنة`}</button>
-              <button className="btn btn-ghost" onClick={onClose}>لاحقًا</button>
+              {onCancel && <button className="btn btn-ghost" onClick={onCancel}>لاحقًا</button>}
             </div>
           )}
           <p className="muted text-center text-xs">بطاقة · مدى · Apple Pay — تنتقل لصفحة الدفع وترجع تلقائيًا</p>
         </div>
       )}
-    </Modal>
+    </>
   );
 }
 
-type Promos = { topup: { out: boolean; cycle_key: string } | null; popup: { title: string; body: string; cta: string; cancel: string; buy: boolean } | null; offers: Offer[] };
+type Promos = { topup: { out: boolean; cycle_key: string; used: number; limit: number | null } | null; popup: { title: string; body: string; cta: string; cancel: string; icon: string | null; buy: boolean } | null; offers: Offer[] };
+
+/** The icon on top of the out-of-messages window: the owner's image, else 📭. */
+export function PopupIcon({ src }: { src?: string | null }) {
+  return src ? (
+    <img src={src} alt="" className="mx-auto h-16 w-16 rounded-3xl object-contain" />
+  ) : (
+    <div className="grad mx-auto flex h-16 w-16 items-center justify-center rounded-3xl text-3xl text-white shadow-lg shadow-violet-500/30">📭</div>
+  );
+}
 
 const POPUP_KEY = "hsn.outPopup";
 const CLOSED_OFFERS = "hsn.closedOffers";
@@ -114,6 +132,7 @@ export function PromoLayer({ route }: { route: string }) {
   const [p, setP] = useState<Promos | null>(null);
   const [popup, setPopup] = useState(false);
   const [topup, setTopup] = useState(false);
+  const reloadRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     let stop = false;
     const load = () => api<Promos>("/api/promos").then((d) => {
@@ -124,8 +143,18 @@ export function PromoLayer({ route }: { route: string }) {
     }).catch(() => undefined);
     load();
     const t = setInterval(load, 10 * 60_000);
-    return () => { stop = true; clearInterval(t); };
+    const onShow = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onShow);
+    reloadRef.current = load;
+    return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", onShow); };
   }, []);
+  // A new offer shows on the next page change (at most once a minute), without reopening the app.
+  const lastRoute = useRef(0);
+  useEffect(() => {
+    if (Date.now() - lastRoute.current < 60_000) return;
+    lastRoute.current = Date.now();
+    if (lastRoute.current && p) reloadRef.current?.();
+  }, [route]);
   // «اشحن رسائل» links (#/subscription?topup=1) open the window wherever they come from.
   useEffect(() => {
     const h = () => { if (/[?&]topup=1/.test(location.hash)) { setTopup(true); history.replaceState(null, "", location.hash.replace(/[?&]topup=1/, "")); } };
@@ -142,7 +171,7 @@ export function PromoLayer({ route }: { route: string }) {
       {popup && p?.popup && (
         <Modal open onClose={closePopup} title="" center>
           <div className="-mt-6 space-y-3 text-center">
-            <div className="grad mx-auto flex h-16 w-16 items-center justify-center rounded-3xl text-3xl text-white shadow-lg shadow-violet-500/30">📭</div>
+            <PopupIcon src={p.popup.icon} />
             <h2 className="font-display text-xl font-extrabold">{p.popup.title}</h2>
             <p className="muted whitespace-pre-line text-sm leading-relaxed">{p.popup.body}</p>
             <div className="flex gap-2 pt-2">

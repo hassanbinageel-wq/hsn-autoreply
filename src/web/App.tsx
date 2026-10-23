@@ -244,7 +244,7 @@ export function App() {
 
   useEffect(() => setMenuOpen(false), [route]);
   const [flash, setFlash] = useState(false);
-  const [shell, setShell] = useState<{ account?: any; unread: number; usagePct?: number; usageUsed?: number }>({ unread: 0 });
+  const [shell, setShell] = useState<{ account?: any; unread: number; usagePct?: number; usageUsed?: number; cycle?: { used: number; limit: number | null; extra: number } | null }>({ unread: 0 });
   useEffect(() => {
     if (auth !== "in") return;
     let alive = true;
@@ -252,8 +252,9 @@ export function App() {
       Promise.all([
         api<any>("/api/account").then((r) => r.account).catch(() => null),
         api<any[]>("/api/inbox").then((l) => l.reduce((a, c) => a + (c.unread || 0), 0)).catch(() => 0),
-        api<any>("/api/usage").then((r) => r.usage?.requests).catch(() => null),
-      ]).then(([account, unread, req]) => alive && setShell({ account, unread, usagePct: req?.pct, usageUsed: req?.used }));
+        isOwner ? api<any>("/api/usage").then((r) => r.usage?.requests).catch(() => null) : Promise.resolve(null),
+        isOwner ? Promise.resolve(null) : api<any>("/api/cycle").catch(() => null),
+      ]).then(([account, unread, req, cycle]) => alive && setShell({ account, unread, usagePct: req?.pct, usageUsed: req?.used, cycle: cycle?.used == null ? null : cycle }));
     };
     load();
     const t = setInterval(load, 60_000);
@@ -261,7 +262,7 @@ export function App() {
       alive = false;
       clearInterval(t);
     };
-  }, [auth, route === "/inbox"]);
+  }, [auth, isOwner, route === "/inbox"]);
 
   if (auth === "loading") return <div className="p-6"><Spinner /></div>;
   if (auth === "out") return <LoginPage onDone={checkAuth} />;
@@ -411,6 +412,17 @@ export function App() {
             <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]"><span className="grad block h-full rounded-full" style={{ width: `${Math.max(2, Math.min(100, shell.usagePct))}%` }} /></span>
           </Link>
         )}
+        {shell.cycle && (() => {
+          const c = shell.cycle;
+          const pct = c.limit === null ? 0 : c.limit === 0 ? 100 : Math.min(100, (c.used / c.limit) * 100);
+          return (
+            <Link to="/subscription" className="mt-3 block rounded-2xl border border-[var(--border)] p-3">
+              <b className="block text-xs">رسائل الدورة الحالية</b>
+              <span className="muted text-[11px]">{c.used.toLocaleString("en-US")} من {c.limit === null ? "غير محدود" : c.limit.toLocaleString("en-US")} رسالة{c.extra ? ` (منها ${c.extra.toLocaleString("en-US")} إضافية)` : ""}</span>
+              <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]"><span className={`block h-full rounded-full ${pct >= 90 ? "bg-red-500" : "grad"}`} style={{ width: `${c.limit === null ? 3 : Math.max(2, pct)}%` }} /></span>
+            </Link>
+          );
+        })()}
       </aside>
 
       <div className="min-w-0 flex-1">

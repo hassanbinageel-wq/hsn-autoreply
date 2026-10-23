@@ -129,16 +129,20 @@ describe("message top-ups", () => {
     expect((await call("/api/promos", h)).body.popup).toBeNull();
   });
 
-  it("the owner hears when a customer runs out, with a link to message them; the ready template exists", async () => {
-    const { tid } = await register("shop_a");
+  it("a customer who runs out gets the ready message automatically (owner's edited copy); the owner is told", async () => {
+    const { h, tid } = await register("shop_a");
+    const t = (await call("/api/owner/message-templates", OWNER)).body.templates;
+    t.private = t.private.map((x: any) => (x.label === "خلصت الرسائل" ? { ...x, title: "رصيدك خلص يا {الاسم}" } : x));
+    expect((await call("/api/owner/message-templates", OWNER, "PUT", t)).status).toBe(200);
     await setUsage(tid, 1000);
     const at = Math.floor(Date.now() / 600_000) * 600_000 + 3 * 60_000;
     await runPlanAlerts(TEST_ENV, at);
-    const owner = (await DB.prepare("SELECT title, link FROM app_notifications WHERE tenant_id = 1 AND title LIKE '%خلّص%'").all<any>()).results;
+    const mine = (await DB.prepare("SELECT kind, title FROM app_notifications WHERE tenant_id = ?").bind(tid).all<any>()).results;
+    expect(mine).toMatchObject([{ kind: "message", title: "✉️ رصيدك خلص يا متجر shop_a" }]);
+    const owner = (await DB.prepare("SELECT title FROM app_notifications WHERE tenant_id = 1 AND title LIKE '%خلّص%'").all<any>()).results;
     expect(owner).toHaveLength(1);
-    expect(owner[0].link).toBe(`/owner?tab=customers&message=${tid}`);
-    const t = (await call("/api/owner/message-templates", OWNER)).body;
-    expect(t.templates.private.some((x: any) => x.label === "خلصت الرسائل")).toBe(true);
+    expect(owner[0].title).toContain("تلقائيًا");
+    expect((await call("/api/cycle", h)).body).toEqual({ used: 1000, limit: 1000, extra: 0 });
   });
 });
 
@@ -170,5 +174,32 @@ describe("offers", () => {
     expect((await call("/api/owner/offers", OWNER, "POST", offer({ audience: "tenants", tenant_ids: [] }))).status).toBe(422);
     expect((await call("/api/owner/offers", OWNER, "POST", offer({ link: "https://shayyek.sa/offer" }))).status).toBe(200);
     expect((await call("/api/owner/offers", a.h, "POST", offer())).status).toBe(403);
+  });
+
+  it("offer details: who saw it, who opened it, who paid after it; ready offer templates are editable", async () => {
+    stubMoyasar();
+    const a = await register("shop_a");
+    const b = await register("shop_b");
+    const id = (await call("/api/owner/offers", OWNER, "POST", offer())).body.id;
+    await call("/api/promos", a.h);
+    await call("/api/promos", a.h); // seen twice = once
+    await call("/api/promos", b.h);
+    await call(`/api/offers/${id}/click`, a.h, "POST");
+    const pack = (await call("/api/owner/topups/packs", OWNER, "POST", { messages: 2000, price: 15 })).body.id;
+    const r = await call("/api/topups/pay", a.h, "POST", { pack_id: pack });
+    remote = { status: "paid" };
+    await call(`/api/subscription/pay/${r.body.id}`, a.h);
+    const st = (await call(`/api/owner/offers/${id}/stats`, OWNER)).body;
+    expect(st).toMatchObject({ targeted: 2, viewed: 2, clicked: 1, converted: 1, revenue: 15 });
+    expect(st.people[0]).toMatchObject({ tenant_id: a.tid, bought: [{ what: "2,000 رسالة إضافية", amount: 15 }] });
+    expect(st.people[1].tenant_id).toBe(b.tid);
+    expect((await call(`/api/owner/offers/${id}/stats`, a.h)).status).toBe(403);
+
+    const tpl = (await call("/api/owner/offer-templates", OWNER)).body;
+    expect(tpl.templates.length).toBeGreaterThan(3);
+    const next = [{ ...tpl.templates[0], label: "عرضي", title: "عرض رمضان" }];
+    expect((await call("/api/owner/offer-templates", OWNER, "PUT", next)).status).toBe(200);
+    expect((await call("/api/owner/offer-templates", OWNER)).body.templates).toMatchObject([{ label: "عرضي", title: "عرض رمضان" }]);
+    expect((await call("/api/owner/offer-templates", OWNER, "PUT", [{ ...next[0], link: "javascript:x" }])).status).toBe(422);
   });
 });

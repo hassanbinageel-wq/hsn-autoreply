@@ -100,8 +100,8 @@ import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEn
 import { cardEnabled, cardPriceHalalas, createInvoice, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
 import { planChangeBlock, quoteUpgrade } from "./services/upgrades";
 import { allPacks, applyTopup, startTopup, topupHistory, topupSettings, topupState } from "./services/topups";
-import { clickOffer, listOffers, offersFor } from "./services/offers";
-import { isOfferLink, OFFER_THEMES, topupSettingsOf } from "../shared/promos";
+import { clickOffer, listOffers, markViewed, offersFor, offerStats } from "./services/offers";
+import { DEFAULT_OFFER_TEMPLATES, isOfferLink, OFFER_THEMES, topupSettingsOf, type OfferTemplate } from "../shared/promos";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, pageLang, parseSignedRequest, privacyPage, refundPage, termsPage } from "./pages";
 
@@ -1179,13 +1179,20 @@ export function createApp() {
       throw e;
     }
   });
+  // The side menu's «رسائل الدورة الحالية» card.
+  api.get("/cycle", async (c) => {
+    if (c.get("session").is_owner) return c.json({ used: null, limit: null, extra: 0 });
+    const e = await ENT(c);
+    return c.json({ used: await monthlyMessages(c.env.DB, T(c)), limit: e.active ? e.limits.monthly_messages : 0, extra: e.extra_messages ?? 0 });
+  });
   api.get("/promos", async (c) => {
     if (c.get("session").is_owner) return c.json({ topup: null, popup: null, offers: [] });
     const [st, offers] = await Promise.all([topupState(c.env, T(c)), offersFor(c.env.DB, T(c))]);
+    await markViewed(c.env.DB, T(c), offers);
     const pop = st.settings.popup;
     return c.json({
       topup: { out: st.out, show: st.show, can_buy: st.can_buy, used: st.used, limit: st.limit, resets_at: st.resets_at, cycle_key: st.cycle_key },
-      popup: st.out && pop.enabled ? { title: pop.title, body: pop.body, cta: pop.cta, cancel: pop.cancel, buy: st.can_buy } : null,
+      popup: st.out && pop.enabled ? { title: pop.title, body: pop.body, cta: pop.cta, cancel: pop.cancel, icon: pop.icon ?? null, buy: st.can_buy } : null,
       offers,
     });
   });
@@ -1789,7 +1796,14 @@ export function createApp() {
       z.object({
         max_per_cycle: z.number().int().min(0).max(100),
         show_at_pct: z.number().int().min(50).max(100),
-        popup: z.object({ enabled: z.boolean(), title: z.string().trim().min(2).max(80), body: z.string().trim().min(2).max(400), cta: z.string().trim().min(2).max(30), cancel: z.string().trim().min(2).max(20) }),
+        popup: z.object({
+          enabled: z.boolean(),
+          title: z.string().trim().min(2).max(80),
+          body: z.string().trim().min(2).max(400),
+          cta: z.string().trim().min(2).max(30),
+          cancel: z.string().trim().min(2).max(20),
+          icon: z.string().max(200_000, "الصورة كبيرة — اختر صورة أصغر").regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, "صيغة الصورة غير مدعومة").nullable().optional(),
+        }),
       }),
     );
     if (!p.ok) return p.res;
@@ -1829,6 +1843,31 @@ export function createApp() {
     d.audience === "tenants" ? JSON.stringify(d.tenant_ids ?? []) : null, d.active === false ? 0 : 1,
   ];
   owner.get("/offers", async (c) => c.json({ offers: await listOffers(c.env.DB), themes: OFFER_THEMES }));
+  owner.get("/offer-templates", async (c) => c.json({ templates: await getSetting<OfferTemplate[]>(c.env.DB, OWNER_TENANT, "offer_templates", DEFAULT_OFFER_TEMPLATES), defaults: DEFAULT_OFFER_TEMPLATES }));
+  owner.put("/offer-templates", async (c) => {
+    const p = await parseBody(
+      c,
+      z.array(
+        z.object({
+          label: z.string().trim().min(1).max(40),
+          title: z.string().trim().min(2).max(60),
+          body: z.string().trim().max(200),
+          cta: z.string().trim().max(24),
+          link: z.string().trim().max(300).refine(isOfferLink, "رابط غير مسموح"),
+          theme: z.string().refine((v) => v in OFFER_THEMES, "تصميم غير معروف"),
+          icon: z.string().trim().max(8),
+          days: z.number().int().min(1).max(90),
+        }),
+      ).max(40),
+    );
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "offer_templates", p.data);
+    return c.json({ ok: true });
+  });
+  owner.get("/offers/:id/stats", async (c) => {
+    const st = await offerStats(c.env.DB, idParam(c) ?? 0);
+    return st ? c.json(st) : apiError(c, 404, "not_found", "العرض غير موجود");
+  });
   owner.post("/offers", async (c) => {
     const p = await parseBody(c, offerSchema);
     if (!p.ok) return p.res;
@@ -1856,6 +1895,7 @@ export function createApp() {
   owner.delete("/offers/:id", async (c) => {
     const r = await run(c.env.DB, "DELETE FROM offers WHERE id = ?", idParam(c));
     if (!r.meta.changes) return apiError(c, 404, "not_found", "العرض غير موجود");
+    await run(c.env.DB, "DELETE FROM offer_events WHERE offer_id = ?", idParam(c));
     await audit(c.env.DB, T(c), c.get("session").username, "offer.deleted", c.req.param("id"));
     return c.json({ ok: true });
   });

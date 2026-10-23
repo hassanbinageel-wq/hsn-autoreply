@@ -33,13 +33,15 @@ describe("customer notifications: own plan usage, owner notices", () => {
     await setUsage(a, 1000);
     expect(await runPlanAlerts(TEST_ENV, AT)).toBe(1);
     const n = await notes(a);
-    expect(n.map((x: any) => x.kind)).toEqual(["plan", "plan"]);
+    // 80%: a usage note; used up: the owner's ready «خلصت الرسائل» message, sent automatically
+    expect(n.map((x: any) => x.kind)).toEqual(["plan", "message"]);
     expect(n[0].title).toContain("82%");
-    expect(n[1].title).toContain("خلصت");
+    expect(n[1].title).toContain("خلصت رسائل دورتك");
     expect(n[0].link).toBe("/subscription");
+    expect(n[1].link).toBe("/subscription");
     expect(await notes(b)).toEqual([]);
-    // the owner has no limits, but hears once that this customer ran out (link opens the ready message)
-    expect(await notes(1)).toMatchObject([{ kind: "plan", link: `/owner?tab=customers&message=${a}` }]);
+    // the owner has no limits, but hears once that this customer ran out and was messaged
+    expect(await notes(1)).toMatchObject([{ kind: "plan", link: "/owner?tab=customers" }]);
     // only on the scheduled minute
     await setUsage(b, 900);
     expect(await runPlanAlerts(TEST_ENV, AT + 60_000)).toBe(0);

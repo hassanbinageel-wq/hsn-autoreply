@@ -7,7 +7,7 @@ export type TopupSettings = {
   /** Show the «اشحن رسائل» button from this share of the cycle's messages (%). */
   show_at_pct: number;
   /** The window in the middle of the screen when a customer runs out of messages. */
-  popup: { enabled: boolean; title: string; body: string; cta: string; cancel: string };
+  popup: { enabled: boolean; title: string; body: string; cta: string; cancel: string; /** PNG/WEBP data URL; null = the default 📭 */ icon?: string | null };
 };
 
 export const DEFAULT_TOPUP_SETTINGS: TopupSettings = {
@@ -52,3 +52,15 @@ export type Offer = {
   starts_at: number | null;
   ends_at: number;
 };
+
+/** Ready offer contents the owner picks from (and edits, saved in the owner setting "offer_templates"). */
+export type OfferTemplate = { label: string; title: string; body: string; cta: string; link: string; theme: string; icon: string; days: number };
+
+export const DEFAULT_OFFER_TEMPLATES: OfferTemplate[] = [
+  { label: "خصم على باقة", title: "خصم 30% على الباقة الاحترافية", body: "ردود أكثر وحملات أكثر بسعر أقل — لفترة محدودة.", cta: "اشترك الحين", link: "/subscription", theme: "violet", icon: "🔥", days: 3 },
+  { label: "رسائل إضافية", title: "رسائل إضافية بسعر خاص", body: "اشحن رصيدك الحين وخل ردودك شغّالة طول الشهر.", cta: "اشحن الحين", link: "/subscription?topup=1", theme: "sunset", icon: "⚡", days: 2 },
+  { label: "ترقية", title: "رقِّ باقتك وادفع الفرق بس", body: "تاريخ اشتراكك يبقى نفسه، وحدودك تكبر فورًا.", cta: "رقِّ الحين", link: "/subscription", theme: "emerald", icon: "🚀", days: 5 },
+  { label: "ميزة جديدة", title: "ميزة جديدة: القائمة التلقائية", body: "خل متابعينك يختارون من أزرار في الخاص ويوصلهم الرد فورًا.", cta: "جرّبها", link: "/inbox", theme: "midnight", icon: "✨", days: 7 },
+  { label: "عرض نهاية الأسبوع", title: "عرض نهاية الأسبوع 🎉", body: "خصم خاص لين نهاية الجمعة — لا يفوتك.", cta: "استفد الحين", link: "/subscription", theme: "rose", icon: "🎉", days: 2 },
+  { label: "أول حملة", title: "جاهز لأول حملة؟", body: "سوّ حملة على منشورك الجاي في دقيقة وخل الردود تشتغل عنك.", cta: "ابدأ حملة", link: "/campaigns/new", theme: "violet", icon: "🎁", days: 7 },
+];

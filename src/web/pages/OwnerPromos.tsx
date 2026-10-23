@@ -3,10 +3,11 @@ import { api } from "../api";
 import { askConfirm } from "../components/Confirm";
 import { DateTimeField } from "../components/DateTimeField";
 import { Icon } from "../components/Icon";
-import { OfferCard } from "../components/Promos";
+import { OfferCard, PopupIcon } from "../components/Promos";
+import { logoDataUrl } from "../lib/logoImage";
 import { Alert, Card, Field, Modal, Spinner, Toggle, currentTz, fmtTime, toast, useAsync } from "../components/ui";
 import { localInputToUtc, utcToLocalInput } from "../lib/tzInput";
-import { DEFAULT_TOPUP_SETTINGS, OFFER_LINKS, OFFER_THEMES, type TopupSettings } from "../../shared/promos";
+import { DEFAULT_TOPUP_SETTINGS, OFFER_LINKS, OFFER_THEMES, type OfferTemplate, type TopupSettings } from "../../shared/promos";
 
 /** Owner panel: message top-up packs (with the out-of-messages window) and offers. */
 
@@ -130,7 +131,7 @@ function PackModal({ pack, plans, onClose, onDone }: { pack: Partial<Pack>; plan
 function TopupSettingsCard({ initial }: { initial: TopupSettings }) {
   const [s, setS] = useState<TopupSettings>(initial);
   const [busy, setBusy] = useState(false);
-  const pop = (k: keyof TopupSettings["popup"], v: string | boolean) => setS({ ...s, popup: { ...s.popup, [k]: v } });
+  const pop = (k: keyof TopupSettings["popup"], v: string | boolean | null) => setS({ ...s, popup: { ...s.popup, [k]: v } });
   const save = async () => {
     setBusy(true);
     try {
@@ -147,11 +148,6 @@ function TopupSettingsCard({ initial }: { initial: TopupSettings }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="زر الشحن يظهر من" hint="نسبة استهلاك رسائل الدورة">
-              <select className="input" value={s.show_at_pct} onChange={(e) => setS({ ...s, show_at_pct: +e.target.value })}>
-                {[50, 70, 80, 90, 100].map((v) => <option key={v} value={v}>{v === 100 ? "لما تخلص" : `${v}%`}</option>)}
-              </select>
-            </Field>
             <Field label="حد الشحن بالدورة" hint="لكل عميل">
               <select className="input" value={s.max_per_cycle} onChange={(e) => setS({ ...s, max_per_cycle: +e.target.value })}>
                 {[0, 1, 2, 3, 5, 10].map((v) => <option key={v} value={v}>{v === 0 ? "بدون حد" : `${v} مرات`}</option>)}
@@ -159,6 +155,16 @@ function TopupSettingsCard({ initial }: { initial: TopupSettings }) {
             </Field>
           </div>
           <Toggle checked={s.popup.enabled} onChange={(v) => pop("enabled", v)} label="نافذة في وسط الشاشة لما تخلص رسائل العميل" description="تطلع مرة باليوم ما دام رصيده خالص." />
+          <Field label="الأيقونة" hint="PNG أو JPG أو WEBP — تنعرض مربعة">
+            <div className="flex items-center gap-3">
+              <PopupIcon src={s.popup.icon} />
+              <label className="btn btn-ghost min-h-9 cursor-pointer text-sm">
+                رفع صورة
+                <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return; try { pop("icon", await logoDataUrl(f, 192)); } catch (err: any) { toast(err.message, "bad"); } }} />
+              </label>
+              {s.popup.icon && <button type="button" className="btn btn-ghost min-h-9 text-sm" onClick={() => pop("icon", null)}>الافتراضية</button>}
+            </div>
+          </Field>
           <Field label="العنوان"><input className="input" maxLength={80} value={s.popup.title} onChange={(e) => pop("title", e.target.value)} /></Field>
           <Field label="النص"><textarea className="input min-h-[6rem]" maxLength={400} value={s.popup.body} onChange={(e) => pop("body", e.target.value)} /></Field>
           <div className="grid grid-cols-2 gap-3">
@@ -174,7 +180,7 @@ function TopupSettingsCard({ initial }: { initial: TopupSettings }) {
           <span className="muted mb-2 block text-xs">معاينة النافذة كما يشوفها العميل:</span>
           <div className="surface-2 rounded-3xl p-5">
             <div className="card mx-auto max-w-sm space-y-3 p-5 text-center">
-              <div className="grad mx-auto flex h-14 w-14 items-center justify-center rounded-3xl text-2xl text-white">📭</div>
+              <PopupIcon src={s.popup.icon} />
               <b className="font-display block text-lg">{s.popup.title}</b>
               <p className="muted whitespace-pre-line text-sm">{s.popup.body}</p>
               <div className="flex gap-2"><span className="btn btn-primary flex-1"><Icon name="zap" size={16} />{s.popup.cta}</span><span className="btn btn-ghost">{s.popup.cancel}</span></div>
@@ -230,6 +236,7 @@ const ICONS = ["🎁", "🔥", "⚡", "🚀", "💜", "⭐", "🎉", "💰", "�
 export function OffersTab() {
   const { data, loading, error, reload } = useAsync(() => api<any>("/api/owner/offers"), []);
   const [edit, setEdit] = useState<OfferForm | null>(null);
+  const [statsFor, setStatsFor] = useState<any | null>(null);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   if (loading && !data) return <Spinner />;
@@ -253,6 +260,7 @@ export function OffersTab() {
                 </div>
                 <OfferCard o={o} now={now} />
                 <div className="mt-3 flex justify-end gap-2">
+                  <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setStatsFor(o)}><Icon name="chart" size={15} />التفاصيل والتحليل</button>
                   <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setEdit({ ...EMPTY_OFFER, ...o, body: o.body ?? "", cta: o.cta ?? "", icon: o.icon ?? "", link: OFFER_LINKS.some((x) => x.to === o.link) ? o.link : "custom", custom_link: OFFER_LINKS.some((x) => x.to === o.link) ? "" : o.link })}>تعديل</button>
                 </div>
               </Card>
@@ -261,6 +269,7 @@ export function OffersTab() {
         </div>
       )}
       {edit && <OfferModal offer={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
+      {statsFor && <OfferStatsModal offer={statsFor} onClose={() => setStatsFor(null)} />}
     </div>
   );
 }
@@ -306,6 +315,7 @@ function OfferModal({ offer, onClose, onDone }: { offer: OfferForm; onClose: () 
     <Modal open onClose={onClose} title={f.id ? "تعديل العرض" : "عرض جديد"}>
       <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_300px]">
         <div className="space-y-3">
+          <OfferTemplates current={f} onPick={(t) => set({ title: t.title, body: t.body, cta: t.cta, link: OFFER_LINKS.some((x) => x.to === t.link) ? t.link : "custom", custom_link: OFFER_LINKS.some((x) => x.to === t.link) ? "" : t.link, theme: t.theme, icon: t.icon, ends_at: Date.now() + t.days * 86_400_000 })} />
           <Field label="العنوان"><input className="input" maxLength={60} value={f.title} onChange={(e) => set({ title: e.target.value })} placeholder="مثل: خصم 30% على الاحترافية" /></Field>
           <Field label="التفاصيل (اختياري)"><textarea className="input min-h-[4.5rem]" maxLength={200} value={f.body} onChange={(e) => set({ body: e.target.value })} /></Field>
           <div className="grid grid-cols-2 gap-3">
@@ -369,6 +379,93 @@ function OfferModal({ offer, onClose, onDone }: { offer: OfferForm; onClose: () 
         {f.id ? <button className="btn btn-ghost text-red-600" onClick={del}>حذف</button> : <span />}
         <span className="flex gap-2"><button className="btn btn-ghost" onClick={onClose}>إلغاء</button><button className="btn btn-primary" disabled={busy || f.title.trim().length < 2} onClick={save}>{busy ? "…" : "حفظ"}</button></span>
       </div>
+    </Modal>
+  );
+}
+
+/** Ready offer contents: pick one to fill the form, save the current one, or remove one. */
+function OfferTemplates({ current, onPick }: { current: OfferForm; onPick: (t: OfferTemplate) => void }) {
+  const [list, setList] = useState<OfferTemplate[] | null>(null);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { api<{ templates: OfferTemplate[] }>("/api/owner/offer-templates").then((d) => setList(d.templates)).catch(() => setList([])); }, []);
+  const persist = async (next: OfferTemplate[], msg: string) => {
+    try {
+      await api("/api/owner/offer-templates", { method: "PUT", body: next });
+      setList(next);
+      toast(msg);
+    } catch (e: any) {
+      toast(e.message, "bad");
+    }
+  };
+  if (!list) return <Spinner />;
+  const saveCurrent = () => {
+    if (current.title.trim().length < 2) return toast("اكتب العنوان أول", "bad");
+    const link = current.link === "custom" ? current.custom_link.trim() : current.link;
+    const days = current.ends_at ? Math.max(1, Math.min(90, Math.round((current.ends_at - Date.now()) / 86_400_000))) : 3;
+    const t: OfferTemplate = { label: current.title.trim().slice(0, 40), title: current.title.trim(), body: current.body.trim(), cta: current.cta.trim(), link, theme: current.theme, icon: current.icon, days };
+    persist([...list.filter((x) => x.label !== t.label), t], "انحفظ كقالب");
+  };
+  return (
+    <div className="surface-2 space-y-2 rounded-2xl p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="muted text-xs">قوالب جاهزة — اضغط واحد يتعبّى وعدّل عليه:</span>
+        <span className="flex shrink-0 gap-1">
+          <button type="button" className="btn btn-ghost min-h-8 px-2 text-[11px]" onClick={saveCurrent}>💾 حفظ كقالب</button>
+          <button type="button" className="btn btn-ghost min-h-8 px-2 text-[11px]" onClick={() => setEditing((v) => !v)}>{editing ? "تم" : "✏️ تعديل"}</button>
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {list.map((t) => (
+          <span key={t.label} className="chip bg-[var(--surface)]">
+            <button type="button" onClick={() => onPick(t)}>{t.icon} {t.label}</button>
+            {editing && <button type="button" aria-label={`حذف ${t.label}`} className="mr-1 text-red-600" onClick={() => persist(list.filter((x) => x.label !== t.label), "انحذف القالب")}>✕</button>}
+          </span>
+        ))}
+        {!list.length && <span className="muted text-xs">ما فيه قوالب.</span>}
+      </div>
+      {editing && <p className="muted text-[11px]">لتعديل قالب: اختره، عدّل الحقول، ثم «حفظ كقالب» بنفس العنوان.</p>}
+    </div>
+  );
+}
+
+/** One offer's numbers: for how many, who saw it, who opened it, who paid after it. */
+function OfferStatsModal({ offer, onClose }: { offer: any; onClose: () => void }) {
+  const { data, loading, error } = useAsync(() => api<any>(`/api/owner/offers/${offer.id}/stats`), [offer.id]);
+  const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
+  return (
+    <Modal open onClose={onClose} title={`تفاصيل «${offer.title}»`}>
+      {loading && !data ? <Spinner /> : error ? <Alert tone="bad">{error}</Alert> : (
+        <div className="space-y-4">
+          <p className="muted text-sm">{offer.audience === "all" ? "لكل العملاء" : `لـ ${offer.tenant_ids.length} عميل مختار`} · {offer.ends_at > Date.now() ? `ينتهي ${fmtTime(offer.ends_at)}` : `انتهى ${fmtTime(offer.ends_at)}`}</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {[["المستهدفين", n(data.targeted), ""], ["شافوه", n(data.viewed), pct(data.viewed, data.targeted)], ["ضغطوا", n(data.clicked), pct(data.clicked, data.viewed)], ["اشتروا بعده", n(data.converted), pct(data.converted, data.viewed)], ["الإيراد", `${n(data.revenue)} ر.س`, ""]].map(([l, v, sub]) => (
+              <div key={l} className="surface-2 rounded-xl p-3 text-center">
+                <div className="muted text-xs">{l}</div>
+                <div className="font-display text-xl font-extrabold tabular-nums">{v}</div>
+                {sub && <div className="muted text-[11px]">{sub}</div>}
+              </div>
+            ))}
+          </div>
+          <p className="muted text-xs">«اشتروا بعده» = دفعوا بالبطاقة (باقة أو ترقية أو رسائل إضافية) أو فعّلوا كود بعد ما شافوا العرض ولين 3 أيام بعد انتهائه.</p>
+          {!data.people.length ? <p className="muted py-4 text-center text-sm">ما أحد شاف العرض بعد — يظهر للعميل أول ما يفتح التطبيق أو يتنقّل فيه.</p> : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[520px] text-sm">
+                <thead className="muted text-xs"><tr><th className="p-2 text-right">العميل</th><th className="p-2 text-right">شافه</th><th className="p-2 text-right">ضغط</th><th className="p-2 text-right">اشترى</th></tr></thead>
+                <tbody>
+                  {data.people.map((p: any) => (
+                    <tr key={p.tenant_id} className="border-t border-[var(--border)]">
+                      <td className="p-2 font-bold">{p.name}</td>
+                      <td className="p-2 text-xs">{p.viewed_at ? fmtTime(p.viewed_at) : "—"}</td>
+                      <td className="p-2 text-xs">{p.clicked_at ? fmtTime(p.clicked_at) : <span className="muted">لا</span>}</td>
+                      <td className="p-2 text-xs">{p.bought.length ? p.bought.map((b: any, i: number) => <div key={i} className="font-semibold text-emerald-700 dark:text-emerald-400">✓ {b.what}{b.amount ? ` · ${n(b.amount)} ر.س` : ""}</div>) : <span className="muted">لا</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </Modal>
   );
 }

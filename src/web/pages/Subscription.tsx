@@ -5,7 +5,7 @@ import { isNative, openExternal } from "../platform";
 import { api } from "../api";
 import { Icon } from "../components/Icon";
 import { PlansShowcase } from "../components/PlansShowcase";
-import { TopupModal } from "../components/Promos";
+import { TopupPicker } from "../components/Promos";
 import { Alert, Card, InfoDot, Spinner, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
@@ -25,20 +25,6 @@ function Meter({ label, used, max, extra = 0 }: { label: React.ReactNode; used: 
     </div>
   );
 }
-
-/** «اشحن رسائل» under the messages meter, from the owner's threshold (or when out). */
-function TopupButton() {
-  const { data } = useAsync(() => api<any>("/api/topups").catch(() => null), []);
-  const [open, setOpen] = useState(false);
-  if (!data?.show || isStaff()) return null;
-  return (
-    <>
-      <button className={`btn w-full ${data.out ? "btn-primary" : "btn-ghost"}`} onClick={() => setOpen(true)}><Icon name="zap" size={18} />{data.out ? "خلصت رسائلك — اشحن رسائل الحين" : "اشحن رسائل إضافية"}</button>
-      {open && <TopupModal onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
 
 export function SubscriptionPage() {
   const { data, loading, error, reload } = useAsync(() => api<any>("/api/subscription"), []);
@@ -150,7 +136,6 @@ export function SubscriptionPage() {
           {data.active && (
             <div className="mt-4 space-y-3">
               <Meter label={<span className="inline-flex items-center gap-1">رسائل الدورة الحالية <InfoDot text="كل رسالة يرسلها النظام تلقائيًا وتقبلها إنستقرام تنحسب وحدة: الرد العلني على التعليق، والرد الخاص على التعليق، والرسائل في الخاص (مثل رسالة الرابط والمتابعة). ما تنحسب: تجارب المحاكاة، والردود اللي ترسلها بيدك من صندوق الرسائل. العدّاد يتجدد كل 30 يوم من تاريخ تفعيل اشتراكك وما دام الاشتراك فعّال — وإذا انتهى الاشتراك يتجدد مع التجديد." /></span>} used={data.usage.messages} max={data.limits.monthly_messages} extra={data.extra_messages ?? 0} />
-              <TopupButton />
               <p className="muted -mt-1 text-xs">{data.usage.resets_at ? `يتجدد عدّاد الرسائل والسحوبات في ${fmtDate(data.usage.resets_at)}` : "يتجدد عدّاد الرسائل والسحوبات مع تجديد اشتراكك"}</p>
               <Meter label="الحملات النشطة" used={data.usage.active_campaigns} max={data.limits.active_campaigns} />
               {data.limits.draws_per_month !== 0 && <Meter label="سحوبات الدورة الحالية" used={data.usage.draws_this_month} max={data.limits.draws_per_month} />}
@@ -159,6 +144,7 @@ export function SubscriptionPage() {
         </Card>
         {canUpgrade ? <div id="upgrade" className="scroll-mt-20"><UpgradeCard data={data} onPay={goPay} /></div> : <ReferralCard />}
       </div>
+      {data.active && !isStaff() && <TopupCard />}
       {canUpgrade && <ReferralCard />}
       <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
       <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
@@ -184,6 +170,23 @@ export function SubscriptionPage() {
       )}
     </div>
   );
+}
+
+/** Extra message packs, always on «اشتراكي» while the plan is active (hidden when the owner sells none). */
+function TopupCard() {
+  const [has, setHas] = useState(true);
+  return has ? (
+    <div id="topup" className="scroll-mt-20">
+      <Card title={<span className="flex items-center gap-2"><Icon name="zap" size={18} />رسائل إضافية</span>}>
+        <TopupPickerOrHide onEmpty={() => setHas(false)} />
+      </Card>
+    </div>
+  ) : null;
+}
+function TopupPickerOrHide({ onEmpty }: { onEmpty: () => void }) {
+  const { data } = useAsync(() => api<any>("/api/topups").catch(() => null), []);
+  useEffect(() => { if (data && !data.packs?.length) onEmpty(); }, [data]);
+  return data?.packs?.length ? <TopupPicker /> : <Spinner />;
 }
 
 /** The customer's invitation link: a friend who signs up with it gives both of them bonus days. */

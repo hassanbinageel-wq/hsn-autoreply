@@ -152,10 +152,7 @@ export function DashboardPage() {
                 <Link to="/connection" className="btn btn-ghost min-h-9 px-3 text-xs">إدارة</Link>
               </div>
             ) : (
-              <div className="space-y-3">
-                <Alert tone="warn">لا يوجد حساب إنستقرام متصل. الأتمتة لن تعمل قبل الربط الرسمي عبر Meta.</Alert>
-                {!isStaff() && <Link to="/connection" className="btn btn-primary w-full">اربط حسابك الآن</Link>}
-              </div>
+              <Alert tone="warn">لا يوجد حساب إنستقرام متصل. الأتمتة لن تعمل قبل الربط الرسمي عبر Meta.</Alert>
             )}
             <div className="grid grid-cols-3 gap-2 text-center">
               {[

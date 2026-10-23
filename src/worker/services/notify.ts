@@ -10,7 +10,7 @@ import { drawsThisMonth, getEntitlement, monthlyMessages, usageCycle } from "./p
 import { weeklyReport, weeklyText } from "./growth";
 import { tzOffsetMinutes } from "./analytics";
 import { serviceDomain } from "./domain";
-import { fillMessage } from "../../shared/messageTemplates";
+import { DEFAULT_MESSAGE_TEMPLATES, fillMessage, OUT_OF_MESSAGES_TEMPLATE, type MessageTemplates } from "../../shared/messageTemplates";
 
 /**
  * Owner notifications through a Telegram bot the owner creates (free, no extra account needed).
@@ -295,9 +295,15 @@ export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number>
       await setSetting(env.DB, t.id, key, level);
       const n = (x: number) => x.toLocaleString("en-US");
       if (level === 100 && c.key === "messages") {
-        // The owner hears it too, with a link that opens the ready «خلصت الرسائل» message for this customer.
+        // Out of messages: the customer gets the owner's ready «خلصت الرسائل» message automatically (the owner can
+        // edit it in the templates), and the owner is told it went out.
+        const templates = await getSetting<MessageTemplates>(env.DB, OWNER_TENANT, "message_templates", DEFAULT_MESSAGE_TEMPLATES);
+        const tpl = templates.private?.find((x) => x.label === OUT_OF_MESSAGES_TEMPLATE) ?? DEFAULT_MESSAGE_TEMPLATES.private.find((x) => x.label === OUT_OF_MESSAGES_TEMPLATE)!;
+        await sendOwnerMessage(env, { tenantId: t.id, title: tpl.title, body: tpl.body, link: tpl.link, days: tpl.days }, now);
         const name = (await first<{ name: string }>(env.DB, "SELECT name FROM tenants WHERE id = ?", t.id))?.name ?? String(t.id);
-        await notify(env, OWNER_TENANT, "plan", `📭 «${name}» خلّص رسائل دورته (${n(c.used)} من ${n(c.limit)}) — أرسل له رسالة «خلصت الرسائل» من الإشعارات.`, undefined, { link: `/owner?tab=customers&message=${t.id}` });
+        await notify(env, OWNER_TENANT, "plan", `📭 «${name}» خلّص رسائل دورته (${n(c.used)} من ${n(c.limit)}) — وصلته رسالة «${OUT_OF_MESSAGES_TEMPLATE}» تلقائيًا.`, undefined, { link: "/owner?tab=customers" });
+        sent++;
+        continue;
       }
       await notify(
         env,

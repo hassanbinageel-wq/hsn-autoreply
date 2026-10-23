@@ -13,7 +13,7 @@ const RULES: Rule[] = [
   { re: /^\/account\/email(\/verify)?$/, perms: "any" },
   { re: /^\/account\/password(\/confirm)?$/, perms: "any" },
   { re: /^\/app-notifications(\/.*)?$/, perms: "any" },
-  { re: /^\/(dashboard|account|settings|subscription|usage|promos|topups)$/, perms: "any", read: true },
+  { re: /^\/(dashboard|account|settings|subscription|usage|promos|topups|cycle)$/, perms: "any", read: true },
   { re: /^\/offers\/\d+\/click$/, perms: "any" },
 
   { re: /^\/(inbox|inbox-labels|saved-replies|dm-menu)(\/.*)?$/, perms: ["inbox"] },
@@ -33,7 +33,7 @@ const RULES: Rule[] = [
   // The service owner's panel (only exists for the owner account).
   { re: /^\/owner\/(tenants|health|broadcast|messages|message-templates)(\/.*)?$/, perms: ["owner_customers"] },
   { re: /^\/owner\/support(\/.*)?$/, perms: ["owner_support"] },
-  { re: /^\/owner\/(plans|codes|coupons|referral|feature-order|featured-plan|topups|offers)(\/.*)?$/, perms: ["owner_plans"] },
+  { re: /^\/owner\/(plans|codes|coupons|referral|feature-order|featured-plan|topups|offers|offer-templates)(\/.*)?$/, perms: ["owner_plans"] },
   { re: /^\/owner\/(payment-(providers|accounts|methods)|card-payments)(\/.*)?$/, perms: ["owner_payments"] },
   { re: /^\/owner\/(branding|login-banner|settings)$/, perms: ["owner_branding"] },
 ];

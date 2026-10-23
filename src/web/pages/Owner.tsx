@@ -14,6 +14,7 @@ import { API_BASE } from "../platform";
 import { BANNER_SIZES, DEFAULT_TEXTS, DesktopBanner, MobileBanner, PointIcon, toCm, type BannerTexts, type Branding } from "../components/LoginBanner";
 import { remixExists, remixName } from "../components/RemixIcon";
 import { Icon } from "../components/Icon";
+import { logoDataUrl } from "../lib/logoImage";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, LIMIT_ROW_LABELS, PRICE_PERIODS, formatPrice, orderFeatures } from "../../shared/plans";
 
@@ -103,6 +104,7 @@ function CustomersTab() {
   }, [data]);
   // Search by store (login) name, user name, email or Instagram handle; each card's details open on demand.
   const [q, setQ] = useState("");
+  const [sort, setSort] = useState<"new" | "most" | "least">("new");
   const [open, setOpen] = useState<Set<number>>(() => new Set());
   const toggle = (id: number) => setOpen((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const act = async (fn: () => Promise<unknown>, msg: string) => {
@@ -116,7 +118,13 @@ function CustomersTab() {
   };
   const all = (data ?? []).filter((t) => !t.is_owner);
   const nq = normText(q);
-  const customers = nq ? all.filter((t) => [t.name, t.username, t.email, t.ig_username].some((v) => v && normText(String(v)).includes(nq))) : all;
+  const found = nq ? all.filter((t) => [t.name, t.username, t.email, t.ig_username].some((v) => v && normText(String(v)).includes(nq))) : all;
+  // Share of this cycle's messages used (plan + top-ups); unlimited or no plan sort last.
+  const usage = (t: any) => {
+    const limit = t.plan_id && t.messages_limit != null ? t.messages_limit + (t.messages_extra ?? 0) : null;
+    return limit ? (t.messages_month ?? 0) / limit : -1;
+  };
+  const customers = sort === "new" ? found : [...found].sort((a, b) => (sort === "most" ? usage(b) - usage(a) : (usage(a) < 0 ? 2 : usage(a)) - (usage(b) < 0 ? 2 : usage(b))));
   return (
     <div className="space-y-5">
       {adding && <NewCustomer onClose={() => setAdding(false)} onDone={reload} />}
@@ -127,9 +135,16 @@ function CustomersTab() {
         <p className="muted text-sm">{data ? `${all.length} عميل · ${all.filter((t) => t.status === "active" && t.plan_expires_at > Date.now()).length} باشتراك فعّال` : ""}</p>
         <button className="btn btn-primary" onClick={() => setAdding(true)}><Icon name="plus" size={18} />عميل جديد</button>
       </div>
-      <div className="relative max-w-md">
-        <span className="muted pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"><Icon name="search" size={18} /></span>
-        <input className="input pr-10" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث بالاسم أو اسم الحساب على الإنستقرام" aria-label="بحث في العملاء" />
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 max-w-md flex-1">
+          <span className="muted pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"><Icon name="search" size={18} /></span>
+          <input className="input pr-10" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث بالاسم أو اسم الحساب على الإنستقرام" aria-label="بحث في العملاء" />
+        </div>
+        <select className="input !w-auto" value={sort} onChange={(e) => setSort(e.target.value as any)} aria-label="الترتيب">
+          <option value="new">الأحدث</option>
+          <option value="most">الأكثر استهلاكًا للرسائل</option>
+          <option value="least">الأقل استهلاكًا للرسائل</option>
+        </select>
       </div>
       {q && data && <p className="muted text-sm">{customers.length ? `${customers.length} نتيجة` : "ما فيه عميل بهذا الاسم"}</p>}
       {loading && !data ? <Spinner /> : error ? <Alert tone="bad">{error}</Alert> : !all.length ? (
@@ -623,36 +638,6 @@ export function OwnerPage() {
       {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "topups" ? <TopupsTab /> : tab === "offers" ? <OffersTab /> : tab === "payments" ? <><UpgradesCard /><CardPaymentsCard /></> : <BrandingTab />}
     </div>
   );
-}
-
-/** Resizes an image file to a small square logo (data URL) so it stays light in the database. */
-async function logoDataUrl(file: File): Promise<string> {
-  if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) throw new Error("اختر صورة PNG أو JPG أو WEBP");
-  if (file.size > 8 * 1024 * 1024) throw new Error("الصورة كبيرة جدًا (أكثر من 8 ميقا)");
-  // Read as a data: URL — the app's security policy allows data: images but not blob: URLs.
-  const src = await new Promise<string>((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(String(r.result));
-    r.onerror = () => rej(new Error("تعذّر قراءة الملف"));
-    r.readAsDataURL(file);
-  });
-  const img = await new Promise<HTMLImageElement>((res, rej) => {
-    const i = new Image();
-    i.onload = () => res(i);
-    i.onerror = () => rej(new Error("تعذّر قراءة الصورة — جرّب صورة ثانية"));
-    i.src = src;
-  });
-  const size = 160;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-  const scale = Math.min(size / img.width, size / img.height);
-  const w = img.width * scale;
-  const h = img.height * scale;
-  ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
-  const webp = canvas.toDataURL("image/webp", 0.88);
-  return webp.startsWith("data:image/webp") ? webp : canvas.toDataURL("image/png");
 }
 
 function LogoPicker({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
