@@ -5,7 +5,7 @@ export function esc(s: unknown): string {
 }
 
 export const PAGE_CSP =
-  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /** The legal operator of the service, exactly as in the commercial registration (Meta business verification matches it). */
 export const OPERATOR = {
@@ -38,7 +38,9 @@ function layout(title: string, body: string, extraHead = "", lang: Lang = "ar", 
   const sw = path ? `<p style="text-align:${en ? "right" : "left"};margin:0 0 8px"><a href="${en ? path : `${path}?lang=en`}" lang="${en ? "ar" : "en"}">${en ? "العربية" : "English"}</a></p>` : "";
   return `<!doctype html><html lang="${lang}" dir="${en ? "ltr" : "rtl"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>${esc(title)} — ${en ? "Shayyek" : "شيّك"}</title>${extraHead}
-<style>body{font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;max-width:760px;margin:0 auto;padding:24px 16px;line-height:1.8;background:#fff;color:#111}
+<style>@font-face{font-family:"Thmanyah Sans";font-weight:400;font-display:swap;src:url(/fonts/thmanyahsans-Regular.woff2) format("woff2")}
+@font-face{font-family:"Thmanyah Sans";font-weight:700;font-display:swap;src:url(/fonts/thmanyahsans-Bold.woff2) format("woff2")}
+body{font-family:"Thmanyah Sans",system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;max-width:760px;margin:0 auto;padding:24px 16px;line-height:1.8;background:#fff;color:#111}
 @media (prefers-color-scheme:dark){body{background:#0b0f14;color:#e7ecf2}a{color:#7cc4ff}}
 h1{font-size:1.5rem}h2{font-size:1.15rem;margin-top:1.6em}.btn{display:inline-block;padding:14px 22px;border-radius:12px;background:#6d28d9;color:#fff;text-decoration:none;font-weight:700}
 .muted{opacity:.75;font-size:.95rem}</style></head><body>${sw}${body}${operatorFooter(lang)}</body></html>`;

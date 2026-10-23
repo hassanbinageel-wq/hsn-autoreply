@@ -8,10 +8,10 @@
 @import "@fontsource/cairo/latin-800.css";
 
 /* Thmanyah Sans (thmanyah.com) — the interface font. Medium covers semibold, Black covers extrabold. */
-@font-face { font-family: "Thmanyah Sans"; font-weight: 400; font-display: swap; src: url("./fonts/thmanyahsans-Regular.woff2") format("woff2"); }
-@font-face { font-family: "Thmanyah Sans"; font-weight: 500 600; font-display: swap; src: url("./fonts/thmanyahsans-Medium.woff2") format("woff2"); }
-@font-face { font-family: "Thmanyah Sans"; font-weight: 700; font-display: swap; src: url("./fonts/thmanyahsans-Bold.woff2") format("woff2"); }
-@font-face { font-family: "Thmanyah Sans"; font-weight: 800 900; font-display: swap; src: url("./fonts/thmanyahsans-Black.woff2") format("woff2"); }
+@font-face { font-family: "Thmanyah Sans"; font-weight: 400; font-display: swap; src: url("/fonts/thmanyahsans-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Thmanyah Sans"; font-weight: 500 600; font-display: swap; src: url("/fonts/thmanyahsans-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Thmanyah Sans"; font-weight: 700; font-display: swap; src: url("/fonts/thmanyahsans-Bold.woff2") format("woff2"); }
+@font-face { font-family: "Thmanyah Sans"; font-weight: 800 900; font-display: swap; src: url("/fonts/thmanyahsans-Black.woff2") format("woff2"); }
 
 @custom-variant dark (&:where(.dark, .dark *));
 

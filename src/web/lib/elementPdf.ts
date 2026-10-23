@@ -16,7 +16,7 @@ export async function elementToPdf(source: HTMLElement, opts: { title?: string; 
     holder.style.cssText = `position:fixed;top:0;left:-20000px;width:${source.getBoundingClientRect().width}px;padding:8px;background:${getComputedStyle(document.body).backgroundColor || "#fff"}`;
     const h = document.createElement("div");
     h.style.cssText = "margin:0 4px 14px";
-    h.innerHTML = `<div style="font:800 22px Cairo, sans-serif">${esc(opts.title)}</div>${opts.subtitle ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(opts.subtitle)}</div>` : ""}`;
+    h.innerHTML = `<div style="font:800 22px 'Thmanyah Sans', Cairo, sans-serif">${esc(opts.title)}</div>${opts.subtitle ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(opts.subtitle)}</div>` : ""}`;
     holder.append(h, source.cloneNode(true));
     document.body.append(holder);
     el = holder;

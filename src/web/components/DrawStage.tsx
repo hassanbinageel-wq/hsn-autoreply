@@ -11,7 +11,7 @@ import { saveFile } from "../lib/save";
  * a reel of all participant names moves up and down (a different motion for each winner) and stops with the
  * winner under the arrows, then the winner is revealed with fireworks. The winner was already chosen on the server.
  */
-const FONT = `"IBM Plex Sans Arabic", "Segoe UI", Tahoma, Arial, sans-serif`;
+const FONT = `"Thmanyah Sans", "IBM Plex Sans Arabic", "Segoe UI", Tahoma, Arial, sans-serif`;
 const ROW = 118;
 
 /** Positions for the tall (story) and wide (computer screen) layouts. */
@@ -500,7 +500,7 @@ export function DrawStage({
 
     let cancelled = false;
     const fontsReady = Promise.race([
-      Promise.all([`400 40px "IBM Plex Sans Arabic"`, `600 40px "IBM Plex Sans Arabic"`, `700 40px "IBM Plex Sans Arabic"`].map((f) => document.fonts?.load(f))).catch(() => undefined),
+      Promise.all([`400 40px "Thmanyah Sans"`, `600 40px "Thmanyah Sans"`, `700 40px "Thmanyah Sans"`, `400 40px "IBM Plex Sans Arabic"`, `700 40px "IBM Plex Sans Arabic"`].map((f) => document.fonts?.load(f))).catch(() => undefined),
       new Promise((r) => setTimeout(r, 1500)),
     ]);
     fontsReady.then(() => {

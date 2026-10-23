@@ -93,7 +93,7 @@ export function menuProblem(root: MenuNode): string | null {
     if (n.children.length > maxOptions(n)) return `${path}: الحد ${maxOptions(n)} خيارات بهذا الشكل${n.style === "buttons" ? " — غيّر الشكل إلى «أزرار سريعة» لخيارات أكثر" : ""}`;
     if (n.children.length && depth + 1 >= MENU_LIMITS.depth + 1) return `${path}: الحد ${MENU_LIMITS.depth} مستويات`;
     for (const c of n.children) {
-      const e = walk(c, depth + 1, `«${c.label || "خيار"}»`);
+      const e = walk(c, depth + 1, `«${c.label || "زر جديد"}»`);
       if (e) return e;
     }
     return null;
