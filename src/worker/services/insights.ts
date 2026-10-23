@@ -123,7 +123,7 @@ export async function captureInsights(
   now = Date.now(),
 ): Promise<CaptureSummary> {
   const sum: CaptureSummary = { stories: 0, media: 0, account: false };
-  const tz = await getSetting<string>(db, tenantId, "timezone", "Asia/Aden");
+  const tz = await getSetting<string>(db, tenantId, "timezone", "Asia/Riyadh");
   const off = tzOffsetMinutes(tz, now);
 
   const call = async <T>(fn: () => Promise<MetaResult<T>>): Promise<MetaResult<T> | null> => {

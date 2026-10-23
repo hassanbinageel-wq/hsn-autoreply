@@ -171,6 +171,8 @@ export function App() {
     window.addEventListener("hsn:plan-blocked", on);
     return () => window.removeEventListener("hsn:plan-blocked", on);
   }, []);
+  // The box belongs to the page that raised it: moving to another page closes it.
+  useEffect(() => setBlocked(null), [route]);
   const [online, setOnline] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(false);
@@ -207,7 +209,7 @@ export function App() {
       setAuth("in");
 
       api<{ settings: { timezone?: string } }>("/api/settings")
-        .then((s) => setTz(s.settings.timezone ?? "Asia/Aden"))
+        .then((s) => setTz(s.settings.timezone ?? "Asia/Riyadh"))
         .catch(() => undefined);
     } catch (e: any) {
       setAuth(e?.status === 0 ? "in" : "out");
@@ -411,12 +413,13 @@ export function App() {
       </aside>
 
       <div className="min-w-0 flex-1">
-        <header className={`sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)]/90 px-4 backdrop-blur lg:h-[68px] lg:px-8 ${flash ? "bar-flash" : ""}`}>
+        <header style={{ paddingTop: "max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px))" }} className={`sticky top-0 z-30 box-content flex h-16 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)]/90 px-4 backdrop-blur lg:h-[68px] lg:px-8 ${flash ? "bar-flash" : ""}`}>
           <Link to="/" className="flex items-center gap-2 lg:hidden" aria-label="الرئيسية">
             <span className="grad flex h-9 w-9 items-center justify-center rounded-xl text-white"><Icon name="zap" size={19} /></span>
           </Link>
           <div className="min-w-0">
-            <div className="font-display truncate text-[15px] font-bold lg:text-base">{current?.label ?? "Shayyek"}</div>
+            <div className="font-display truncate text-[15px] font-bold lg:hidden">شيّك <span className="muted font-semibold">Shayyek</span></div>
+            <div className="font-display hidden truncate text-base font-bold lg:block">{current?.label ?? "Shayyek"}</div>
           </div>
           <div className="mr-auto flex items-center gap-2">
             <button className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface)]" title="المظهر" aria-label="تبديل المظهر" onClick={() => setTheme(nextTheme)}>

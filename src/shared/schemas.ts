@@ -52,7 +52,7 @@ export const campaignInputSchema = z
     public_reply_fallback_text: publicVariants,
     schedule_start: z.number().int().nullable().optional(),
     schedule_end: z.number().int().nullable().optional(),
-    timezone: text(64).default("Asia/Aden"),
+    timezone: text(64).default("Asia/Riyadh"),
     per_user_cooldown_hours: z.number().int().min(0).max(24 * 365).default(24),
     max_deliveries_per_user: z.number().int().min(0).max(100).default(1),
     max_verify_attempts: z.number().int().min(1).max(50).default(5),

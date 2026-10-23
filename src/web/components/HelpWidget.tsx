@@ -3,7 +3,7 @@ import { api } from "../api";
 import { normText } from "../lib/text";
 import { isNative, openExternal } from "../platform";
 import { Icon } from "./Icon";
-import { Alert } from "./ui";
+import { Alert, TONES } from "./ui";
 
 export interface SupportCenter {
   sections?: Array<{ id: number; title: string }>;
@@ -29,11 +29,24 @@ export function useSupportCenter(): SupportCenter | null {
 }
 
 /** The service-wide incident notice set by the owner, on top of every page. */
+const INCIDENT_KEY = "hsn.incidentClosed";
+/** The owner's notice on top of every page. Closing it hides this text only: a new or edited notice shows again. */
 export function IncidentBanner({ center }: { center: SupportCenter | null }) {
-  if (!center?.incident) return null;
+  const text = center?.incident?.text ?? "";
+  const [closed, setClosed] = useState(() => {
+    try { return localStorage.getItem(INCIDENT_KEY); } catch { return null; }
+  });
+  if (!center?.incident || closed === text) return null;
+  const close = () => {
+    try { localStorage.setItem(INCIDENT_KEY, text); } catch { /* storage blocked: hidden until reload */ }
+    setClosed(text);
+  };
   return (
-    <div className="mb-4">
-      <Alert tone={center.incident.tone}>📢 {center.incident.text}</Alert>
+    <div className={`mb-4 flex items-center gap-2 rounded-xl border border-current/10 py-1.5 ps-3 pe-1 text-[13px] leading-snug sm:rounded-2xl sm:py-2 sm:text-sm ${TONES[center.incident.tone] ?? TONES.info}`}>
+      <span className="min-w-0 flex-1">📢 {text}</span>
+      <button type="button" onClick={close} aria-label="إخفاء التنبيه" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg opacity-70 hover:opacity-100">
+        <Icon name="x" size={16} />
+      </button>
     </div>
   );
 }

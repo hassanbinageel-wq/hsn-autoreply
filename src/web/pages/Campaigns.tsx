@@ -3,7 +3,7 @@ import { askConfirm } from "../components/Confirm";
 import { api } from "../api";
 import { Link, navigate } from "../App";
 import { AR_LABELS } from "../../shared/states";
-import { Alert, Badge, Empty, Modal, Spinner, toast, useAsync } from "../components/ui";
+import { Alert, Badge, Modal, Spinner, toast, useAsync } from "../components/ui";
 import { Icon } from "../components/Icon";
 
 const TYPE_ICON: Record<string, string> = { comment: "msg", story_reply: "play", story_mention: "sparkle" };
@@ -218,7 +218,13 @@ export function CampaignsPage() {
       ) : error ? (
         <Alert tone="bad">{error}</Alert>
       ) : !data!.length ? (
-        <Empty title="لا توجد حملات">أنشئ أول حملة، ثم جرّبها في المعاينة قبل التفعيل.</Empty>
+        <div className="grid max-w-md">
+          <Link to="/campaigns/new" className="flex min-h-[180px] flex-col items-center sm:min-h-[220px] justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--border)] text-center transition hover:border-violet-400">
+            <span className="grad flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/30"><Icon name="plus" size={26} /></span>
+            <b className="font-display mt-2 text-base">لا توجد حملات — أنشئ أول حملة</b>
+            <span className="muted text-xs">ابدأ واختبرها في المحاكاة قبل التفعيل</span>
+          </Link>
+        </div>
       ) : (
         <div className="grid gap-3 sm:gap-4" style={{ gridTemplateColumns: phone ? "repeat(2, minmax(0, 1fr))" : `repeat(auto-fill, minmax(min(100%, ${size}px), 1fr))` }}>
           {data!.map((c) => {
@@ -256,11 +262,6 @@ export function CampaignsPage() {
               </div>
             );
           })}
-          <Link to="/campaigns/new" className="flex min-h-[180px] flex-col items-center sm:min-h-[220px] justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--border)] text-center transition hover:border-violet-400">
-            <span className="grad flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg shadow-violet-500/30"><Icon name="plus" size={26} /></span>
-            <b className="font-display mt-2 text-base">حملة جديدة</b>
-            <span className="muted text-xs">ابدأ واختبرها في المحاكاة قبل التفعيل</span>
-          </Link>
         </div>
       )}
     </div>

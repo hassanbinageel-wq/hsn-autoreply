@@ -5,7 +5,7 @@ import { navigate } from "../App";
 import { renderTemplate, claimsDelivery, claimsFollowRequired, contentLinkButton, publicReplyVariants, pickVariant, SAFE_PUBLIC_REPLIES, MAX_PUBLIC_VARIANTS, TEMPLATE_VARIABLES } from "../../shared/template";
 import { evaluateMatch } from "../../shared/match";
 import { AR_LABELS } from "../../shared/states";
-import { Alert, Card, Field, InfoDot, Spinner, Toggle, currentTz, toast, fmtTime } from "../components/ui";
+import { Alert, Card, Field, InfoDot, Modal, Spinner, Toggle, currentTz, toast, fmtTime } from "../components/ui";
 import { PhonePreview, type ChatMsg, type CommentMsg } from "../components/PhonePreview";
 import { Icon } from "../components/Icon";
 
@@ -81,7 +81,7 @@ const EMPTY: Form = {
   public_reply_fallback_text: "",
   schedule_start: null,
   schedule_end: null,
-  timezone: "Asia/Aden",
+  timezone: "Asia/Riyadh",
   per_user_cooldown_hours: 24,
   max_deliveries_per_user: 1,
   max_verify_attempts: 5,
@@ -242,6 +242,8 @@ const stepIds = (gated: boolean) => (gated ? STEPS.map((_, i) => i) : STEPS.map(
 export function CampaignWizard({ id }: { id: number | null }) {
   const [form, setForm] = useState<Form>({ ...EMPTY, timezone: currentTz() });
   const [step, setStep] = useState(0);
+  // Below xl the live preview sits behind a button (in a window) instead of a screen-tall phone under the form.
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [quick, setQuick] = useState(!id);
   const [loading, setLoading] = useState(!!id);
   const [saving, setSaving] = useState(false);
@@ -980,14 +982,16 @@ export function CampaignWizard({ id }: { id: number | null }) {
               )}
             </Card>
           )}
+          <button type="button" className="btn btn-ghost w-full xl:hidden" onClick={() => setPreviewOpen(true)}><Icon name="eye" size={18} />معاينة الرسالة</button>
           <div className="flex justify-between gap-2">
             <button className="btn btn-ghost" disabled={step === 0} onClick={() => setStep((st) => st - 1)}><Icon name="arrowL" size={18} className="rotate-180" />السابق</button>
             {step < labels.length - 1 && <button className="btn btn-primary" onClick={next}>التالي<Icon name="arrowL" size={18} /></button>}
           </div>
         </div>
 
-        <aside className="lg:col-span-2 xl:sticky xl:top-20 xl:col-span-1 xl:self-start">{preview}</aside>
+        <aside className="hidden xl:sticky xl:top-20 xl:block xl:self-start">{preview}</aside>
       </div>
+      <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="معاينة الرسالة">{previewOpen && preview}</Modal>
     </div>
   );
 }

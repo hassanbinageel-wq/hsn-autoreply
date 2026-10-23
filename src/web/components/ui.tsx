@@ -127,7 +127,7 @@ export function Stat({ label, value, hint, tone = "default", icon, accent = "vio
   );
 }
 
-const TONES: Record<string, string> = {
+export const TONES: Record<string, string> = {
   good: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
   warn: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
   bad: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
@@ -264,7 +264,7 @@ export function ToastHost() {
   );
 }
 
-/** Formats UTC milliseconds in the configured time zone (default Asia/Aden). */
+/** Formats UTC milliseconds in the configured time zone (default Asia/Riyadh). */
 // One date style everywhere: day, month name, year ("13 أكتوبر 2026"), Gregorian calendar and Latin digits, so the
 // order never flips inside right-to-left text and nobody has to guess which number is the day or the month.
 const AR = "ar-SA-u-ca-gregory-nu-latn";
@@ -285,9 +285,9 @@ export function fmtDate(ms: number | null | undefined, tz = currentTz()): string
     return new Date(ms).toISOString().slice(0, 10);
   }
 }
-let tzValue = "Asia/Aden";
+let tzValue = "Asia/Riyadh";
 export function setTz(tz: string) {
-  tzValue = tz || "Asia/Aden";
+  tzValue = tz || "Asia/Riyadh";
 }
 export function currentTz() {
   return tzValue;

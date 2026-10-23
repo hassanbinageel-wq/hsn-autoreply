@@ -189,6 +189,8 @@ async function publicSettings(db: D1Database, tenantId: number): Promise<Record<
     if (k.startsWith("telegram") || k.startsWith("notify")) continue;
     out[k] = JSON.parse(r.value);
   }
+  // New customers have no saved zone yet: show the default instead of an empty choice.
+  if (!out.timezone) out.timezone = "Asia/Riyadh";
   return out;
 }
 
@@ -2243,14 +2245,14 @@ export function createApp() {
     const to = Number(c.req.query("to"));
     if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= from || to - from > 400 * 86_400_000) return null;
     const type = c.req.query("type");
-    const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Aden");
+    const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Riyadh");
     return {
       from,
       to: Math.min(to, now + 60_000),
       campaignId: Number(c.req.query("campaign_id")) || undefined,
       mediaId: (c.req.query("media_id") || "").slice(0, 64) || undefined,
       type: type === "comment" || type === "story_reply" || type === "story_mention" ? (type as EventType) : undefined,
-      tzOffsetMin: tzOffsetMinutes(tz || "Asia/Aden"),
+      tzOffsetMin: tzOffsetMinutes(tz || "Asia/Riyadh"),
     };
   };
   api.get("/analytics", async (c) => {
@@ -2351,7 +2353,7 @@ export function createApp() {
       requested: await wantsPublishScope(c.env.DB, T(c)),
       storage: !!c.env.MEDIA,
       limits: LIMITS,
-      tz_offset_min: tzOffsetMinutes((await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Aden")) || "Asia/Aden"),
+      tz_offset_min: tzOffsetMinutes((await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Riyadh")) || "Asia/Riyadh"),
       scope_mode: c.get("session").is_owner ? await publishScopeMode(c.env.DB) : undefined,
     });
   });
@@ -2650,14 +2652,14 @@ export function createApp() {
     return c.json({ generated_at: Date.now(), ...(await postSales(c.env.DB, T(c), f, { storeOnly: c.req.query("store_only") === "1" })) });
   });
   api.get("/growth/best-times", async (c) => {
-    const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Aden");
-    return c.json(await bestTimes(c.env.DB, T(c), tzOffsetMinutes(tz || "Asia/Aden")));
+    const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Riyadh");
+    return c.json(await bestTimes(c.env.DB, T(c), tzOffsetMinutes(tz || "Asia/Riyadh")));
   });
   api.get("/growth/weekly", async (c) => {
     const blocked = await planBlock(c, "campaign_stats");
     if (blocked) return blocked;
-    const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Aden");
-    return c.json({ generated_at: Date.now(), timezone: tz, ...(await weeklyReport(c.env.DB, T(c), tzOffsetMinutes(tz || "Asia/Aden"))) });
+    const tz = await getSetting<string>(c.env.DB, T(c), "timezone", "Asia/Riyadh");
+    return c.json({ generated_at: Date.now(), timezone: tz, ...(await weeklyReport(c.env.DB, T(c), tzOffsetMinutes(tz || "Asia/Riyadh"))) });
   });
   api.get("/store/campaigns/:id", async (c) => {
     const blocked = await planBlock(c, "store");

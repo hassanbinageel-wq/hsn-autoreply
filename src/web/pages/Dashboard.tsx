@@ -51,6 +51,10 @@ export function DashboardPage() {
   const jobs = d.jobs as Row[];
   const flows = d.flows as Row[];
   const acc = d.account;
+  // Linked = an Instagram account the automation can work on. A customer who never linked one sees only the first
+  // steps and the status (empty numbers and charts before that only look broken).
+  const linked = !!acc && acc.status !== "disconnected";
+  const fresh = !acc;
 
   const toggleAutomation = async (enabled: boolean) => {
     if (!enabled && !(await askConfirm({ title: "إيقاف كل الأتمتة؟", message: "تُلغى الرسائل المعلّقة، وما تُعالج التعليقات الجديدة لين تشغّلها من جديد.", confirmLabel: "إيقاف الأتمتة", danger: true }))) return;
@@ -94,7 +98,7 @@ export function DashboardPage() {
       <EmailNudge />
       {!isStaff() && <GettingStarted connected={!!acc && acc.status === "active"} total={(d.campaigns?.active ?? 0) + (d.campaigns?.paused ?? 0) + (d.campaigns?.draft ?? 0)} active={d.campaigns?.active ?? 0} />}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+      {!fresh && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
         {[
           { label: "تفاعلات مستلمة", value: received, hint: "تعليقات وردود ومنشن ستوري", info: "كل تعليق أو رد على ستوري أو منشن في ستوري وصل للنظام خلال المدة المختارة، ومعها المكرر واللي ما طابق كلمات الحملات.", icon: "msg", accent: "violet", s: series?.comments, c: "#7c3aed" },
           { label: "رسائل وصلت", value: sent, hint: "قبلتها Meta (≠ قُرئت)", info: "عدد الرسائل الخاصة اللي أرسلها النظام وقبلتها Meta. القبول يعني إنها انرسلت، مو بالضرورة إن الشخص قرأها.", icon: "send", accent: "pink", s: undefined, c: "#db2777" },
@@ -106,10 +110,10 @@ export function DashboardPage() {
             <div className="pointer-events-none absolute bottom-4 left-4 hidden sm:block"><Sparkline values={spark(k.s)} color={k.c} /></div>
           </div>
         ))}
-      </div>
+      </div>}
 
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
-        <Card
+      <div className={`grid grid-cols-[minmax(0,1fr)] gap-4 ${fresh ? "" : "lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]"}`}>
+        {!fresh && <Card
           title="نشاط الحملات"
           action={
             <div className="flex items-center gap-2 text-xs font-bold">
@@ -123,17 +127,17 @@ export function DashboardPage() {
           ) : (
             <Spinner />
           )}
-        </Card>
+        </Card>}
 
-        <Card className="order-first lg:order-none" title="حالة النظام" action={<Badge value={d.automation_enabled ? "active" : "paused"} label={d.automation_enabled ? "يعمل" : "متوقف"} />}>
+        <Card className="order-first lg:order-none" title="حالة النظام" action={linked ? <Badge value={d.automation_enabled ? "active" : "paused"} label={d.automation_enabled ? "يعمل" : "متوقف"} /> : <Badge value="paused" label="غير مربوط" />}>
           <div className="space-y-4">
-            <Toggle
+            {linked && <Toggle
               checked={!!d.automation_enabled}
               onChange={toggleAutomation}
               disabled={busy || isStaff()}
               label={d.automation_enabled ? "الأتمتة تعمل" : "الأتمتة متوقفة"}
               description="إيقاف شامل: يوقف معالجة الأحداث الجديدة ويلغي الرسائل المعلّقة."
-            />
+            />}
             {acc && acc.status !== "disconnected" ? (
               <div className="flex items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
                 <AccountAvatar url={acc.profile_picture_url} name={acc.username} size={44} />
@@ -148,7 +152,10 @@ export function DashboardPage() {
                 <Link to="/connection" className="btn btn-ghost min-h-9 px-3 text-xs">إدارة</Link>
               </div>
             ) : (
-              <Alert tone="warn">لا يوجد حساب إنستقرام متصل. الأتمتة لن تعمل قبل الربط الرسمي عبر Meta. <Link to="/connection" className="font-bold underline">اربط الآن</Link></Alert>
+              <div className="space-y-3">
+                <Alert tone="warn">لا يوجد حساب إنستقرام متصل. الأتمتة لن تعمل قبل الربط الرسمي عبر Meta.</Alert>
+                {!isStaff() && <Link to="/connection" className="btn btn-primary w-full">اربط حسابك الآن</Link>}
+              </div>
             )}
             <div className="grid grid-cols-3 gap-2 text-center">
               {[
@@ -166,7 +173,7 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
+      {!fresh && <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
         <Card title="أفضل الحملات" action={<Link to="/campaigns" className="btn btn-ghost min-h-9 px-3 text-xs">عرض الكل</Link>}>
           {!(d.top_campaigns as any[])?.length ? (
             <p className="muted py-6 text-center text-sm">لا توجد تفاعلات في هذه المدة بعد.</p>
@@ -225,11 +232,11 @@ export function DashboardPage() {
             </div>
           )}
         </Card>
-      </div>
+      </div>}
 
       {!isStaff() && <UsageCard />}
 
-      <details className="card group p-0">
+      {!fresh && <details className="card group p-0">
         <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-5 py-3 font-bold [&::-webkit-details-marker]:hidden">
           تفاصيل المدة
           <Icon name="chev" size={18} className="muted transition group-open:rotate-180" />
@@ -249,7 +256,7 @@ export function DashboardPage() {
             hint="غير المؤكدة تحتاج مراجعة يدوية"
           />
         </div>
-      </details>
+      </details>}
     </div>
   );
 }

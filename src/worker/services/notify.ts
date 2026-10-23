@@ -39,7 +39,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   daily_report: true,
   weekly_report: true,
   report_hour: 21,
-  timezone: "Asia/Aden",
+  timezone: "Asia/Riyadh",
   alert_reauth: true,
   alert_failures: true,
   alert_spike: true,
@@ -457,7 +457,7 @@ async function runTenantNotifications(env: Env, tenantId: number, now: number): 
       await setSetting(env.DB, tenantId, "notify_last_weekly_date", local.date);
       const tz = await getSetting<string>(env.DB, tenantId, "timezone", s.timezone);
       const domain = serviceDomain(env);
-      const r = await weeklyReport(env.DB, tenantId, tzOffsetMinutes(tz || "Asia/Aden", now), now);
+      const r = await weeklyReport(env.DB, tenantId, tzOffsetMinutes(tz || "Asia/Riyadh", now), now);
       await sendTelegram(env, tenantId, weeklyText(r, domain ? `https://${domain}/#/report` : undefined), s);
     }
   }
