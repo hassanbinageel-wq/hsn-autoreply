@@ -282,7 +282,7 @@ export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number>
     const cy = await usageCycle(env.DB, t.id, now);
     const when = cy.resets_at ? `لين يتجدد العدّاد في ${new Date(cy.resets_at).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { day: "numeric", month: "long", timeZone: "Asia/Riyadh" })}` : "لين تجدد اشتراكك";
     const checks: Array<{ key: string; used: number; limit: number | null; what: string; full: string }> = [
-      { key: "messages", used: await monthlyMessages(env.DB, t.id, now), limit: ent.limits.monthly_messages, what: "رسائل باقتك لهذي الدورة", full: `الردود التلقائية متوقفة ${when} أو ترقّي باقتك من «اشتراكي».` },
+      { key: "messages", used: await monthlyMessages(env.DB, t.id, now), limit: ent.limits.monthly_messages, what: "رسائل باقتك لهذي الدورة", full: `الردود التلقائية متوقفة ${when} — تقدر تشحن رسائل إضافية أو ترقّي باقتك من «اشتراكي».` },
       { key: "draws", used: ent.limits.draws_per_month ? await drawsThisMonth(env.DB, t.id, now) : 0, limit: ent.limits.draws_per_month || null, what: "سحوبات باقتك لهذي الدورة", full: `ما تقدر تسوي سحب جديد ${when} أو ترقّي باقتك من «اشتراكي».` },
     ];
     for (const c of checks) {
@@ -294,6 +294,11 @@ export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number>
       if ((await getSetting<number>(env.DB, t.id, key, 0)) >= level) continue;
       await setSetting(env.DB, t.id, key, level);
       const n = (x: number) => x.toLocaleString("en-US");
+      if (level === 100 && c.key === "messages") {
+        // The owner hears it too, with a link that opens the ready «خلصت الرسائل» message for this customer.
+        const name = (await first<{ name: string }>(env.DB, "SELECT name FROM tenants WHERE id = ?", t.id))?.name ?? String(t.id);
+        await notify(env, OWNER_TENANT, "plan", `📭 «${name}» خلّص رسائل دورته (${n(c.used)} من ${n(c.limit)}) — أرسل له رسالة «خلصت الرسائل» من الإشعارات.`, undefined, { link: `/owner?tab=customers&message=${t.id}` });
+      }
       await notify(
         env,
         t.id,

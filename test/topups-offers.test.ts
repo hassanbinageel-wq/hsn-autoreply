@@ -1,0 +1,174 @@
+import { exports } from "cloudflare:workers";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DB, resetDb, seedAccount, TEST_ENV } from "./helpers";
+import { getEntitlement, usageCycle } from "../src/worker/services/plans";
+import { runPlanAlerts } from "../src/worker/services/notify";
+
+const BASE = "https://hsn.example.workers.dev";
+const SELF = (exports as any).default as { fetch: (r: Request) => Promise<Response> };
+type H = Record<string, string>;
+
+async function call(path: string, h: H = {}, method = "GET", body?: unknown) {
+  const r = await SELF.fetch(new Request(BASE + path, { method, headers: { "Content-Type": "application/json", ...h }, body: body === undefined ? undefined : JSON.stringify(body) }));
+  return { status: r.status, body: (await r.json().catch(() => null)) as any };
+}
+async function login(username: string, password: string): Promise<H> {
+  const r = await call("/api/auth/login", {}, "POST", { username, password, client: "app" });
+  if (!r.body?.token) throw new Error(`login failed: ${JSON.stringify(r.body)}`);
+  return { Authorization: `Bearer ${r.body.token}` };
+}
+
+let OWNER: H;
+beforeEach(async () => {
+  await resetDb();
+  await seedAccount();
+  await call("/api/auth/setup", {}, "POST", { setup_token: "test_setup_token_123456", username: "admin", password: "a-very-strong-password" });
+  OWNER = await login("admin", "a-very-strong-password");
+});
+async function register(username: string) {
+  const code = (await call("/api/owner/codes", OWNER, "POST", { plan_id: "basic", days: 30, count: 1 })).body.codes[0];
+  expect((await call("/api/auth/register", {}, "POST", { name: `متجر ${username}`, username, password: "another-strong-password", code })).status).toBe(200);
+  const h = await login(username, "another-strong-password");
+  const tid = (await DB.prepare("SELECT tenant_id FROM admin_users WHERE username = ?").bind(username).first<any>()).tenant_id as number;
+  return { h, tid };
+}
+const setUsage = async (tid: number, n: number) =>
+  DB.prepare("INSERT INTO usage_counters (tenant_id, month, messages) VALUES (?, ?, ?) ON CONFLICT(tenant_id, month) DO UPDATE SET messages = excluded.messages").bind(tid, (await usageCycle(DB, tid)).key, n).run();
+
+// ---- Moyasar stub (same shape as the plan payments tests)
+let reqs: Array<{ method: string; url: string; body: any }> = [];
+let remote: { status: string } = { status: "initiated" };
+const realFetch = globalThis.fetch;
+function stubMoyasar() {
+  reqs = [];
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.startsWith("https://api.moyasar.com/")) {
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      reqs.push({ method: init?.method ?? "GET", url, body });
+      if (init?.method === "POST") return new Response(JSON.stringify({ id: "inv_topup01", status: "initiated", amount: body.amount, currency: body.currency, url: "https://checkout.moyasar.com/invoices/inv_topup01" }), { status: 201 });
+      const created = reqs.find((r) => r.method === "POST")?.body;
+      return new Response(JSON.stringify({ id: "inv_topup01", status: remote.status, amount: created?.amount, currency: "SAR" }), { status: 200 });
+    }
+    return realFetch(input as any, init);
+  });
+}
+afterEach(() => vi.unstubAllGlobals());
+
+describe("message top-ups", () => {
+  it("the owner manages packs; a customer of an allowed plan sees active ones only, from the threshold", async () => {
+    const { h, tid } = await register("shop_a");
+    const a = (await call("/api/owner/topups/packs", OWNER, "POST", { messages: 5000, price: 35, badge: "الأكثر طلبًا" })).body.id;
+    await call("/api/owner/topups/packs", OWNER, "POST", { messages: 2000, price: 15, active: false });
+    await call("/api/owner/topups/packs", OWNER, "POST", { messages: 50000, price: 250, plan_ids: ["pro"] });
+    expect((await call("/api/owner/topups/packs", h, "POST", { messages: 1, price: 1 })).status).toBe(403); // customers cannot
+
+    let st = (await call("/api/topups", h)).body;
+    expect(st.packs.map((p: any) => p.id)).toEqual([a]); // inactive and pro-only hidden from basic
+    expect(st.packs[0]).toMatchObject({ messages: 5000, price: 35, badge: "الأكثر طلبًا" });
+    expect(st.show).toBe(false); // 0 of 1,000 used, below 90%
+    await setUsage(tid, 950);
+    st = (await call("/api/topups", h)).body;
+    expect(st.show).toBe(true);
+    expect(st.out).toBe(false);
+  });
+
+  it("buying a pack: invoice for the pack price, credit added to this cycle once paid, limit raised for that customer only", async () => {
+    stubMoyasar();
+    const { h, tid } = await register("shop_a");
+    const other = await register("shop_b");
+    const pack = (await call("/api/owner/topups/packs", OWNER, "POST", { messages: 5000, price: 35 })).body.id;
+    await setUsage(tid, 1000);
+    expect((await call("/api/promos", h)).body.popup).toMatchObject({ buy: true, cta: "اشحن رسائل" });
+
+    const r = await call("/api/topups/pay", h, "POST", { pack_id: pack });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ messages: 5000, amount: 35, url: "https://checkout.moyasar.com/invoices/inv_topup01" });
+    expect(reqs[0].body).toMatchObject({ amount: 3500, currency: "SAR" });
+    expect((await getEntitlement(DB, tid)).limits.monthly_messages).toBe(1000); // not before paying
+
+    remote = { status: "paid" };
+    const s = await call(`/api/subscription/pay/${r.body.id}`, h);
+    expect(s.body).toMatchObject({ status: "paid", topup_messages: 5000 });
+    await call(`/api/subscription/pay/${r.body.id}`, h); // checking again does not add it twice
+    const ent = await getEntitlement(DB, tid);
+    expect(ent.limits.monthly_messages).toBe(6000);
+    expect(ent.extra_messages).toBe(5000);
+    expect((await getEntitlement(DB, other.tid)).limits.monthly_messages).toBe(1000); // isolation
+    expect((await call("/api/promos", h)).body.popup).toBeNull(); // not out any more
+    const st = (await call("/api/topups", h)).body;
+    expect(st).toMatchObject({ used: 1000, limit: 6000, plan_limit: 1000, extra: 5000, purchases: 1 });
+    expect((await call("/api/topups", other.h)).body.history).toEqual([]);
+    const notes = (await DB.prepare("SELECT tenant_id, title FROM app_notifications WHERE title LIKE '%شحن%' ORDER BY id").all<any>()).results;
+    expect(notes.map((n: any) => n.tenant_id).sort()).toEqual([1, tid].sort());
+  });
+
+  it("the cap per cycle, staff, card off, and packs for another plan are refused", async () => {
+    stubMoyasar();
+    const { h } = await register("shop_a");
+    const pack = (await call("/api/owner/topups/packs", OWNER, "POST", { messages: 2000, price: 15 })).body.id;
+    const pro = (await call("/api/owner/topups/packs", OWNER, "POST", { messages: 2000, price: 15, plan_ids: ["pro"] })).body.id;
+    expect((await call("/api/topups/pay", h, "POST", { pack_id: pro })).status).toBe(404);
+    await call("/api/owner/topups/settings", OWNER, "PUT", { max_per_cycle: 1, show_at_pct: 90, popup: { enabled: true, title: "خلصت", body: "اشحن الحين", cta: "اشحن", cancel: "لاحقًا" } });
+    const r = await call("/api/topups/pay", h, "POST", { pack_id: pack });
+    remote = { status: "paid" };
+    await call(`/api/subscription/pay/${r.body.id}`, h);
+    const again = await call("/api/topups/pay", h, "POST", { pack_id: pack });
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe("capped");
+    expect((await call("/api/topups/pay", OWNER, "POST", { pack_id: pack })).status).toBe(409);
+  });
+
+  it("the owner can gift messages, and the out-of-messages window text comes from the owner's settings", async () => {
+    const { h, tid } = await register("shop_a");
+    await call("/api/owner/topups/settings", OWNER, "PUT", { max_per_cycle: 0, show_at_pct: 90, popup: { enabled: true, title: "رصيدك خلص", body: "اشحن وارجع للردود", cta: "يلا نشحن", cancel: "بعدين" } });
+    await setUsage(tid, 1000);
+    expect((await call("/api/promos", h)).body.popup).toMatchObject({ title: "رصيدك خلص", body: "اشحن وارجع للردود", cta: "يلا نشحن", cancel: "بعدين", buy: false });
+    expect((await call(`/api/owner/tenants/${tid}/credits`, OWNER, "POST", { messages: 500 })).status).toBe(200);
+    expect((await getEntitlement(DB, tid)).limits.monthly_messages).toBe(1500);
+    expect((await call("/api/promos", h)).body.popup).toBeNull();
+  });
+
+  it("the owner hears when a customer runs out, with a link to message them; the ready template exists", async () => {
+    const { tid } = await register("shop_a");
+    await setUsage(tid, 1000);
+    const at = Math.floor(Date.now() / 600_000) * 600_000 + 3 * 60_000;
+    await runPlanAlerts(TEST_ENV, at);
+    const owner = (await DB.prepare("SELECT title, link FROM app_notifications WHERE tenant_id = 1 AND title LIKE '%خلّص%'").all<any>()).results;
+    expect(owner).toHaveLength(1);
+    expect(owner[0].link).toBe(`/owner?tab=customers&message=${tid}`);
+    const t = (await call("/api/owner/message-templates", OWNER)).body;
+    expect(t.templates.private.some((x: any) => x.label === "خلصت الرسائل")).toBe(true);
+  });
+});
+
+describe("offers", () => {
+  const offer = (o: Record<string, unknown> = {}) => ({ title: "خصم 30%", body: "على الباقة الاحترافية", cta: "اشترك", link: "/subscription", theme: "violet", icon: "🎁", ends_at: Date.now() + 86_400_000, audience: "all", ...o });
+
+  it("shows running offers to every customer or only the chosen ones", async () => {
+    const a = await register("shop_a");
+    const b = await register("shop_b");
+    const all = (await call("/api/owner/offers", OWNER, "POST", offer())).body.id;
+    const onlyB = (await call("/api/owner/offers", OWNER, "POST", offer({ title: "عرض خاص لك", audience: "tenants", tenant_ids: [b.tid] }))).body.id;
+    await call("/api/owner/offers", OWNER, "POST", offer({ title: "انتهى", ends_at: Date.now() + 1000, starts_at: Date.now() - 5000 }));
+    await DB.prepare("UPDATE offers SET ends_at = ? WHERE title = 'انتهى'").bind(Date.now() - 1).run();
+    await call("/api/owner/offers", OWNER, "POST", offer({ title: "موقوف", active: false }));
+    await call("/api/owner/offers", OWNER, "POST", offer({ title: "لاحقًا", starts_at: Date.now() + 3_600_000 }));
+
+    expect((await call("/api/promos", a.h)).body.offers.map((o: any) => o.id)).toEqual([all]);
+    expect((await call("/api/promos", b.h)).body.offers.map((o: any) => o.id).sort()).toEqual([all, onlyB].sort());
+    expect((await call(`/api/offers/${onlyB}/click`, a.h, "POST")).body.ok).toBe(false); // not theirs
+    expect((await call(`/api/offers/${onlyB}/click`, b.h, "POST")).body.ok).toBe(true);
+    const list = (await call("/api/owner/offers", OWNER)).body.offers;
+    expect(list.find((o: any) => o.id === onlyB).clicks).toBe(1);
+  });
+
+  it("validates links, themes and audience; customers cannot manage offers", async () => {
+    const a = await register("shop_a");
+    expect((await call("/api/owner/offers", OWNER, "POST", offer({ link: "javascript:alert(1)" }))).status).toBe(422);
+    expect((await call("/api/owner/offers", OWNER, "POST", offer({ theme: "nope" }))).status).toBe(422);
+    expect((await call("/api/owner/offers", OWNER, "POST", offer({ audience: "tenants", tenant_ids: [] }))).status).toBe(422);
+    expect((await call("/api/owner/offers", OWNER, "POST", offer({ link: "https://shayyek.sa/offer" }))).status).toBe(200);
+    expect((await call("/api/owner/offers", a.h, "POST", offer())).status).toBe(403);
+  });
+});

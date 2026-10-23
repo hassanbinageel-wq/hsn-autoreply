@@ -12,6 +12,9 @@ export const MESSAGE_PLACEHOLDERS: Array<{ key: string; hint: string }> = [
   { key: "{تاريخ_الانتهاء}", hint: "تاريخ انتهاء اشتراكه" },
 ];
 
+/** Label of the ready message for a customer who ran out of messages (the owner's alert opens it). */
+export const OUT_OF_MESSAGES_TEMPLATE = "خلصت الرسائل";
+
 export const DEFAULT_MESSAGE_TEMPLATES: MessageTemplates = {
   notice: [
     { label: "صيانة مجدولة", title: "🛠️ صيانة مجدولة للخدمة", body: "بنسوي تحسينات على الخدمة يوم … من الساعة … إلى …. ممكن تتأخر الردود التلقائية خلالها، والتعليقات اللي توصل وقتها بنرد عليها بعد ما نخلص.", link: "/", days: 7 },
@@ -23,6 +26,7 @@ export const DEFAULT_MESSAGE_TEMPLATES: MessageTemplates = {
     { label: "إجازة / عيد", title: "🌙 كل عام وأنتم بخير", body: "الخدمة شغّالة طول الإجازة، وردود حملاتك تكمل تلقائي. الدعم يرد عليكم بعد العيد إن شاء الله.", link: "/", days: 7 },
   ],
   private: [
+    { label: OUT_OF_MESSAGES_TEMPLATE, title: "📭 خلصت رسائل دورتك", body: "هلا {الاسم} 👋\nخلصت رسائل باقة {الباقة} لهذي الدورة، فالردود التلقائية متوقفة لين يتجدد العدّاد. تقدر تشحن رسائل إضافية الحين من «اشتراكي» ← «اشحن رسائل» وترجع حملاتك تشتغل على طول، أو ترقّي باقتك.", link: "/subscription", days: 7 },
     { label: "تجديد الاشتراك", title: "⏳ اشتراكك ينتهي قريب", body: "هلا {الاسم} 👋\nاشتراكك في باقة {الباقة} ينتهي بعد {الأيام_المتبقية} يوم ({تاريخ_الانتهاء}). جدّده من «اشتراكي» عشان ما تتوقف ردودك التلقائية.", link: "/subscription", days: 30 },
     { label: "انتهى الاشتراك", title: "⛔ انتهى اشتراكك", body: "هلا {الاسم}\nانتهى اشتراكك والردود التلقائية متوقفة. جدّد من «اشتراكي» وترجع حملاتك تشتغل على طول.", link: "/subscription", days: 30 },
     { label: "حصلت على عرض", title: "🎁 عرض خاص لك", body: "هلا {الاسم} 🌟\nحصلت على خصم …% على تجديد أو ترقية باقتك. استخدم الكود … في «اشتراكي والباقات» قبل ….", link: "/subscription", days: 7 },

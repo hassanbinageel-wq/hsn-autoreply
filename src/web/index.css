@@ -257,3 +257,17 @@ textarea.input {
 }
 .bar-flash { animation: bar-flash 1s ease-in-out 5; }
 @media (prefers-reduced-motion: reduce) { .bar-flash { animation: none; box-shadow: inset 0 -3px 0 #a855f7; } }
+
+/* Offers box: slides in with a spring, a soft sheen passes over it, the icon floats, countdown digits pop. */
+@keyframes offer-in { 0% { opacity: 0; transform: translateX(-120%) rotate(-4deg) scale(.9); } 60% { opacity: 1; transform: translateX(6%) rotate(1deg) scale(1.02); } 80% { transform: translateX(-2%) rotate(0) scale(1); } 100% { opacity: 1; transform: none; } }
+@keyframes offer-shine { 0%, 70% { transform: translateX(-120%) skewX(-20deg); } 100% { transform: translateX(220%) skewX(-20deg); } }
+@keyframes offer-float { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-4px) rotate(-6deg); } }
+@keyframes offer-tick { 0% { transform: translateY(-35%) scale(.85); opacity: .3; } 100% { transform: none; opacity: 1; } }
+@keyframes offer-glow { 0%, 100% { box-shadow: 0 18px 40px -12px rgba(124, 58, 237, .55); } 50% { box-shadow: 0 22px 50px -10px rgba(249, 115, 22, .6); } }
+.offer-in { animation: offer-in .9s cubic-bezier(.2, .9, .3, 1.2) both; }
+.offer-card { animation: offer-glow 4s ease-in-out infinite; }
+.offer-shine { background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, .28) 50%, transparent 70%); width: 50%; animation: offer-shine 5s ease-in-out infinite; }
+.offer-float { animation: offer-float 3s ease-in-out infinite; }
+.offer-tick { animation: offer-tick .35s ease-out; }
+.offer-tab { animation: offer-in .6s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .offer-in, .offer-card, .offer-shine, .offer-float, .offer-tick, .offer-tab { animation: none; } .offer-shine { display: none; } }

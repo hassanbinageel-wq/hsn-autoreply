@@ -26,6 +26,8 @@ export interface Entitlement {
   expires_at: number | null;
   /** Why it is not active: no_plan | expired | suspended. */
   reason?: string;
+  /** Messages bought (or given) for the current cycle, already included in limits.monthly_messages. */
+  extra_messages?: number;
 }
 
 /** Limits of an expired / missing plan: nothing runs. */
@@ -66,9 +68,9 @@ export async function listPlans(db: D1Database): Promise<PlanRow[]> {
 }
 
 export async function getEntitlement(db: D1Database, tenantId: number, now = Date.now()): Promise<Entitlement> {
-  const t = await first<{ is_owner: number; status: string; plan_id: string | null; plan_expires_at: number | null }>(
+  const t = await first<{ is_owner: number; status: string; plan_id: string | null; plan_expires_at: number | null; plan_started_at: number | null; created_at: number }>(
     db,
-    "SELECT is_owner, status, plan_id, plan_expires_at FROM tenants WHERE id = ?",
+    "SELECT is_owner, status, plan_id, plan_expires_at, plan_started_at, created_at FROM tenants WHERE id = ?",
     tenantId,
   );
   if (!t) return { owner: false, active: false, plan: null, limits: NONE, expires_at: null, reason: "no_plan" };
@@ -78,7 +80,17 @@ export async function getEntitlement(db: D1Database, tenantId: number, now = Dat
   if (t.status !== "active") return { ...base, active: false, limits: NONE, reason: "suspended" };
   if (!plan) return { ...base, active: false, limits: NONE, reason: "no_plan" };
   if (!t.plan_expires_at || t.plan_expires_at <= now) return { ...base, active: false, limits: NONE, reason: "expired" };
-  return { ...base, active: true, limits: parseLimits(plan.limits) };
+  const limits = parseLimits(plan.limits);
+  // Top-up messages of this cycle raise the cycle's limit (used after the plan's own, since one counter counts both).
+  if (limits.monthly_messages === null) return { ...base, active: true, limits };
+  const extra = await cycleCredits(db, tenantId, cycleOf(t.plan_started_at ?? t.created_at, t.plan_expires_at, now).key);
+  return { ...base, active: true, limits: { ...limits, monthly_messages: limits.monthly_messages + extra }, extra_messages: extra };
+}
+
+/** Messages added to one usage cycle of a customer (top-ups bought or given by the owner). */
+export async function cycleCredits(db: D1Database, tenantId: number, cycleKey: string): Promise<number> {
+  const r = await first<{ n: number | null }>(db, "SELECT SUM(messages) AS n FROM message_credits WHERE tenant_id = ? AND cycle_key = ?", tenantId, cycleKey);
+  return r?.n ?? 0;
 }
 
 export const monthKey = (now = Date.now()) => new Date(now).toISOString().slice(0, 7);
@@ -235,6 +247,7 @@ export async function deleteTenantData(db: D1Database, tenantId: number): Promis
     db.prepare("DELETE FROM undo_ops WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM audit_logs WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM usage_counters WHERE tenant_id = ?").bind(t),
+    db.prepare("DELETE FROM message_credits WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM app_settings WHERE substr(key, 1, ?) = ?").bind(`t${t}:`.length, `t${t}:`),
     db.prepare("DELETE FROM sessions WHERE user_id IN (SELECT id FROM admin_users WHERE tenant_id = ?)").bind(t),
     db.prepare("DELETE FROM oauth_states WHERE user_id IN (SELECT id FROM admin_users WHERE tenant_id = ?)").bind(t),

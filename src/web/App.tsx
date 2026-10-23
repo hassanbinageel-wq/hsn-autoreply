@@ -7,6 +7,7 @@ import { enableBio, takeBioOffer } from "./lib/biometric";
 import { Icon } from "./components/Icon";
 import { NotificationBell } from "./components/NotificationBell";
 import { HelpWidget, IncidentBanner, useSupportCenter } from "./components/HelpWidget";
+import { PromoLayer } from "./components/Promos";
 import { AccountAvatar } from "./components/UserAvatar";
 import { LoginPage } from "./pages/Login";
 import { canOpenPage } from "../shared/staff";
@@ -502,6 +503,7 @@ export function App() {
         </div>
       )}
       {route !== "/support" && !(isOwner && route === "/owner") && <HelpWidget center={supportCenter} isOwner={isOwner} />}
+      {!isOwner && <PromoLayer route={route} />}
       <ToastHost />
       {bioOffer && (
         <Modal open center onClose={() => setBioOffer(null)} title="الدخول بالبصمة">

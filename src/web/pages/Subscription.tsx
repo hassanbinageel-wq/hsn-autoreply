@@ -5,19 +5,37 @@ import { isNative, openExternal } from "../platform";
 import { api } from "../api";
 import { Icon } from "../components/Icon";
 import { PlansShowcase } from "../components/PlansShowcase";
+import { TopupModal } from "../components/Promos";
 import { Alert, Card, InfoDot, Spinner, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
 
-function Meter({ label, used, max }: { label: React.ReactNode; used: number; max: number | null }) {
+function Meter({ label, used, max, extra = 0 }: { label: React.ReactNode; used: number; max: number | null; extra?: number }) {
   const pct = max === null ? 0 : max === 0 ? 100 : Math.min(100, Math.round((used / max) * 100));
+  // Top-up messages: the last part of the bar is orange (they are used after the plan's own).
+  const extraPct = max && extra ? Math.min(100, (extra / max) * 100) : 0;
   return (
     <div>
       <div className="flex justify-between text-sm"><span className="font-semibold">{label}</span><span className="muted">{used.toLocaleString("en-US")} / {n(max)}</span></div>
-      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[var(--surface-2)]">
-        <div className={`h-full rounded-full ${pct >= 90 ? "bg-red-500" : "grad"}`} style={{ width: `${max === null ? 4 : Math.max(2, pct)}%` }} />
+      <div className="relative mt-1.5 h-2 overflow-hidden rounded-full bg-[var(--surface-2)]">
+        {extraPct > 0 && <div className="absolute inset-y-0 left-0 bg-orange-400/30" style={{ width: `${extraPct}%` }} />}
+        <div className={`relative h-full rounded-full ${pct >= 90 ? "bg-red-500" : "grad"}`} style={{ width: `${max === null ? 4 : Math.max(2, pct)}%` }} />
       </div>
+      {extra > 0 && max !== null && <p className="muted mt-1 text-xs">الباقة {(max - extra).toLocaleString("en-US")} + <span className="font-semibold text-orange-600 dark:text-orange-400">إضافي {extra.toLocaleString("en-US")}</span></p>}
     </div>
+  );
+}
+
+/** «اشحن رسائل» under the messages meter, from the owner's threshold (or when out). */
+function TopupButton() {
+  const { data } = useAsync(() => api<any>("/api/topups").catch(() => null), []);
+  const [open, setOpen] = useState(false);
+  if (!data?.show || isStaff()) return null;
+  return (
+    <>
+      <button className={`btn w-full ${data.out ? "btn-primary" : "btn-ghost"}`} onClick={() => setOpen(true)}><Icon name="zap" size={18} />{data.out ? "خلصت رسائلك — اشحن رسائل الحين" : "اشحن رسائل إضافية"}</button>
+      {open && <TopupModal onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
@@ -46,7 +64,7 @@ export function SubscriptionPage() {
     if (location.hash.includes("paid=")) history.replaceState(null, "", `${location.pathname}${location.search}#/subscription`);
   }, []);
   const [checkKey, setCheckKey] = useState(0);
-  const [payResult, setPayResult] = useState<{ status: string; amount?: number; days?: number; upgrade?: boolean } | null>(null);
+  const [payResult, setPayResult] = useState<{ status: string; amount?: number; days?: number; upgrade?: boolean; topup_messages?: number | null } | null>(null);
   useEffect(() => {
     if (payResult?.status !== "paid") return;
     const t = setTimeout(() => setPayResult(null), 15_000);
@@ -58,7 +76,7 @@ export function SubscriptionPage() {
     let tries = 0;
     const check = async () => {
       try {
-        const r = await api<{ status: string; amount: number; days: number; upgrade: boolean }>(`/api/subscription/pay/${encodeURIComponent(paidId)}`);
+        const r = await api<{ status: string; amount: number; days: number; upgrade: boolean; topup_messages: number | null }>(`/api/subscription/pay/${encodeURIComponent(paidId)}`);
         if (stop) return;
         setPayResult(r);
         if (r.status === "paid") return reload();
@@ -114,8 +132,8 @@ export function SubscriptionPage() {
         <p className="muted mt-1 text-sm">باقتك الحالية واستهلاكك هذا الشهر، وتفعيل الكود.</p>
       </header>
       {payResult && (
-        payResult.status === "paid" ? <Alert tone="good">{payResult.upgrade ? "✅ تم دفع الفرق وترقّت باقتك — تاريخ الانتهاء نفسه." : `✅ تم الدفع وتفعّلت باقتك${payResult.days ? ` (${payResult.days} يوم)` : ""}. شكرًا لك!`}</Alert>
-        : payResult.status === "initiated" ? <Alert tone="info">ننتظر تأكيد الدفع… إذا دفعت، تتفعّل الباقة تلقائيًا خلال دقائق ويوصلك إشعار. <button className="font-bold underline" onClick={() => setCheckKey((k) => k + 1)}>تحقق الحين</button></Alert>
+        payResult.status === "paid" ? <Alert tone="good">{payResult.topup_messages ? `✅ تم الشحن: انضافت ${payResult.topup_messages.toLocaleString("en-US")} رسالة لرصيدك والردود التلقائية رجعت تشتغل.` : payResult.upgrade ? "✅ تم دفع الفرق وترقّت باقتك — تاريخ الانتهاء نفسه." : `✅ تم الدفع وتفعّلت باقتك${payResult.days ? ` (${payResult.days} يوم)` : ""}. شكرًا لك!`}</Alert>
+        : payResult.status === "initiated" ? <Alert tone="info">ننتظر تأكيد الدفع… إذا دفعت، {payResult.topup_messages ? "تنضاف الرسائل" : "تتفعّل الباقة"} تلقائيًا خلال دقائق ويوصلك إشعار. <button className="font-bold underline" onClick={() => setCheckKey((k) => k + 1)}>تحقق الحين</button></Alert>
         : <Alert tone="bad">ما اكتمل الدفع ({payResult.status === "failed" ? "رُفضت البطاقة" : payResult.status === "expired" ? "انتهت مهلة الصفحة" : payResult.status === "canceled" ? "أُلغي" : "تعذر التأكد"}). ما انخصم منك شي إذا ما اكتمل — جرّب مرة ثانية أو استخدم طريقة دفع ثانية.</Alert>
       )}
       {!data.active ? (
@@ -131,7 +149,8 @@ export function SubscriptionPage() {
           <p className="muted mt-1 text-sm">{data.expires_at ? `صالح حتى ${fmtTime(data.expires_at)}${daysLeft !== null && daysLeft > 0 ? ` (${daysLeft} يوم)` : ""}` : "لم يُفعَّل بعد"}</p>
           {data.active && (
             <div className="mt-4 space-y-3">
-              <Meter label={<span className="inline-flex items-center gap-1">رسائل الدورة الحالية <InfoDot text="كل رسالة يرسلها النظام تلقائيًا وتقبلها إنستقرام تنحسب وحدة: الرد العلني على التعليق، والرد الخاص على التعليق، والرسائل في الخاص (مثل رسالة الرابط والمتابعة). ما تنحسب: تجارب المحاكاة، والردود اللي ترسلها بيدك من صندوق الرسائل. العدّاد يتجدد كل 30 يوم من تاريخ تفعيل اشتراكك وما دام الاشتراك فعّال — وإذا انتهى الاشتراك يتجدد مع التجديد." /></span>} used={data.usage.messages} max={data.limits.monthly_messages} />
+              <Meter label={<span className="inline-flex items-center gap-1">رسائل الدورة الحالية <InfoDot text="كل رسالة يرسلها النظام تلقائيًا وتقبلها إنستقرام تنحسب وحدة: الرد العلني على التعليق، والرد الخاص على التعليق، والرسائل في الخاص (مثل رسالة الرابط والمتابعة). ما تنحسب: تجارب المحاكاة، والردود اللي ترسلها بيدك من صندوق الرسائل. العدّاد يتجدد كل 30 يوم من تاريخ تفعيل اشتراكك وما دام الاشتراك فعّال — وإذا انتهى الاشتراك يتجدد مع التجديد." /></span>} used={data.usage.messages} max={data.limits.monthly_messages} extra={data.extra_messages ?? 0} />
+              <TopupButton />
               <p className="muted -mt-1 text-xs">{data.usage.resets_at ? `يتجدد عدّاد الرسائل والسحوبات في ${fmtDate(data.usage.resets_at)}` : "يتجدد عدّاد الرسائل والسحوبات مع تجديد اشتراكك"}</p>
               <Meter label="الحملات النشطة" used={data.usage.active_campaigns} max={data.limits.active_campaigns} />
               {data.limits.draws_per_month !== 0 && <Meter label="سحوبات الدورة الحالية" used={data.usage.draws_this_month} max={data.limits.draws_per_month} />}

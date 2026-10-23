@@ -190,8 +190,11 @@ export async function resetDb() {
     DB.prepare("DELETE FROM usage_counters"),
     DB.prepare("DELETE FROM card_payments"),
     DB.prepare("DELETE FROM plan_upgrades"),
+    DB.prepare("DELETE FROM message_credits"),
+    DB.prepare("DELETE FROM offers"),
+    DB.prepare("DELETE FROM topup_packs"),
     DB.prepare("UPDATE tenants SET status = 'active' WHERE id = 1"),
-    DB.prepare("DELETE FROM app_settings WHERE key LIKE 't%:%' OR key IN ('sales_contact', 'app_download_url', 'exchange_rates', 'login_banner', 'login_banner_at', 'login_banner_mobile', 'login_banner_mobile_at', 'login_texts', 'login_logo', 'featured_plan', 'login_app_icon', 'feature_order', 'publish_scope', 'card_button_label', 'support_response_time', 'support_incident', 'silence_alert', 'silence_notice_at', 'price_note', 'email_last_error', 'code_box')"),
+    DB.prepare("DELETE FROM app_settings WHERE key LIKE 't%:%' OR key IN ('sales_contact', 'app_download_url', 'exchange_rates', 'login_banner', 'login_banner_at', 'login_banner_mobile', 'login_banner_mobile_at', 'login_texts', 'login_logo', 'featured_plan', 'login_app_icon', 'feature_order', 'publish_scope', 'card_button_label', 'support_response_time', 'support_incident', 'silence_alert', 'silence_notice_at', 'price_note', 'email_last_error', 'code_box', 'topup_settings', 'tpl_topup_added')"),
   ]);
   await DB.prepare("UPDATE app_settings SET value = 'true' WHERE key IN ('automation_enabled','any_reply_counts_as_start')").run();
   await DB.prepare("UPDATE app_settings SET value = '10' WHERE key = 'global_user_hourly_limit'").run();

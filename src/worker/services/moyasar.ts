@@ -4,6 +4,7 @@ import { sanitize } from "../meta/client";
 import { notify } from "./notify";
 import { extendPlan, PERIOD_DAYS } from "./plans";
 import { withSchedulingNotice } from "./publish";
+import { applyTopup } from "./topups";
 
 /**
  * Card payments (Mada / Visa / Mastercard / Apple Pay) through Moyasar's hosted invoice page, at a fixed SAR price
@@ -61,15 +62,15 @@ export async function startCardPayment(env: Env, tenantId: number, planId: strin
 /** Opens a Moyasar invoice for an amount (a plan period, or an upgrade difference when `upgradeId` is set). */
 export async function createInvoice(
   env: Env,
-  o: { tenantId: number; planId: string; days: number; amount: number; description: string; actor: string; siteOrigin?: string; upgradeId?: number },
+  o: { tenantId: number; planId: string; days: number; amount: number; description: string; actor: string; siteOrigin?: string; upgradeId?: number; topup?: { packId: number; messages: number } },
   now = Date.now(),
 ): Promise<{ id: number; url: string }> {
   if (!cardEnabled(env)) throw new PayError("card_off", "الدفع بالبطاقة غير متاح حاليًا — استخدم طرق الدفع الأخرى", 409);
   if (o.amount < 100) throw new PayError("too_small", "أقل مبلغ للدفع بالبطاقة 1 ر.س");
   const row = await run(
     env.DB,
-    "INSERT INTO card_payments (tenant_id, plan_id, days, amount, currency, created_by, upgrade_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'SAR', ?, ?, ?, ?)",
-    o.tenantId, o.planId, o.days, o.amount, o.actor, o.upgradeId ?? null, now, now,
+    "INSERT INTO card_payments (tenant_id, plan_id, days, amount, currency, created_by, upgrade_id, topup_pack_id, topup_messages, created_at, updated_at) VALUES (?, ?, ?, ?, 'SAR', ?, ?, ?, ?, ?, ?)",
+    o.tenantId, o.planId, o.days, o.amount, o.actor, o.upgradeId ?? null, o.topup?.packId ?? null, o.topup?.messages ?? null, now, now,
   );
   const id = Number(row.meta.last_row_id);
   const base = env.PUBLIC_BASE_URL.replace(/\/+$/, "");
@@ -86,7 +87,7 @@ export async function createInvoice(
         success_url: `${site}/#/subscription?paid=${id}`,
         back_url: `${site}/#/subscription`,
         expired_at: new Date(now + 2 * 3_600_000).toISOString(),
-        metadata: { payment_id: String(id), tenant_id: String(o.tenantId), plan_id: o.planId, ...(o.upgradeId ? { upgrade_id: String(o.upgradeId) } : {}) },
+        metadata: { payment_id: String(id), tenant_id: String(o.tenantId), plan_id: o.planId, ...(o.upgradeId ? { upgrade_id: String(o.upgradeId) } : {}), ...(o.topup ? { topup_messages: String(o.topup.messages) } : {}) },
       },
     });
     if (!inv.id || !inv.url) throw new PayError("gateway", "ردّ بوابة الدفع ناقص", 502);
@@ -119,9 +120,9 @@ const FINAL = ["failed", "canceled", "expired", "voided", "refunded"];
  * (the status change is atomic, so a callback and a status check arriving together cannot both extend it).
  */
 export async function syncInvoice(env: Env, invoiceId: string, now = Date.now()): Promise<string> {
-  const pay = await first<{ id: number; tenant_id: number; plan_id: string; days: number; amount: number; currency: string; status: string; upgrade_id: number | null }>(
+  const pay = await first<{ id: number; tenant_id: number; plan_id: string; days: number; amount: number; currency: string; status: string; upgrade_id: number | null; topup_pack_id: number | null; topup_messages: number | null }>(
     env.DB,
-    "SELECT id, tenant_id, plan_id, days, amount, currency, status, upgrade_id FROM card_payments WHERE invoice_id = ?",
+    "SELECT id, tenant_id, plan_id, days, amount, currency, status, upgrade_id, topup_pack_id, topup_messages FROM card_payments WHERE invoice_id = ?",
     invoiceId,
   );
   if (!pay) return "unknown";
@@ -138,6 +139,10 @@ export async function syncInvoice(env: Env, invoiceId: string, now = Date.now())
     if (!claimed.meta.changes) return "paid";
     if (pay.upgrade_id) {
       await applyUpgrade(env, pay.upgrade_id, `payment:${pay.id}`, now, { id: pay.id, amount: pay.amount });
+      return "paid";
+    }
+    if (pay.topup_messages) {
+      await applyTopup(env, { tenantId: pay.tenant_id, messages: pay.topup_messages, packId: pay.topup_pack_id, paymentId: pay.id, amount: pay.amount }, now);
       return "paid";
     }
     const r = await withSchedulingNotice(env, pay.tenant_id, () => extendPlan(env.DB, pay.tenant_id, pay.plan_id, pay.days, now));

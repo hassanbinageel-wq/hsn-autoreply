@@ -1,5 +1,7 @@
 import { MESSAGE_LINKS } from "../../shared/plans";
 import { OwnerSupportTab } from "./Support";
+import { OffersTab, TopupsTab } from "./OwnerPromos";
+import { OUT_OF_MESSAGES_TEMPLATE, type MessageTemplate } from "../../shared/messageTemplates";
 import { PlaceholderChips, TemplateBar } from "../components/MessageTemplates";
 import { DiagnoseModal } from "../components/Diagnose";
 import { hasPerm } from "../lib/me";
@@ -15,9 +17,9 @@ import { Icon } from "../components/Icon";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, LIMIT_ROW_LABELS, PRICE_PERIODS, formatPrice, orderFeatures } from "../../shared/plans";
 
-const TABS = [["customers", "العملاء"], ["health", "صحة العملاء"], ["support", "الدعم"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["coupons", "الكوبونات والإحالة"], ["payments", "الدفع"], ["branding", "صفحة الدخول"]] as const;
+const TABS = [["customers", "العملاء"], ["health", "صحة العملاء"], ["support", "الدعم"], ["plans", "الباقات"], ["codes", "أكواد التفعيل"], ["coupons", "الكوبونات والإحالة"], ["topups", "حزم الشحن"], ["offers", "العروض"], ["payments", "الدفع"], ["branding", "صفحة الدخول"]] as const;
 /** Which staff section opens each tab (the account holder sees all). */
-const TAB_PERM: Record<(typeof TABS)[number][0], string> = { customers: "owner_customers", health: "owner_customers", support: "owner_support", plans: "owner_plans", codes: "owner_plans", coupons: "owner_plans", payments: "owner_payments", branding: "owner_branding" };
+const TAB_PERM: Record<(typeof TABS)[number][0], string> = { customers: "owner_customers", health: "owner_customers", support: "owner_support", plans: "owner_plans", codes: "owner_plans", coupons: "owner_plans", topups: "owner_plans", offers: "owner_plans", payments: "owner_payments", branding: "owner_branding" };
 
 /** A random 16-character password (the owner gives it to the customer, who can change it later). */
 function generatePassword(): string {
@@ -89,6 +91,16 @@ function CustomersTab() {
   const [messageFor, setMessageFor] = useState<any | null>(null);
   const [diagnoseFor, setDiagnoseFor] = useState<any | null>(null);
   const [adding, setAdding] = useState(false);
+  // From the «خلّص رسائله» alert (?message=<id>): open that customer's message with the ready template.
+  const [preset, setPreset] = useState<string | null>(null);
+  useEffect(() => {
+    const id = Number(new URLSearchParams(location.hash.split("?")[1] ?? "").get("message"));
+    const t = id && data?.find((x) => x.id === id);
+    if (!t) return;
+    setPreset(OUT_OF_MESSAGES_TEMPLATE);
+    setMessageFor(t);
+    history.replaceState(null, "", location.hash.replace(/&?message=\d+/, ""));
+  }, [data]);
   // Search by store (login) name, user name, email or Instagram handle; each card's details open on demand.
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Set<number>>(() => new Set());
@@ -108,7 +120,7 @@ function CustomersTab() {
   return (
     <div className="space-y-5">
       {adding && <NewCustomer onClose={() => setAdding(false)} onDone={reload} />}
-      {messageFor && <MessageModal tenant={messageFor} onClose={() => setMessageFor(null)} />}
+      {messageFor && <MessageModal tenant={messageFor} preset={preset} onClose={() => { setMessageFor(null); setPreset(null); }} />}
       {diagnoseFor && <DiagnoseModal tenant={diagnoseFor} onClose={() => setDiagnoseFor(null)} />}
       {planFor && <SetPlan t={planFor} plans={plans ?? []} onClose={() => setPlanFor(null)} onDone={() => { setPlanFor(null); reload(); }} />}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -244,19 +256,19 @@ function SubscriptionBar({ t, onEdit }: { t: any; onEdit: () => void }) {
         <div className={`h-full rounded-full ${tone} transition-all`} style={{ width: `${pct}%` }} />
       </div>
       <div className="muted mt-1.5 text-[11px]">{exp ? `${active ? "ينتهي" : "انتهى"} ${fmtDate(exp)}` : "اضغط لتعيين باقة"}</div>
-      <MessagesMeter used={t.messages_month ?? 0} limit={t.plan_id ? (t.messages_limit ?? null) : 0} />
+      <MessagesMeter used={t.messages_month ?? 0} limit={t.plan_id ? (t.messages_limit === null || t.messages_limit === undefined ? null : t.messages_limit + (t.messages_extra ?? 0)) : 0} extra={t.messages_extra ?? 0} />
     </button>
   );
 }
 
 /** This month's messages against the plan's limit (null = unlimited). */
-function MessagesMeter({ used, limit }: { used: number; limit: number | null }) {
+function MessagesMeter({ used, limit, extra = 0 }: { used: number; limit: number | null; extra?: number }) {
   const pct = limit === null ? 0 : limit === 0 ? 100 : Math.min(100, Math.round((used / limit) * 100));
   return (
     <div className="mt-2.5">
       <div className="flex justify-between text-[11px]">
         <span className="font-semibold">رسائل الدورة (30 يوم)</span>
-        <span className="muted" dir="ltr">{used.toLocaleString("en-US")} / {limit === null ? "∞" : limit.toLocaleString("en-US")}</span>
+        <span className="muted" dir="ltr">{used.toLocaleString("en-US")} / {limit === null ? "∞" : limit.toLocaleString("en-US")}{extra ? ` (+${extra.toLocaleString("en-US")})` : ""}</span>
       </div>
       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-label="رسائل الشهر" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
         <div className={`h-full rounded-full ${pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-violet-500"}`} style={{ width: `${limit === null ? 3 : Math.max(2, pct)}%` }} />
@@ -579,7 +591,7 @@ function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onS
 }
 
 export function OwnerPage() {
-  const [tab, setTab] = useState<"customers" | "health" | "support" | "plans" | "codes" | "coupons" | "payments" | "branding">(() => (new URLSearchParams(location.hash.split("?")[1] ?? "").get("tab") as any) || (location.hash.startsWith("#/support") ? "support" : "customers"));
+  const [tab, setTab] = useState<"customers" | "health" | "support" | "plans" | "codes" | "coupons" | "topups" | "offers" | "payments" | "branding">(() => (new URLSearchParams(location.hash.split("?")[1] ?? "").get("tab") as any) || (location.hash.startsWith("#/support") ? "support" : "customers"));
   // A link to a tab (e.g. a support notification → #/owner?tab=support) while the page is already open.
   useEffect(() => {
     const on = () => {
@@ -608,7 +620,7 @@ export function OwnerPage() {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "payments" ? <><UpgradesCard /><CardPaymentsCard /></> : <BrandingTab />}
+      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "topups" ? <TopupsTab /> : tab === "offers" ? <OffersTab /> : tab === "payments" ? <><UpgradesCard /><CardPaymentsCard /></> : <BrandingTab />}
     </div>
   );
 }
@@ -1200,11 +1212,19 @@ function LinkSelect({ value, onChange }: { value: string; onChange: (v: string) 
   );
 }
 
-function MessageModal({ tenant, onClose }: { tenant: any; onClose: () => void }) {
+function MessageModal({ tenant, preset, onClose }: { tenant: any; preset?: string | null; onClose: () => void }) {
   const [link, setLink] = useState("/");
   const [days, setDays] = useState(30);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const pick = (t: MessageTemplate) => { setTitle(t.title); setBody(t.body); setLink(t.link); setDays(t.days); };
+  // Opened for a ready template (the owner's saved copy, else the built-in one).
+  useEffect(() => {
+    if (!preset) return;
+    api<{ templates: { private: MessageTemplate[] }; defaults: { private: MessageTemplate[] } }>("/api/owner/message-templates")
+      .then((d) => { const t = d.templates.private.find((x) => x.label === preset) ?? d.defaults.private.find((x) => x.label === preset); if (t) pick(t); })
+      .catch(() => undefined);
+  }, [preset]);
   const [busy, setBusy] = useState(false);
   const send = async () => {
     setBusy(true);
@@ -1222,7 +1242,7 @@ function MessageModal({ tenant, onClose }: { tenant: any; onClose: () => void })
     <Modal open onClose={onClose} title={`رسالة إلى «${tenant.name}»`} center>
       <div className="space-y-3">
         <p className="muted text-xs">توصل في جرس «الإشعارات المهمة» عنده مع صوت تنبيه ووميض بسيط في الشريط العلوي، وعلى تيليجرام إذا مفعّله. هو بس اللي يشوفها.</p>
-        <TemplateBar kind="private" current={{ title, body, link, days }} onPick={(t) => { setTitle(t.title); setBody(t.body); setLink(t.link); setDays(t.days); }} />
+        <TemplateBar kind="private" current={{ title, body, link, days }} onPick={pick} />
         <input className="input" placeholder="العنوان (مثل: تجديد اشتراكك، ميزة جديدة لك…)" maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
         <textarea className="input min-h-[8rem]" placeholder="نص الرسالة" maxLength={1000} value={body} onChange={(e) => setBody(e.target.value)} />
         <PlaceholderChips onInsert={(k) => setBody((b) => `${b}${b && !b.endsWith(" ") ? " " : ""}${k}`)} />

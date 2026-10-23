@@ -89,7 +89,7 @@ const MAX_STAFF = 10;
 import { confirmEmailCode, confirmPasswordChange, requestPasswordReset, resetPassword, sendEmailCode, startPasswordChange } from "./services/recovery";
 import { emailEnabled, lastEmailError } from "./services/email";
 import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp } from "./lib/totp";
-import { DEFAULT_MESSAGE_TEMPLATES, type MessageTemplates } from "../shared/messageTemplates";
+import { DEFAULT_MESSAGE_TEMPLATES, OUT_OF_MESSAGES_TEMPLATE, type MessageTemplates } from "../shared/messageTemplates";
 const MESSAGE_LINK_PATHS = MESSAGE_LINKS.map((l) => l.to) as [string, ...string[]];
 import { listPaymentMethods } from "./services/payments";
 import { parseFaqText } from "../shared/support";
@@ -99,6 +99,9 @@ import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, card
 import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { cardEnabled, cardPriceHalalas, createInvoice, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
 import { planChangeBlock, quoteUpgrade } from "./services/upgrades";
+import { allPacks, applyTopup, startTopup, topupHistory, topupSettings, topupState } from "./services/topups";
+import { clickOffer, listOffers, offersFor } from "./services/offers";
+import { isOfferLink, OFFER_THEMES, topupSettingsOf } from "../shared/promos";
 import { campaignSnapshot, drawSnapshots, listUndo, recordUndo, stopCampaignWork, undoOperation, UndoError } from "./services/undo";
 import { dataDeletionPage, deletionStatusPage, oauthResultPage, PAGE_CSP, pageLang, parseSignedRequest, privacyPage, refundPage, termsPage } from "./pages";
 
@@ -1086,16 +1089,16 @@ export function createApp() {
   });
   // After returning from the payment page: re-checks that payment with Moyasar (own payments only).
   api.get("/subscription/pay/:id", async (c) => {
-    const pay = await first<{ id: number; invoice_id: string | null; status: string; plan_id: string; amount: number; days: number; upgrade_id: number | null }>(
+    const pay = await first<{ id: number; invoice_id: string | null; status: string; plan_id: string; amount: number; days: number; upgrade_id: number | null; topup_messages: number | null }>(
       c.env.DB,
-      "SELECT id, invoice_id, status, plan_id, amount, days, upgrade_id FROM card_payments WHERE id = ? AND tenant_id = ?",
+      "SELECT id, invoice_id, status, plan_id, amount, days, upgrade_id, topup_messages FROM card_payments WHERE id = ? AND tenant_id = ?",
       Number(c.req.param("id")) || 0, T(c),
     );
     if (!pay) return apiError(c, 404, "not_found", "الدفعة غير موجودة");
     let status = pay.status;
     if (status === "initiated" && pay.invoice_id && cardEnabled(c.env) && (await rateLimit(c.env.DB, `card_check:${T(c)}`, 60, 3_600_000)))
       status = await syncInvoice(c.env, pay.invoice_id).catch(() => status);
-    return c.json({ id: pay.id, status, plan_id: pay.plan_id, amount: pay.amount / 100, days: pay.days, upgrade: !!pay.upgrade_id });
+    return c.json({ id: pay.id, status, plan_id: pay.plan_id, amount: pay.amount / 100, days: pay.days, upgrade: !!pay.upgrade_id, topup_messages: pay.topup_messages });
   });
 
   // ---- Plan upgrade (automatic): the account holder pays the difference and the plan changes with the same expiry.
@@ -1154,6 +1157,39 @@ export function createApp() {
     if (!r.meta.changes) return apiError(c, 404, "not_found", "الطلب غير موجود");
     return c.json({ ok: true });
   });
+
+  // ---- Message top-ups (the customer's own cycle) and what the app shows on top: the out-of-messages window, offers.
+  api.get("/topups", async (c) => {
+    if (c.get("session").is_owner) return c.json({ packs: [], history: [] });
+    const st = await topupState(c.env, T(c));
+    return c.json({ ...st, settings: { max_per_cycle: st.settings.max_per_cycle, show_at_pct: st.settings.show_at_pct }, history: await topupHistory(c.env.DB, T(c)) });
+  });
+  api.post("/topups/pay", async (c) => {
+    if (c.get("session").is_owner) return apiError(c, 409, "owner", "حساب المالك لا يحتاج رسائل إضافية");
+    if (c.get("session").role !== "owner") return apiError(c, 403, "holder_only", "الشحن لصاحب الحساب فقط");
+    const p = await parseBody(c, z.object({ pack_id: z.number().int().positive() }));
+    if (!p.ok) return p.res;
+    if (!(await rateLimit(c.env.DB, `card_pay:${T(c)}`, 10, 3_600_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد ساعة");
+    try {
+      const r = await startTopup(c.env, T(c), p.data.pack_id, c.get("session").username, new URL(c.req.url).origin);
+      await audit(c.env.DB, T(c), c.get("session").username, "subscription.topup_started", String(r.messages), { payment: r.id, pack: p.data.pack_id });
+      return c.json({ ok: true, ...r });
+    } catch (e) {
+      if (e instanceof PayError) return apiError(c, e.status as any, e.code, e.message);
+      throw e;
+    }
+  });
+  api.get("/promos", async (c) => {
+    if (c.get("session").is_owner) return c.json({ topup: null, popup: null, offers: [] });
+    const [st, offers] = await Promise.all([topupState(c.env, T(c)), offersFor(c.env.DB, T(c))]);
+    const pop = st.settings.popup;
+    return c.json({
+      topup: { out: st.out, show: st.show, can_buy: st.can_buy, used: st.used, limit: st.limit, resets_at: st.resets_at, cycle_key: st.cycle_key },
+      popup: st.out && pop.enabled ? { title: pop.title, body: pop.body, cta: pop.cta, cancel: pop.cancel, buy: st.can_buy } : null,
+      offers,
+    });
+  });
+  api.post("/offers/:id/click", async (c) => c.json({ ok: await clickOffer(c.env.DB, T(c), Number(c.req.param("id")) || 0) }));
 
   // ---- Owner panel (customers). Owner tenant only.
   const owner = new Hono<AppEnv>();
@@ -1222,7 +1258,17 @@ export function createApp() {
     return c.json({ ok: true });
   });
   // Ready-made messages (notices / private), editable by the owner. Without a saved list: the defaults.
-  owner.get("/message-templates", async (c) => c.json({ templates: await getSetting<MessageTemplates>(c.env.DB, OWNER_TENANT, "message_templates", DEFAULT_MESSAGE_TEMPLATES), defaults: DEFAULT_MESSAGE_TEMPLATES }));
+  owner.get("/message-templates", async (c) => {
+    const templates = await getSetting<MessageTemplates>(c.env.DB, OWNER_TENANT, "message_templates", DEFAULT_MESSAGE_TEMPLATES);
+    // New built-in templates reach an owner who already saved their own list, once (deleting it later sticks).
+    if (!(await getSetting<boolean>(c.env.DB, OWNER_TENANT, "tpl_topup_added", false))) {
+      const t = DEFAULT_MESSAGE_TEMPLATES.private.find((x) => x.label === OUT_OF_MESSAGES_TEMPLATE);
+      if (t && !templates.private.some((x) => x.label === t.label)) templates.private = [t, ...templates.private];
+      await setSetting(c.env.DB, OWNER_TENANT, "tpl_topup_added", true);
+      if (t) await setSetting(c.env.DB, OWNER_TENANT, "message_templates", templates);
+    }
+    return c.json({ templates, defaults: DEFAULT_MESSAGE_TEMPLATES });
+  });
   owner.put("/message-templates", async (c) => {
     const tpl = z.object({ label: z.string().trim().min(1).max(40), title: z.string().trim().min(3).max(200), body: z.string().trim().max(1000), link: z.enum(MESSAGE_LINK_PATHS), days: z.number().int().min(1).max(365) });
     const p = await parseBody(c, z.object({ notice: z.array(tpl).max(40), private: z.array(tpl).max(40) }));
@@ -1541,6 +1587,8 @@ export function createApp() {
               (SELECT u.messages FROM usage_counters u WHERE u.tenant_id = t.id
                   AND u.month = 'c' || COALESCE(t.plan_started_at, t.created_at) || '-' || MAX(0, (? - COALESCE(t.plan_started_at, t.created_at)) / ${CYCLE_MS})) AS messages_month,
               (SELECT json_extract(p.limits, '$.monthly_messages') FROM plans p WHERE p.id = t.plan_id) AS messages_limit,
+              (SELECT SUM(m.messages) FROM message_credits m WHERE m.tenant_id = t.id
+                  AND m.cycle_key = 'c' || COALESCE(t.plan_started_at, t.created_at) || '-' || MAX(0, (? - COALESCE(t.plan_started_at, t.created_at)) / ${CYCLE_MS})) AS messages_extra,
               (SELECT u.username FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS username,
               (SELECT u.email FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email,
               (SELECT u.email_verified_at FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email_verified_at,
@@ -1553,6 +1601,7 @@ export function createApp() {
               (SELECT COUNT(*) FROM conversation_flows f WHERE f.is_demo = 0 AND f.created_at > ? AND f.account_id IN (SELECT id FROM instagram_accounts WHERE tenant_id = t.id)) AS flows_30d,
               (SELECT MAX(s.last_seen_at) FROM sessions s JOIN admin_users u ON u.id = s.user_id WHERE u.tenant_id = t.id) AS last_seen_at
          FROM tenants t ORDER BY t.is_owner DESC, t.id DESC`,
+      Date.now(),
       Date.now(),
       since,
     );
@@ -1678,6 +1727,139 @@ export function createApp() {
     const total = await first<{ n: number; sum: number | null }>(c.env.DB, "SELECT COUNT(*) AS n, SUM(amount) AS sum FROM card_payments WHERE status = 'paid'");
     return c.json({ enabled: cardEnabled(c.env), test_mode: isTestKey(c.env), payments: rows, paid_count: total?.n ?? 0, paid_total: (total?.sum ?? 0) / 100 });
   });
+  // Message top-up packs, their settings (incl. the out-of-messages window) and recent sales.
+  owner.get("/topups", async (c) => {
+    const since = Date.now() - 30 * 86_400_000;
+    const [packs, settings, sales, totals] = await Promise.all([
+      allPacks(c.env.DB),
+      topupSettings(c.env.DB),
+      all(
+        c.env.DB,
+        `SELECT m.id, m.tenant_id, t.name AS tenant_name, m.messages, m.amount, m.source, m.created_by, m.created_at
+           FROM message_credits m LEFT JOIN tenants t ON t.id = m.tenant_id ORDER BY m.id DESC LIMIT 100`,
+      ),
+      all<{ pack_id: number; n: number }>(c.env.DB, "SELECT pack_id, COUNT(*) AS n FROM message_credits WHERE source = 'card' AND created_at > ? GROUP BY pack_id", since),
+    ]);
+    const sold = Object.fromEntries(totals.map((r) => [r.pack_id, r.n]));
+    return c.json({ card: cardEnabled(c.env), packs: packs.map((p) => ({ ...p, sold_30d: sold[p.id] ?? 0 })), settings, sales, plans: await listPlans(c.env.DB) });
+  });
+  const packSchema = z.object({
+    messages: z.number().int().min(100).max(10_000_000),
+    price: z.number().min(1).max(100_000),
+    badge: z.string().trim().max(30).nullable().optional(),
+    plan_ids: z.array(z.string().max(20)).max(20).nullable().optional(),
+    active: z.boolean().optional(),
+    sort: z.number().int().min(0).max(1000).optional(),
+  });
+  owner.post("/topups/packs", async (c) => {
+    const p = await parseBody(c, packSchema);
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    const d = p.data;
+    const r = await run(
+      c.env.DB,
+      "INSERT INTO topup_packs (messages, price_halalas, badge, plan_ids, active, sort, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      d.messages, Math.round(d.price * 100), d.badge || null, d.plan_ids?.length ? JSON.stringify(d.plan_ids) : null, d.active === false ? 0 : 1, d.sort ?? 0, now, now,
+    );
+    await audit(c.env.DB, T(c), c.get("session").username, "topup.pack_created", String(r.meta.last_row_id), d);
+    return c.json({ ok: true, id: Number(r.meta.last_row_id) });
+  });
+  owner.put("/topups/packs/:id", async (c) => {
+    const p = await parseBody(c, packSchema);
+    if (!p.ok) return p.res;
+    const d = p.data;
+    const r = await run(
+      c.env.DB,
+      "UPDATE topup_packs SET messages = ?, price_halalas = ?, badge = ?, plan_ids = ?, active = ?, sort = ?, updated_at = ? WHERE id = ?",
+      d.messages, Math.round(d.price * 100), d.badge || null, d.plan_ids?.length ? JSON.stringify(d.plan_ids) : null, d.active === false ? 0 : 1, d.sort ?? 0, Date.now(), idParam(c),
+    );
+    if (!r.meta.changes) return apiError(c, 404, "not_found", "الحزمة غير موجودة");
+    await audit(c.env.DB, T(c), c.get("session").username, "topup.pack_updated", c.req.param("id"), d);
+    return c.json({ ok: true });
+  });
+  owner.delete("/topups/packs/:id", async (c) => {
+    const r = await run(c.env.DB, "DELETE FROM topup_packs WHERE id = ?", idParam(c));
+    if (!r.meta.changes) return apiError(c, 404, "not_found", "الحزمة غير موجودة");
+    await audit(c.env.DB, T(c), c.get("session").username, "topup.pack_deleted", c.req.param("id"));
+    return c.json({ ok: true });
+  });
+  owner.put("/topups/settings", async (c) => {
+    const p = await parseBody(
+      c,
+      z.object({
+        max_per_cycle: z.number().int().min(0).max(100),
+        show_at_pct: z.number().int().min(50).max(100),
+        popup: z.object({ enabled: z.boolean(), title: z.string().trim().min(2).max(80), body: z.string().trim().min(2).max(400), cta: z.string().trim().min(2).max(30), cancel: z.string().trim().min(2).max(20) }),
+      }),
+    );
+    if (!p.ok) return p.res;
+    await setSetting(c.env.DB, OWNER_TENANT, "topup_settings", topupSettingsOf(p.data));
+    await audit(c.env.DB, T(c), c.get("session").username, "topup.settings", undefined, p.data);
+    return c.json({ ok: true });
+  });
+  // Gift messages to one customer's current cycle.
+  owner.post("/tenants/:id/credits", async (c) => {
+    const p = await parseBody(c, z.object({ messages: z.number().int().min(1).max(10_000_000) }));
+    if (!p.ok) return p.res;
+    const t = await first<{ id: number; is_owner: number }>(c.env.DB, "SELECT id, is_owner FROM tenants WHERE id = ?", idParam(c));
+    if (!t || t.is_owner) return apiError(c, 404, "not_found", "العميل غير موجود");
+    await applyTopup(c.env, { tenantId: t.id, messages: p.data.messages, actor: c.get("session").username });
+    return c.json({ ok: true });
+  });
+
+  // Offers (side box with a countdown).
+  const offerSchema = z
+    .object({
+      title: z.string().trim().min(2).max(60),
+      body: z.string().trim().max(200).nullable().optional(),
+      cta: z.string().trim().max(24).nullable().optional(),
+      link: z.string().trim().max(300).refine(isOfferLink, "رابط غير مسموح"),
+      theme: z.string().refine((v) => v in OFFER_THEMES, "تصميم غير معروف"),
+      icon: z.string().trim().max(8).nullable().optional(),
+      starts_at: z.number().int().nullable().optional(),
+      ends_at: z.number().int(),
+      audience: z.enum(["all", "tenants"]),
+      tenant_ids: z.array(z.number().int().positive()).max(500).optional(),
+      active: z.boolean().optional(),
+    })
+    .refine((d) => d.audience === "all" || (d.tenant_ids?.length ?? 0) > 0, { message: "اختر عميل واحد على الأقل", path: ["tenant_ids"] })
+    .refine((d) => !d.starts_at || d.starts_at < d.ends_at, { message: "وقت الانتهاء لازم يكون بعد البداية", path: ["ends_at"] });
+  const offerValues = (d: z.infer<typeof offerSchema>) => [
+    d.title, d.body || null, d.cta || null, d.link, d.theme, d.icon || null, d.starts_at ?? null, d.ends_at, d.audience,
+    d.audience === "tenants" ? JSON.stringify(d.tenant_ids ?? []) : null, d.active === false ? 0 : 1,
+  ];
+  owner.get("/offers", async (c) => c.json({ offers: await listOffers(c.env.DB), themes: OFFER_THEMES }));
+  owner.post("/offers", async (c) => {
+    const p = await parseBody(c, offerSchema);
+    if (!p.ok) return p.res;
+    const now = Date.now();
+    const r = await run(
+      c.env.DB,
+      "INSERT INTO offers (title, body, cta, link, theme, icon, starts_at, ends_at, audience, tenant_ids, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ...offerValues(p.data), now, now,
+    );
+    await audit(c.env.DB, T(c), c.get("session").username, "offer.created", String(r.meta.last_row_id), { title: p.data.title, audience: p.data.audience });
+    return c.json({ ok: true, id: Number(r.meta.last_row_id) });
+  });
+  owner.put("/offers/:id", async (c) => {
+    const p = await parseBody(c, offerSchema);
+    if (!p.ok) return p.res;
+    const r = await run(
+      c.env.DB,
+      "UPDATE offers SET title = ?, body = ?, cta = ?, link = ?, theme = ?, icon = ?, starts_at = ?, ends_at = ?, audience = ?, tenant_ids = ?, active = ?, updated_at = ? WHERE id = ?",
+      ...offerValues(p.data), Date.now(), idParam(c),
+    );
+    if (!r.meta.changes) return apiError(c, 404, "not_found", "العرض غير موجود");
+    await audit(c.env.DB, T(c), c.get("session").username, "offer.updated", c.req.param("id"), { title: p.data.title });
+    return c.json({ ok: true });
+  });
+  owner.delete("/offers/:id", async (c) => {
+    const r = await run(c.env.DB, "DELETE FROM offers WHERE id = ?", idParam(c));
+    if (!r.meta.changes) return apiError(c, 404, "not_found", "العرض غير موجود");
+    await audit(c.env.DB, T(c), c.get("session").username, "offer.deleted", c.req.param("id"));
+    return c.json({ ok: true });
+  });
+
   // Upgrades (automatic), newest first: who moved from which plan to which, the usage then and the amount paid.
   owner.get("/upgrades", async (c) => {
     const rows = await all<any>(

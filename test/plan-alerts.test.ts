@@ -38,7 +38,8 @@ describe("customer notifications: own plan usage, owner notices", () => {
     expect(n[1].title).toContain("خلصت");
     expect(n[0].link).toBe("/subscription");
     expect(await notes(b)).toEqual([]);
-    expect(await notes(1)).toEqual([]); // the owner has no limits
+    // the owner has no limits, but hears once that this customer ran out (link opens the ready message)
+    expect(await notes(1)).toMatchObject([{ kind: "plan", link: `/owner?tab=customers&message=${a}` }]);
     // only on the scheduled minute
     await setUsage(b, 900);
     expect(await runPlanAlerts(TEST_ENV, AT + 60_000)).toBe(0);
