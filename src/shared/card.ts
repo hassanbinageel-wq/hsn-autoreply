@@ -21,6 +21,7 @@ export const CARD_LAYOUTS = {
   royal: "فاخر (إطار وزخارف)",
   modern: "عصري (رقم كبير وكتل ملونة)",
   festive: "احتفالي (قصاصات وأشعة)",
+  template: "قالبك الجاهز (صورتك بدون زخارف)",
 } as const;
 
 export const CARD_FONTS = {
@@ -32,7 +33,7 @@ export const CARD_FONTS = {
 
 export const cardDesignSchema = z.object({
   size: z.enum(["portrait", "square", "story"]).default("portrait"),
-  layout: z.enum(["royal", "modern", "festive"]).default("royal"),
+  layout: z.enum(["royal", "modern", "festive", "template"]).default("royal"),
   font: z.enum(["cairo", "kufi", "lalezar", "plex"]).default("cairo"),
   theme: z.enum(["gold", "violet", "night", "sunset", "emerald", "ivory", "rose", "custom"]).default("gold"),
   bg1: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#1a1206"),
@@ -49,6 +50,20 @@ export const cardDesignSchema = z.object({
   logo_size: z.number().min(0.05).max(0.6).default(0.18),
   logo_shape: z.enum(["original", "circle", "rounded"]).default("original"),
   logo_opacity: z.number().min(0.2).max(1).default(1),
+  // A font the customer uploaded (id from /api/card-fonts); replaces `font` when set.
+  custom_font: z.string().regex(/^[a-z0-9]{4,20}$/).nullable().optional(),
+  // Icons (Remix Icon names) placed on the card: centre as a fraction of the card, size as a fraction of its width.
+  icons: z
+    .array(z.object({
+      name: z.string().regex(/^[a-z0-9-]{2,40}$/),
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+      size: z.number().min(0.03).max(0.5),
+      color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+      opacity: z.number().min(0.2).max(1).default(1),
+    }))
+    .max(12)
+    .default([]),
   title: z.string().trim().max(80).default("مسابقة الحساب"),
   headline: z.string().trim().max(60).default("مبروك الفوز! 🎉"),
   body: z.string().trim().max(300).default("تهانينا {{username}}\nأنت الفائز {{position}} في {{contest}}"),
@@ -71,6 +86,9 @@ export const cardDesignInputSchema = cardDesignSchema.refine(
   { message: "حجم صورة الخلفية مع الشعار كبير — استخدم صورًا أصغر", path: ["logo_image"] },
 );
 export const DEFAULT_CARD: CardDesign = cardDesignSchema.parse({});
+
+/** A few celebration icons offered first in the editor (any Remix Icon name also works). */
+export const CARD_ICONS = ["trophy-fill", "gift-fill", "star-fill", "medal-fill", "vip-crown-fill", "award-fill", "heart-fill", "sparkling-fill", "cake-2-fill", "fire-fill", "thumb-up-fill", "emotion-happy-fill", "coupon-2-fill", "shopping-bag-3-fill", "rocket-fill", "flower-fill", "music-2-fill", "gamepad-fill", "diamond-fill", "check-double-line", "instagram-line", "map-pin-fill", "calendar-event-fill", "megaphone-fill"] as const;
 
 export const CARD_VARIABLES: Record<string, string> = {
   username: "اسم مستخدم الفائز (@...)",

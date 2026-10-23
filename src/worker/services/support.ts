@@ -74,6 +74,13 @@ export async function cleanupSupportFiles(env: Env, now = Date.now()): Promise<n
 }
 
 /** Removes every support file of a customer (before their data is deleted). */
+/** Removes a customer's uploaded card fonts from storage (before the customer's settings are deleted). */
+export async function deleteTenantCardFonts(env: Env, tenantId: number): Promise<void> {
+  const fonts = await getSetting<Array<{ id: string }>>(env.DB, tenantId, "card_fonts", []);
+  for (const f of fonts) await env.MEDIA?.delete(cardFontKey(tenantId, f.id)).catch(() => undefined);
+}
+export const cardFontKey = (tenantId: number, id: string) => `card-fonts/t${tenantId}/${id}`;
+
 export async function deleteTenantSupportFiles(env: Env, tenantId: number): Promise<void> {
   const rows = await all<{ att_key: string }>(
     env.DB,

@@ -12,9 +12,23 @@ const withStyles = (n: MenuNode): MenuNode => ({
 });
 const blankOption = (): MenuNode => ({ key: newKey(), label: "", text: "", link: null, style: "buttons", children: [] });
 
+/** The chain of nodes from the root down to `key` (empty when not found). */
+function pathTo(root: MenuNode, key: string): MenuNode[] {
+  if (root.key === key) return [root];
+  for (const c of root.children) {
+    const p = pathTo(c, key);
+    if (p.length) return [root, ...p];
+  }
+  return [];
+}
+/** A copy of the tree with the node `key` replaced (or removed when `next` is null). */
+function replaceNode(root: MenuNode, key: string, next: MenuNode | null): MenuNode {
+  return { ...root, children: root.children.flatMap((c) => (c.key === key ? (next ? [next] : []) : [replaceNode(c, key, next)])) };
+}
+
 /**
- * «القائمة التلقائية» in one simple screen: when it is sent (chosen words, or any message), the first message, and
- * its buttons — each button replies with its own text, an optional link and its own buttons, a few levels deep.
+ * «القائمة التلقائية» as a tree (like an organisation chart): the first message on top, its buttons below it, and each
+ * button's own buttons below that. Tapping a box opens it in the side panel to edit it, add a button under it or delete it.
  */
 export function DmMenuEditor() {
   const [menu, setMenu] = useState<DmMenu | null>(null);
@@ -22,6 +36,7 @@ export function DmMenuEditor() {
   const [taps, setTaps] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [sel, setSel] = useState<string | null>(null);
   useEffect(() => {
     api<{ menu: DmMenu; available: boolean; taps: Record<string, number> }>("/api/dm-menu")
       .then((r) => { setMenu(r.menu ?? emptyMenu()); setAvailable(r.available); setTaps(r.taps); })
@@ -47,19 +62,46 @@ export function DmMenuEditor() {
       setBusy(false);
     }
   };
-  const byWords = menu.trigger === "keywords";
+  const selKey = sel && pathTo(menu.root, sel).length ? sel : menu.root.key;
+  const path = pathTo(menu.root, selKey);
+  const node = path[path.length - 1];
+  const depth = path.length - 1;
+  const setNode = (n: MenuNode) => update({ ...menu, root: n.key === menu.root.key ? n : replaceNode(menu.root, n.key, n) });
+  const addChild = (parent: MenuNode) => {
+    if (parent.children.length >= MENU_LIMITS.quick) return toast(`الحد ${MENU_LIMITS.quick} أزرار`, "bad");
+    const c = blankOption();
+    setNode({ ...parent, children: [...parent.children, c] });
+    setSel(c.key);
+  };
+  const remove = (n: MenuNode) => {
+    update({ ...menu, root: replaceNode(menu.root, n.key, null) });
+    setSel(path[path.length - 2]?.key ?? null);
+  };
+  const move = (d: -1 | 1) => {
+    const parent = path[path.length - 2];
+    if (!parent) return;
+    const i = parent.children.findIndex((c) => c.key === node.key);
+    const j = i + d;
+    if (j < 0 || j >= parent.children.length) return;
+    const ch = [...parent.children];
+    [ch[i], ch[j]] = [ch[j], ch[i]];
+    setNode({ ...parent, children: ch });
+  };
   const canTurnOn = available && menu.root.children.length > 0 && !problem;
+  const byWords = menu.trigger === "keywords";
   return (
     <div className="space-y-4">
       {!available && (
         <Alert tone="warn">القائمة التلقائية مو ضمن باقتك الحالية. تقدر تجهّزها الحين، والتشغيل يحتاج باقة فيها «القائمة التلقائية» — <a className="font-bold underline" href="#/subscription">اشتراكي</a>.</Alert>
       )}
-
-      <div className={`card flex items-center gap-3 ${menu.enabled ? "ring-1 ring-emerald-400/60" : ""}`}>
+      <div className={`card flex items-center gap-3 p-4 ${menu.enabled ? "ring-1 ring-emerald-400/60" : ""}`}>
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--surface-2)] text-xl">💬</span>
         <div className="min-w-0 flex-1">
           <b className="font-display block text-base">القائمة التلقائية</b>
-          <span className={`text-xs font-bold ${menu.enabled ? "text-emerald-600" : "muted"}`}>{menu.enabled ? "● شغّالة" : !menu.root.children.length ? "○ متوقفة — أضف زر واحد على الأقل" : "○ متوقفة"}</span>
+          <span className={`text-xs font-bold ${menu.enabled ? "text-emerald-600" : "muted"}`}>
+            {menu.enabled ? "● شغّالة" : !menu.root.children.length ? "○ متوقفة — أضف زر واحد على الأقل" : "○ متوقفة"}
+            {" · "}{byWords ? `لما يكتب: ${(menu.keywords ?? []).slice(0, 3).join("، ") || "—"}` : menu.trigger === "every" ? "مع كل رسالة" : menu.trigger === "first" ? "أول رسالة فقط" : "مرة كل 24 ساعة"}
+          </span>
         </div>
         <label className="relative inline-flex shrink-0 cursor-pointer items-center">
           <input type="checkbox" className="peer sr-only" checked={menu.enabled} disabled={!menu.enabled && !canTurnOn} onChange={(e) => save({ ...menu, enabled: e.target.checked }, e.target.checked ? "تم تشغيل القائمة ✅" : "تم إيقاف القائمة")} aria-label="تشغيل القائمة التلقائية" />
@@ -68,52 +110,71 @@ export function DmMenuEditor() {
         </label>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-4">
-          <Step n={1} title="متى توصل القائمة؟">
-            <div className="grid grid-cols-2 gap-2">
-              {([["keywords", "لما يكتب كلمة أحددها"], ["any", "مع أي رسالة"]] as const).map(([k, l]) => {
-                const on = k === "keywords" ? byWords : !byWords;
-                return (
-                  <button key={k} type="button" onClick={() => update({ ...menu, trigger: k === "keywords" ? "keywords" : menu.trigger === "keywords" ? "daily" : menu.trigger })}
-                    className={`rounded-xl border px-3 py-3 text-sm font-bold ${on ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300" : "border-[var(--border)]"}`}>{l}</button>
-                );
-              })}
-            </div>
-            {byWords ? (
-              <WordsInput words={menu.keywords ?? []} onChange={(keywords) => update({ ...menu, keywords })} />
-            ) : (
-              <select className="input mt-3" value={menu.trigger} onChange={(e) => update({ ...menu, trigger: e.target.value as DmMenu["trigger"] })} aria-label="كم مرة">
-                <option value="daily">مرة وحدة كل 24 ساعة لنفس الشخص</option>
-                <option value="first">أول رسالة من الشخص فقط</option>
-                <option value="every">مع كل رسالة</option>
-              </select>
+      <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
+        {/* side panel: the selected box */}
+        <div id="menu-panel" className="card scroll-mt-20 space-y-3 p-4 lg:sticky lg:top-4 lg:self-start">
+          <b className="font-display block text-base">✏️ {depth === 0 ? "الرسالة الأولى" : `تعديل: «${node.label || "زر جديد"}»`}</b>
+          {depth > 0 && (
+            <Field label="عنوان الزر" hint={`${node.label.length}/${MENU_LIMITS.label}`}>
+              <input className="input" autoFocus={!node.label} maxLength={MENU_LIMITS.label} value={node.label} onChange={(e) => setNode({ ...node, label: e.target.value })} placeholder="مثل: الأسعار" />
+            </Field>
+          )}
+          <Field label={depth === 0 ? "نص الرسالة" : "لما يضغطه يوصله"}>
+            <textarea className="input min-h-[5.5rem]" maxLength={MENU_LIMITS.text} value={node.text} onChange={(e) => setNode({ ...node, text: e.target.value })} placeholder={depth === 0 ? "أهلًا 👋 اختر من الأزرار:" : "مثل: السعر 210 ريال وتدفع 110 فقط"} />
+          </Field>
+          <LinkEditor node={node} onChange={setNode} />
+          <div className="flex flex-wrap gap-2">
+            {depth + 1 < MENU_LIMITS.depth && <button type="button" className="btn btn-primary min-h-9 text-sm" onClick={() => addChild(node)}><Icon name="plus" size={15} />زر تحته</button>}
+            {depth > 0 && (
+              <>
+                <button type="button" className="btn btn-ghost min-h-9 px-3 text-sm" onClick={() => move(-1)} title="قبل">→</button>
+                <button type="button" className="btn btn-ghost min-h-9 px-3 text-sm" onClick={() => move(1)} title="بعد">←</button>
+                <button type="button" className="btn btn-ghost min-h-9 text-sm text-red-600" onClick={() => remove(node)}>حذف{node.children.length ? " مع أزراره" : ""}</button>
+              </>
             )}
-          </Step>
-
-          <Step n={2} title="الرسالة الأولى">
-            <textarea className="input min-h-[5.5rem]" maxLength={MENU_LIMITS.text} value={menu.root.text} onChange={(e) => update({ ...menu, root: { ...menu.root, text: e.target.value } })} placeholder="أهلًا 👋 اختر من الأزرار:" aria-label="الرسالة الأولى" />
-            <LinkEditor node={menu.root} onChange={(root) => update({ ...menu, root })} />
-          </Step>
-
-          <Step n={3} title="الأزرار تحت الرسالة">
-            <Buttons node={menu.root} depth={0} taps={taps} onChange={(root) => update({ ...menu, root })} />
-          </Step>
-
-          <details className="card">
-            <summary className="cursor-pointer text-sm font-bold">إعدادات إضافية</summary>
-            <div className="mt-3">
+          </div>
+          {taps[node.key] ? <p className="muted text-xs">انضغط {taps[node.key]} مرة</p> : null}
+          {depth === 0 && (
+            <div className="space-y-3 border-t border-[var(--border)] pt-3">
+              <b className="text-sm">متى توصل القائمة؟</b>
+              <div className="grid grid-cols-2 gap-2">
+                {([["keywords", "لما يكتب كلمة"], ["any", "مع أي رسالة"]] as const).map(([k, l]) => {
+                  const on = k === "keywords" ? byWords : !byWords;
+                  return (
+                    <button key={k} type="button" onClick={() => update({ ...menu, trigger: k === "keywords" ? "keywords" : byWords ? "daily" : menu.trigger })}
+                      className={`rounded-xl border px-2 py-2.5 text-sm font-bold ${on ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300" : "border-[var(--border)]"}`}>{l}</button>
+                  );
+                })}
+              </div>
+              {byWords ? (
+                <WordsInput words={menu.keywords ?? []} onChange={(keywords) => update({ ...menu, keywords })} />
+              ) : (
+                <select className="input" value={menu.trigger} onChange={(e) => update({ ...menu, trigger: e.target.value as DmMenu["trigger"] })} aria-label="كم مرة">
+                  <option value="daily">مرة وحدة كل 24 ساعة لنفس الشخص</option>
+                  <option value="first">أول رسالة من الشخص فقط</option>
+                  <option value="every">مع كل رسالة</option>
+                </select>
+              )}
               <Field label="إذا رديت على الشخص بنفسك" hint="القائمة ما ترسل له هالمدة عشان ما تقاطع محادثتك">
                 <select className="input" value={menu.pause_hours} onChange={(e) => update({ ...menu, pause_hours: Number(e.target.value) })}>
                   {[0, 2, 6, 12, 24, 48, 72].map((h) => <option key={h} value={h}>{h === 0 ? "لا تتوقف" : `توقف ${h} ساعة`}</option>)}
                 </select>
               </Field>
             </div>
-          </details>
+          )}
         </div>
-        <div className="xl:sticky xl:top-4 xl:self-start">
-          <div className="muted mb-1.5 text-xs font-bold">المعاينة — اضغط الأزرار تشوف الرد</div>
-          <Preview root={menu.root} />
+
+        {/* the tree */}
+        <div className="card min-w-0 p-4">
+          <p className="muted mb-3 text-xs">اضغط أي مربع لتعديله — «+» يضيف زر تحته.<span className="hidden sm:inline"> إذا كبرت الشجرة اسحبها يمين ويسار.</span></p>
+          <div className="hidden overflow-x-auto sm:block">
+            <div className="mx-auto w-max px-2 pb-4">
+              <TreeNode node={menu.root} depth={0} selected={selKey} taps={taps} onSelect={setSel} onAdd={addChild} />
+            </div>
+          </div>
+          <div className="sm:hidden">
+            <OutlineNode node={menu.root} depth={0} selected={selKey} onSelect={(k) => { setSel(k); document.getElementById("menu-panel")?.scrollIntoView({ behavior: "smooth" }); }} onAdd={(n) => { addChild(n); document.getElementById("menu-panel")?.scrollIntoView({ behavior: "smooth" }); }} />
+          </div>
         </div>
       </div>
 
@@ -128,15 +189,66 @@ export function DmMenuEditor() {
   );
 }
 
-function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+const LINE = "border-violet-300 dark:border-violet-800";
+
+/** One box of the chart with its children below, joined by lines (first child on the right). */
+function TreeNode({ node, depth, selected, taps, onSelect, onAdd }: { node: MenuNode; depth: number; selected: string; taps: Record<string, number>; onSelect: (k: string) => void; onAdd: (n: MenuNode) => void }) {
+  const on = node.key === selected;
+  const canAdd = depth + 1 < MENU_LIMITS.depth && node.children.length < MENU_LIMITS.quick;
   return (
-    <section className="card">
-      <div className="mb-3 flex items-center gap-2">
-        <span className="grad flex h-7 w-7 items-center justify-center rounded-full text-sm font-extrabold text-white">{n}</span>
-        <b className="font-display text-base">{title}</b>
+    <div className="flex flex-col items-center">
+      <div className="relative">
+        <button
+          type="button"
+          onClick={(e) => { onSelect(node.key); e.currentTarget.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); }}
+          className={`w-36 rounded-2xl border-2 bg-[var(--surface)] px-3 py-2.5 text-center shadow-sm transition ${on ? "border-emerald-500 ring-4 ring-emerald-500/15" : depth === 0 ? "border-violet-500 bg-violet-500/5" : "border-[var(--border)] hover:border-violet-300"}`}
+        >
+          <b className="block truncate text-sm">{depth === 0 ? "💬 الرسالة الأولى" : node.label || "زر جديد"}</b>
+          <span className="muted block truncate text-[11px]">{node.text || "اكتب الرد…"}{node.link ? " · 🔗" : ""}</span>
+          {taps[node.key] ? <span className="mt-0.5 block text-[10px] font-bold text-emerald-600">{taps[node.key]} ضغطة</span> : null}
+        </button>
+        {canAdd && (
+          <button type="button" onClick={() => onAdd(node)} aria-label="إضافة زر تحته" className="absolute -bottom-3 left-1/2 flex h-6 w-6 -translate-x-1/2 items-center justify-center rounded-full border border-violet-300 bg-[var(--surface)] text-sm font-bold text-violet-600 shadow hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300">+</button>
+        )}
       </div>
-      {children}
-    </section>
+      {node.children.length > 0 && (
+        <>
+          <div className={`h-5 border-l-2 ${LINE}`} />
+          <div className="flex gap-2">
+            {node.children.map((c, i) => {
+              const first = i === 0;
+              const last = i === node.children.length - 1;
+              return (
+                <div key={c.key} className="relative flex flex-col items-center pt-5">
+                  {/* RTL: the first child is on the right (no line to its right), the last on the left (no line to its left) */}
+                  {!first && <div className={`absolute top-0 border-t-2 ${LINE}`} style={{ left: "50%", right: "-0.25rem" }} />}
+                  {!last && <div className={`absolute top-0 border-t-2 ${LINE}`} style={{ left: "-0.25rem", right: "50%" }} />}
+                  <div className={`absolute left-1/2 top-0 h-5 border-l-2 ${LINE}`} />
+                  <TreeNode node={c} depth={depth + 1} selected={selected} taps={taps} onSelect={onSelect} onAdd={onAdd} />
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The same tree as an indented list, for phones. */
+function OutlineNode({ node, depth, selected, onSelect, onAdd }: { node: MenuNode; depth: number; selected: string; onSelect: (k: string) => void; onAdd: (n: MenuNode) => void }) {
+  const on = node.key === selected;
+  return (
+    <div className={depth ? `border-s-2 ps-3 ${LINE}` : ""}>
+      <div className="flex items-center gap-2 py-1">
+        <button type="button" onClick={() => onSelect(node.key)} className={`min-w-0 flex-1 rounded-xl border-2 px-3 py-2 text-right ${on ? "border-emerald-500" : depth === 0 ? "border-violet-500" : "border-[var(--border)]"}`}>
+          <b className="block truncate text-sm">{depth === 0 ? "💬 الرسالة الأولى" : node.label || "زر جديد"}</b>
+          <span className="muted block truncate text-[11px]">{node.text || "اكتب الرد…"}</span>
+        </button>
+        {depth + 1 < MENU_LIMITS.depth && <button type="button" onClick={() => onAdd(node)} aria-label="إضافة زر تحته" className="btn btn-ghost min-h-9 shrink-0 px-3 text-sm">+</button>}
+      </div>
+      {node.children.map((c) => <OutlineNode key={c.key} node={c} depth={depth + 1} selected={selected} onSelect={onSelect} onAdd={onAdd} />)}
+    </div>
   );
 }
 
@@ -186,59 +298,6 @@ function LinkEditor({ node, onChange }: { node: MenuNode; onChange: (n: MenuNode
   );
 }
 
-/** The buttons of a message, each with its reply, and «+ زر». */
-function Buttons({ node, depth, taps, onChange }: { node: MenuNode; depth: number; taps: Record<string, number>; onChange: (n: MenuNode) => void }) {
-  const max = MENU_LIMITS.quick;
-  const set = (i: number, c: MenuNode | null) => onChange({ ...node, children: c ? node.children.map((x, j) => (j === i ? c : x)) : node.children.filter((_, j) => j !== i) });
-  const move = (i: number, d: -1 | 1) => {
-    const ch = [...node.children];
-    [ch[i], ch[i + d]] = [ch[i + d], ch[i]];
-    onChange({ ...node, children: ch });
-  };
-  return (
-    <div className="space-y-2">
-      {node.children.map((c, i) => (
-        <ButtonCard key={c.key} c={c} depth={depth} taps={taps} first={i === 0} last={i === node.children.length - 1} onMove={(d) => move(i, d)} onRemove={() => set(i, null)} onChange={(n) => set(i, n)} />
-      ))}
-      {node.children.length < max && (
-        <button type="button" className="btn btn-ghost w-full text-sm" onClick={() => onChange({ ...node, children: [...node.children, blankOption()] })}>
-          <Icon name="plus" size={15} />{depth === 0 ? "إضافة زر" : "إضافة زر تحت هذا الرد"}
-        </button>
-      )}
-    </div>
-  );
-}
-
-/** One button: its title, and what it sends when tapped (text, link, its own buttons). */
-function ButtonCard({ c, depth, taps, first, last, onMove, onRemove, onChange }: { c: MenuNode; depth: number; taps: Record<string, number>; first: boolean; last: boolean; onMove: (d: -1 | 1) => void; onRemove: () => void; onChange: (n: MenuNode) => void }) {
-  const [open, setOpen] = useState(!c.label);
-  const canNest = depth + 1 < MENU_LIMITS.depth;
-  return (
-    <div className={`rounded-2xl border border-[var(--border)] ${depth % 2 ? "bg-[var(--surface)]" : "bg-[var(--surface-2)]"}`}>
-      <div className="flex items-center gap-1.5 p-2">
-        <input className="input min-w-0 flex-1 font-bold" maxLength={MENU_LIMITS.label} value={c.label} onChange={(e) => onChange({ ...c, label: e.target.value })} placeholder="عنوان الزر — مثل: الأسعار" aria-label="عنوان الزر" />
-        {taps[c.key] ? <span className="chip surface-2 muted shrink-0 !py-0 text-[10.5px]">{taps[c.key]} ضغطة</span> : null}
-        <button type="button" className="btn btn-ghost min-h-9 shrink-0 px-2 text-xs" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "إخفاء" : "الرد"}<Icon name="chev" size={13} className={`transition ${open ? "rotate-180" : ""}`} /></button>
-        <button type="button" className="btn btn-ghost min-h-9 shrink-0 px-2 text-xs" disabled={first} aria-label="لفوق" onClick={() => onMove(-1)}>▲</button>
-        <button type="button" className="btn btn-ghost min-h-9 shrink-0 px-2 text-xs" disabled={last} aria-label="لتحت" onClick={() => onMove(1)}>▼</button>
-        <button type="button" className="btn btn-ghost min-h-9 shrink-0 px-2 text-xs text-red-600" aria-label="حذف الزر" onClick={onRemove}>✕</button>
-      </div>
-      {open && (
-        <div className="space-y-2 border-t border-[var(--border)] p-3">
-          <div className="muted text-xs font-bold">لما يضغط «{c.label || "الزر"}» يوصله:</div>
-          <textarea className="input min-h-[4.5rem]" maxLength={MENU_LIMITS.text} value={c.text} onChange={(e) => onChange({ ...c, text: e.target.value })} placeholder="مثل: السعر 210 ريال وتدفع 110 فقط" aria-label="الرد" />
-          <LinkEditor node={c} onChange={onChange} />
-          {canNest && (
-            <div className="border-s-2 border-violet-300 ps-3 dark:border-violet-800">
-              <Buttons node={c} depth={depth + 1} taps={taps} onChange={onChange} />
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** How the automatic menu works, in short. */
 export function MenuHelp({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
@@ -257,32 +316,3 @@ export function MenuHelp({ open, onClose }: { open: boolean; onClose: () => void
   );
 }
 
-/** The message as it looks in Instagram; tapping a button shows its reply (with «رجوع»). */
-function Preview({ root }: { root: MenuNode }) {
-  const [path, setPath] = useState<string[]>([]);
-  let node = root;
-  for (const k of path) node = node.children.find((c) => c.key === k) ?? node;
-  const n = withStyles(node);
-  const bubble = "rounded-2xl bg-[#262a33] px-3.5 py-2.5 text-sm leading-relaxed text-white";
-  const btn = "block w-full rounded-xl bg-[#1c1f26] px-3 py-2.5 text-center text-sm font-semibold text-white";
-  return (
-    <div className="rounded-2xl bg-[#0b0d12] p-3" dir="rtl">
-      {path.length > 0 && <button type="button" className="mb-2 text-xs font-bold text-sky-400" onClick={() => setPath(path.slice(0, -1))}>‹ رجوع</button>}
-      <div className="max-w-[88%] space-y-1.5">
-        <div className={`${bubble} whitespace-pre-wrap break-words`}>{n.text || "…"}</div>
-        {n.style === "buttons" && (
-          <>
-            {n.link && <div className={btn}>{n.link.title || "الرابط"} ↗</div>}
-            {n.children.map((c) => <button type="button" key={c.key} className={btn} onClick={() => setPath([...path, c.key])}>{c.label || "زر"}</button>)}
-          </>
-        )}
-        {n.style === "quick" && n.link && <div className="text-xs text-sky-400 underline" dir="ltr">{n.link.url}</div>}
-      </div>
-      {n.style === "quick" && n.children.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {n.children.map((c) => <button type="button" key={c.key} className="rounded-full border border-white/25 px-3 py-1.5 text-xs font-semibold text-white" onClick={() => setPath([...path, c.key])}>{c.label || "زر"}</button>)}
-        </div>
-      )}
-    </div>
-  );
-}

@@ -23,6 +23,9 @@ function loadGlyphs(): Promise<Map<string, string>> {
 /** "rocket-line", "ri-rocket-line" or "ri:rocket-line" → "rocket-line". */
 export const remixName = (v: string) => v.trim().toLowerCase().replace(/^ri[:-]/, "");
 
+/** The glyph of an icon (loads the list and the font) — for drawing on a canvas; null when unknown. */
+export const remixGlyph = async (name: string) => (await loadGlyphs()).get(remixName(name)) ?? null;
+
 /** Whether a Remix Icon name exists (loads the list). */
 export const remixExists = async (name: string) => (await loadGlyphs()).has(remixName(name));
 

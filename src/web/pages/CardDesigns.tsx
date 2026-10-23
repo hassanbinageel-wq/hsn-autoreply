@@ -3,8 +3,9 @@ import { askConfirm } from "../components/Confirm";
 import { api } from "../api";
 import { Link } from "../App";
 import { Alert, Card, Field, PageHeader, Spinner, Toggle, toast, useAsync } from "../components/ui";
-import { CARD_FONTS, CARD_LAYOUTS, CARD_SIZES, CARD_THEMES, CARD_VARIABLES, DEFAULT_CARD, type CardDesign } from "../../shared/card";
-import { compressBackground, compressLogo, renderCard } from "../lib/card";
+import { CARD_FONTS, CARD_ICONS, CARD_LAYOUTS, CARD_SIZES, CARD_THEMES, CARD_VARIABLES, DEFAULT_CARD, type CardDesign } from "../../shared/card";
+import { RemixIcon, remixExists, remixName } from "../components/RemixIcon";
+import { compressBackground, compressLogo, loadCardFont, renderCard } from "../lib/card";
 
 export function DrawsTabs({ active }: { active: "draws" | "designs" }) {
   return (
@@ -32,11 +33,16 @@ export function CardPreview({ design, username = "winner_name", position = 1, ac
   return src ? <img src={src} alt="معاينة البطاقة" draggable={false} className="w-full rounded-xl shadow-lg" /> : <Spinner />;
 }
 
-/** Lets the owner drag the logo on the preview; a live outline follows the finger while the card re-renders. */
-function LogoDragArea({ design, onMove, children }: { design: CardDesign; onMove: (x: number, y: number) => void; children: React.ReactNode }) {
+type DragTarget = "logo" | number;
+
+/**
+ * Lets the owner drag the logo and the icons on the preview: pressing picks the nearest one, a live outline follows
+ * the finger while the card re-renders.
+ */
+function DragArea({ design, onMove, children }: { design: CardDesign; onMove: (t: DragTarget, x: number, y: number) => void; children: React.ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState(false);
-  const dragging = useRef(false);
+  const [active, setActive] = useState<DragTarget | null>(null);
+  const target = useRef<DragTarget | null>(null);
   const [aspect, setAspect] = useState(1);
   useEffect(() => {
     if (!design.logo_image) return;
@@ -44,15 +50,21 @@ function LogoDragArea({ design, onMove, children }: { design: CardDesign; onMove
     img.onload = () => setAspect(img.height / img.width || 1);
     img.src = design.logo_image;
   }, [design.logo_image]);
-  if (!design.logo_image) return <>{children}</>;
+  const icons = design.icons ?? [];
+  if (!design.logo_image && !icons.length) return <>{children}</>;
   const size = CARD_SIZES[design.size];
-  const move = (e: React.PointerEvent) => {
+  const items: Array<{ t: DragTarget; x: number; y: number; w: number; h: number }> = [];
+  if (design.logo_image) items.push({ t: "logo", x: design.logo_x, y: design.logo_y, w: design.logo_size, h: (design.logo_size * size.w * aspect) / size.h });
+  icons.forEach((ic, i) => items.push({ t: i, x: ic.x, y: ic.y, w: ic.size, h: (ic.size * size.w) / size.h }));
+  const pos = (e: React.PointerEvent) => {
     const r = box.current!.getBoundingClientRect();
     const clamp = (v: number) => Math.min(1, Math.max(0, v));
-    onMove(Math.round(clamp((e.clientX - r.left) / r.width) * 1000) / 1000, Math.round(clamp((e.clientY - r.top) / r.height) * 1000) / 1000);
+    return { x: Math.round(clamp((e.clientX - r.left) / r.width) * 1000) / 1000, y: Math.round(clamp((e.clientY - r.top) / r.height) * 1000) / 1000 };
   };
-  const wPct = design.logo_size * 100;
-  const hPct = ((design.logo_size * size.w * aspect) / size.h) * 100;
+  const end = () => {
+    target.current = null;
+    setActive(null);
+  };
   return (
     <div
       ref={box}
@@ -61,27 +73,146 @@ function LogoDragArea({ design, onMove, children }: { design: CardDesign; onMove
       onDragStart={(e) => e.preventDefault()}
       onPointerDown={(e) => {
         e.preventDefault();
+        const p = pos(e);
+        const near = items.reduce((best, it) => (Math.hypot(it.x - p.x, it.y - p.y) < Math.hypot(best.x - p.x, best.y - p.y) ? it : best));
         box.current?.setPointerCapture?.(e.pointerId);
-        dragging.current = true;
-        setDrag(true);
-        move(e);
+        target.current = near.t;
+        setActive(near.t);
+        onMove(near.t, p.x, p.y);
       }}
-      onPointerMove={(e) => dragging.current && move(e)}
-      onPointerUp={() => {
-        dragging.current = false;
-        setDrag(false);
+      onPointerMove={(e) => {
+        if (target.current === null) return;
+        const p = pos(e);
+        onMove(target.current, p.x, p.y);
       }}
-      onPointerCancel={() => {
-        dragging.current = false;
-        setDrag(false);
-      }}
+      onPointerUp={end}
+      onPointerCancel={end}
     >
       {children}
-      <div
-        className={`pointer-events-none absolute rounded-md border-2 border-dashed ${drag ? "border-white bg-white/20" : "border-white/70"}`}
-        style={{ left: `${design.logo_x * 100 - wPct / 2}%`, top: `${design.logo_y * 100 - hPct / 2}%`, width: `${wPct}%`, height: `${hPct}%`, cursor: "grab", boxShadow: "0 0 0 1px rgba(0,0,0,.4)" }}
-      />
+      {items.map((it) => (
+        <div
+          key={String(it.t)}
+          className={`pointer-events-none absolute rounded-md border-2 border-dashed ${active === it.t ? "border-white bg-white/20" : "border-white/60"}`}
+          style={{ left: `${(it.x - it.w / 2) * 100}%`, top: `${(it.y - it.h / 2) * 100}%`, width: `${it.w * 100}%`, height: `${it.h * 100}%`, boxShadow: "0 0 0 1px rgba(0,0,0,.4)" }}
+        />
+      ))}
     </div>
+  );
+}
+
+type CardFontRow = { id: string; name: string; size: number };
+
+/** The customer's own fonts: upload (with the license confirmation and a 2 MB limit), pick, delete. */
+function CustomFonts({ design, set }: { design: CardDesign; set: (p: Partial<CardDesign>) => void }) {
+  const { data: fonts, reload } = useAsync(() => api<CardFontRow[]>("/api/card-fonts"), []);
+  const [name, setName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [ok, setOk] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const upload = async () => {
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) return toast("الخط أكبر من 2 ميقا", "bad");
+    setBusy(true);
+    try {
+      const data = await new Promise<string>((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(String(r.result));
+        r.onerror = () => rej(r.error);
+        r.readAsDataURL(file);
+      });
+      const r = await api<{ font: CardFontRow }>("/api/card-fonts", { body: { name: (name || file.name.replace(/\.[^.]+$/, "")).slice(0, 40), data, licensed: true } });
+      if (!(await loadCardFont(r.font.id))) toast("انرفع الخط لكن المتصفح ما قدر يقرأه — جرّب ملف ثاني", "bad");
+      else toast("انرفع الخط ✅");
+      set({ custom_font: r.font.id });
+      setFile(null);
+      setName("");
+      setOk(false);
+      reload();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (f: CardFontRow) => {
+    if (!(await askConfirm({ title: `حذف خط «${f.name}»؟`, message: "التصاميم اللي تستخدمه ترجع لخط النظام.", confirmLabel: "حذف", danger: true }))) return;
+    await api(`/api/card-fonts/${f.id}`, { method: "DELETE" }).catch((e) => toast(e.message, "bad"));
+    if (design.custom_font === f.id) set({ custom_font: null });
+    reload();
+  };
+  return (
+    <div className="mt-3 space-y-2 rounded-xl border border-[var(--border)] p-3">
+      <b className="text-sm">خطوطي</b>
+      {(fonts ?? []).map((f) => (
+        <div key={f.id} className="flex items-center gap-2 text-sm">
+          <button type="button" className={`flex-1 rounded-lg border px-3 py-2 text-right ${design.custom_font === f.id ? "border-violet-500 bg-violet-500/10" : "border-[var(--border)]"}`} onClick={() => set({ custom_font: design.custom_font === f.id ? null : f.id })}>
+            {design.custom_font === f.id ? "✓ " : ""}{f.name} <span className="muted text-xs">({Math.round(f.size / 1024)} KB)</span>
+          </button>
+          <button type="button" className="btn btn-ghost min-h-9 px-2 text-xs text-red-600" onClick={() => remove(f)}>حذف</button>
+        </div>
+      ))}
+      {(fonts?.length ?? 0) < 5 && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <label className="btn btn-ghost cursor-pointer text-sm">
+              🔤 {file ? file.name : "اختر ملف خط (TTF / OTF / WOFF)"}
+              <input type="file" accept=".ttf,.otf,.woff,.woff2,font/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            </label>
+            {file && <input className="input min-w-0 flex-1" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} placeholder="اسم الخط (اختياري)" />}
+          </div>
+          {file && (
+            <>
+              <label className="flex items-start gap-2 text-xs">
+                <input type="checkbox" className="mt-0.5" checked={ok} onChange={(e) => setOk(e.target.checked)} />
+                <span>⚠️ أتأكد إن عندي حق استخدام هذا الخط تجاريًا (ترخيص الخط مسؤوليتي). الحد 2 ميقا للخط و5 خطوط.</span>
+              </label>
+              <button type="button" className="btn btn-primary text-sm" disabled={!ok || busy} onClick={upload}>{busy ? "…" : "رفع الخط"}</button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Icons on the card: pick from a short list (or any Remix Icon name), then size, colour and drag on the preview. */
+function IconsCard({ design, set }: { design: CardDesign; set: (p: Partial<CardDesign>) => void }) {
+  const icons = design.icons ?? [];
+  const [other, setOther] = useState("");
+  const add = (name: string) => {
+    if (icons.length >= 12) return toast("الحد 12 أيقونة", "bad");
+    set({ icons: [...icons, { name, x: 0.5, y: 0.5, size: 0.12, color: design.accent, opacity: 1 }] });
+    toast("اسحب الأيقونة على المعاينة لمكانها");
+  };
+  const edit = (i: number, p: Partial<CardDesign["icons"][number]>) => set({ icons: icons.map((x, j) => (j === i ? { ...x, ...p } : x)) });
+  return (
+    <Card title="الأيقونات">
+      <div className="flex flex-wrap gap-1.5">
+        {CARD_ICONS.map((n) => (
+          <button key={n} type="button" title={n} className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] hover:bg-[var(--surface-2)]" onClick={() => add(n)}>
+            <RemixIcon name={n} size={20} />
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex gap-2">
+        <input className="input" dir="ltr" value={other} onChange={(e) => setOther(e.target.value)} placeholder="أيقونة ثانية من remixicon.com مثل cup-fill" />
+        <button type="button" className="btn btn-ghost shrink-0 text-sm" onClick={async () => { const n = remixName(other); if (n && (await remixExists(n))) { add(n); setOther(""); } else toast("ما لقينا هالأيقونة — انسخ اسمها من remixicon.com", "bad"); }}>إضافة</button>
+      </div>
+      {icons.length > 0 && (
+        <div className="mt-3 space-y-2">
+          <p className="muted text-xs">✋ اسحب أي أيقونة على المعاينة لمكانها.</p>
+          {icons.map((ic, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] p-2 text-sm">
+              <RemixIcon name={ic.name} size={22} />
+              <input type="color" className="h-9 w-12 cursor-pointer rounded-lg" value={ic.color} onChange={(e) => edit(i, { color: e.target.value })} aria-label="لون الأيقونة" />
+              <label className="flex min-w-[8rem] flex-1 items-center gap-2 text-xs">الحجم<input type="range" className="w-full" min={0.03} max={0.5} step={0.01} value={ic.size} onChange={(e) => edit(i, { size: Number(e.target.value) })} /></label>
+              <label className="flex min-w-[8rem] flex-1 items-center gap-2 text-xs">الشفافية<input type="range" className="w-full" min={0.2} max={1} step={0.05} value={ic.opacity ?? 1} onChange={(e) => edit(i, { opacity: Number(e.target.value) })} /></label>
+              <button type="button" className="btn btn-ghost min-h-9 px-2 text-xs text-red-600" onClick={() => set({ icons: icons.filter((_, j) => j !== i) })}>حذف</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -132,15 +263,16 @@ function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: numbe
         <Card title="الأساسيات">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="الشكل">
-              <select className="input" value={d.layout} onChange={(e) => set({ layout: e.target.value as CardDesign["layout"] })}>
+              <select className="input" value={d.layout} onChange={(e) => { const layout = e.target.value as CardDesign["layout"]; set(layout === "template" ? { layout, background_dim: 0 } : { layout }); }}>
                 {Object.entries(CARD_LAYOUTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </Field>
             <Field label="الخط">
-              <select className="input" value={d.font} onChange={(e) => set({ font: e.target.value as CardDesign["font"] })}>
+              <select className="input" value={d.font} disabled={!!d.custom_font} onChange={(e) => set({ font: e.target.value as CardDesign["font"] })}>
                 {Object.entries(CARD_FONTS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
               </select>
             </Field>
+            <div className="sm:col-span-2"><CustomFonts design={d} set={set} /></div>
             <Field label="اسم التصميم (داخلي)"><input className="input" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} /></Field>
             <Field label="المقاس">
               <select className="input" value={d.size} onChange={(e) => set({ size: e.target.value as CardDesign["size"] })}>
@@ -165,10 +297,11 @@ function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: numbe
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <label className="btn btn-ghost cursor-pointer text-sm">
-              🖼️ صورة خلفية (اختياري)
+              🖼️ {d.layout === "template" ? "ارفع قالبك (صورة التصميم)" : "صورة خلفية / قالب (اختياري)"}
               <input type="file" accept="image/*" className="hidden" onChange={(e) => upload(e.target.files?.[0])} />
             </label>
             {d.background_image && <button className="btn btn-ghost text-sm" onClick={() => set({ background_image: null })}>إزالة الصورة</button>}
+            <span className="muted w-full text-[11px]">الصورة تتصغّر تلقائيًا (عرض 1080 بكسل وحجم أقل من 1 ميقا تقريبًا). اختر «قالبك الجاهز» في الشكل لو صورتك تصميم كامل وتبي النصوص فوقها بدون زخارف.</span>
             {d.background_image && (
               <label className="flex items-center gap-2 text-sm">
                 تعتيم
@@ -223,6 +356,7 @@ function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: numbe
             </div>
           )}
         </Card>
+        <IconsCard design={d} set={set} />
         <Card title="النصوص">
           <div className="space-y-3">
             <Field label="عنوان المسابقة"><input className="input" value={d.title} maxLength={80} onChange={(e) => set({ title: e.target.value })} /></Field>
@@ -270,9 +404,9 @@ function Editor({ initial, onSaved, onCancel, account }: { initial: { id?: numbe
             </select>
           </label>
         </div>
-        <LogoDragArea design={d} onMove={(x, y) => set({ logo_x: x, logo_y: y })}>
+        <DragArea design={d} onMove={(t, x, y) => (t === "logo" ? set({ logo_x: x, logo_y: y }) : setD((cur) => ({ ...cur, icons: (cur.icons ?? []).map((ic, j) => (j === t ? { ...ic, x, y } : ic)) })))}>
           <CardPreview design={d} position={previewPos} account={account} />
-        </LogoDragArea>
+        </DragArea>
         <p className="muted text-xs">المعاينة ببيانات تجريبية؛ عند الإرسال يوضع اسم الفائز الحقيقي وجائزة مركزه وتاريخ السحب.</p>
       </div>
     </div>

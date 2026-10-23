@@ -8,6 +8,8 @@ import "@fontsource/reem-kufi/arabic-700.css";
 import "@fontsource/reem-kufi/latin-700.css";
 import "@fontsource/lalezar/arabic-400.css";
 import "@fontsource/lalezar/latin-400.css";
+import { api } from "../api";
+import { remixGlyph } from "../components/RemixIcon";
 import { CARD_FONTS, CARD_SIZES, cardDateLine, fillCard, prizeFor, type CardDesign, type CardVars } from "../../shared/card";
 
 /**
@@ -73,6 +75,28 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = rej;
     img.src = src;
   });
+}
+
+/** A font the customer uploaded, registered once as «CardFont-<id>» (false when it cannot be loaded). */
+const customFonts = new Map<string, Promise<boolean>>();
+export function loadCardFont(id: string): Promise<boolean> {
+  let p = customFonts.get(id);
+  if (!p) {
+    p = (async () => {
+      try {
+        const res = await api<Response>(`/api/card-fonts/${encodeURIComponent(id)}`, { raw: true });
+        const face = new FontFace(`CardFont-${id}`, await res.arrayBuffer());
+        await face.load();
+        document.fonts.add(face);
+        return true;
+      } catch {
+        customFonts.delete(id);
+        return false;
+      }
+    })();
+    customFonts.set(id, p);
+  }
+  return p;
 }
 
 async function ensureFonts(d: CardDesign) {
@@ -417,7 +441,8 @@ export async function renderCard(d: CardDesign, v: CardVars): Promise<HTMLCanvas
   const ctx = c.getContext("2d")!;
   ctx.direction = "rtl";
   ctx.textBaseline = "middle";
-  const F = CARD_FONTS[d.font] ?? CARD_FONTS.cairo;
+  let F: { display: string; body: string; weight: number } = CARD_FONTS[d.font] ?? CARD_FONTS.cairo;
+  if (d.custom_font && (await loadCardFont(d.custom_font))) F = { display: `CardFont-${d.custom_font}`, body: `CardFont-${d.custom_font}`, weight: 400 };
   const display = (px: number) => `${F.weight} ${px}px "${F.display}", ${FALLBACK}`;
   const body = (w: number, px: number) => `${w} ${px}px "${F.body}", ${FALLBACK}`;
   const layout = d.layout ?? "royal";
@@ -690,6 +715,20 @@ export async function renderCard(d: CardDesign, v: CardVars): Promise<HTMLCanvas
     } catch {
       /* ignore a broken logo */
     }
+  }
+
+  // icons where the owner placed them
+  for (const ic of d.icons ?? []) {
+    const ch = await remixGlyph(ic.name).catch(() => null);
+    if (!ch) continue;
+    ctx.save();
+    ctx.globalAlpha = ic.opacity ?? 1;
+    ctx.fillStyle = ic.color;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `${Math.round(ic.size * W)}px remixicon`;
+    ctx.fillText(ch, ic.x * W, ic.y * H);
+    ctx.restore();
   }
 
   // bottom: date + account

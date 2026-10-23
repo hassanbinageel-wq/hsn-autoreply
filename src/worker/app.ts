@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { Env } from "./env";
 import { missingSecrets } from "./env";
 import { all, audit, first, getSetting, OWNER_TENANT, run, setSetting, settingKey, tenantSettingsFilter } from "./lib/db";
-import { decryptSecret, encryptSecret, hashPassword, randomToken, sha256Hex, timingSafeEqual, verifyMetaSignature, verifyPassword } from "./lib/crypto";
+import { decryptSecret, encryptSecret, fromB64, hashPassword, randomToken, sha256Hex, timingSafeEqual, verifyMetaSignature, verifyPassword } from "./lib/crypto";
 import { parseWebhook } from "./meta/webhook-parse";
 import { INSIGHTS_SCOPE, INSTAGRAM_SCOPES, WEBHOOK_FIELDS, sanitize } from "./meta/client";
 import type { MediaItem } from "./meta/types";
@@ -95,7 +95,7 @@ import { listPaymentMethods } from "./services/payments";
 import { parseFaqText } from "../shared/support";
 import { emptyMenu, extrasProblem, keywordsProblem, menuParts, menuProblem, type DmMenu, type MenuNode } from "../shared/menu";
 import { syncMenuProfile } from "./services/menuProfile";
-import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
+import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, cardFontKey, deleteTenantCardFonts, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
 import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
 import { cardEnabled, cardPriceHalalas, createInvoice, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
 import { planChangeBlock, quoteUpgrade } from "./services/upgrades";
@@ -1658,6 +1658,7 @@ export function createApp() {
     const accounts = await all<{ id: number }>(c.env.DB, "SELECT id FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0", t.id);
     for (const a of accounts) await disconnectAccount(c.env, a.id, { purge: true, actor: c.get("session").username }).catch(() => undefined);
     await deleteTenantSupportFiles(c.env, t.id);
+    await deleteTenantCardFonts(c.env, t.id);
     await deleteTenantData(c.env.DB, t.id);
     await audit(c.env.DB, T(c), c.get("session").username, "tenant.deleted", String(t.id), { name: t.name });
     return c.json({ ok: true });
@@ -3388,6 +3389,57 @@ export function createApp() {
     if (!prev) return apiError(c, 404, "not_found", "التصميم غير موجود");
     await run(c.env.DB, "UPDATE card_designs SET name = ?, design = ?, updated_at = ? WHERE id = ?", p.data.name, JSON.stringify(p.data.design), Date.now(), id);
     await recordUndo(c.env.DB, T(c), c.get("session").username, "design.update", `design:${id}`, `تعديل تصميم التهنئة «${prev.name}»`, { row: prev });
+    return c.json({ ok: true });
+  });
+  // ---- Customer fonts for congratulation cards: stored privately in R2 (5 per customer, 2 MB each), read back
+  // by the card editor only. The customer confirms they have the right to use the font.
+  type CardFont = { id: string; name: string; size: number; created_at: number };
+  const FONT_BYTES = 2 * 1024 * 1024;
+  const fontKind = (b: Uint8Array): string | null => {
+    const tag = String.fromCharCode(b[0], b[1], b[2], b[3]);
+    if (tag === "wOF2") return "font/woff2";
+    if (tag === "wOFF") return "font/woff";
+    if (tag === "OTTO") return "font/otf";
+    if ((b[0] === 0 && b[1] === 1 && b[2] === 0 && b[3] === 0) || tag === "true") return "font/ttf";
+    return null;
+  };
+  api.get("/card-fonts", async (c) => c.json(await getSetting<CardFont[]>(c.env.DB, T(c), "card_fonts", [])));
+  api.post("/card-fonts", async (c) => {
+    if (!c.env.MEDIA) return apiError(c, 503, "no_storage", "مساحة حفظ الملفات غير مفعّلة على الخادم");
+    const p = await parseBody(c, z.object({ name: z.string().trim().min(1).max(40), data: z.string().max(3_000_000), licensed: z.literal(true) }));
+    if (!p.ok) return p.res;
+    const fonts = await getSetting<CardFont[]>(c.env.DB, T(c), "card_fonts", []);
+    if (fonts.length >= 5) return apiError(c, 409, "limit", "الحد 5 خطوط — احذف خط قبل ما ترفع جديد");
+    let bytes: Uint8Array;
+    try {
+      bytes = fromB64(p.data.data.replace(/^data:[^,]*,/, ""));
+    } catch {
+      return apiError(c, 422, "invalid", "الملف غير صالح");
+    }
+    if (bytes.length > FONT_BYTES) return apiError(c, 422, "size", "الخط أكبر من 2 ميقا");
+    const mime = bytes.length >= 4 ? fontKind(bytes) : null;
+    if (!mime) return apiError(c, 422, "type", "الملف مو خط — المقبول TTF أو OTF أو WOFF أو WOFF2");
+    const id = randomToken(10).toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12) || String(Date.now());
+    await c.env.MEDIA.put(cardFontKey(T(c), id), bytes, { httpMetadata: { contentType: mime } });
+    const font: CardFont = { id, name: p.data.name, size: bytes.length, created_at: Date.now() };
+    await setSetting(c.env.DB, T(c), "card_fonts", [...fonts, font]);
+    await audit(c.env.DB, T(c), c.get("session").username, "card_font.added", id, { name: font.name, size: font.size });
+    return c.json({ ok: true, font });
+  });
+  api.get("/card-fonts/:id", async (c) => {
+    const id = c.req.param("id");
+    const fonts = await getSetting<CardFont[]>(c.env.DB, T(c), "card_fonts", []);
+    if (!fonts.some((f) => f.id === id) || !c.env.MEDIA) return apiError(c, 404, "not_found", "الخط غير موجود");
+    const obj = await c.env.MEDIA.get(cardFontKey(T(c), id));
+    if (!obj) return apiError(c, 404, "not_found", "الخط غير موجود");
+    return new Response(obj.body, { headers: { "Content-Type": obj.httpMetadata?.contentType ?? "font/ttf", "Cache-Control": "private, max-age=86400" } });
+  });
+  api.delete("/card-fonts/:id", async (c) => {
+    const id = c.req.param("id");
+    const fonts = await getSetting<CardFont[]>(c.env.DB, T(c), "card_fonts", []);
+    if (!fonts.some((f) => f.id === id)) return c.json({ ok: true });
+    await c.env.MEDIA?.delete(cardFontKey(T(c), id)).catch(() => undefined);
+    await setSetting(c.env.DB, T(c), "card_fonts", fonts.filter((f) => f.id !== id));
     return c.json({ ok: true });
   });
   api.delete("/card-designs/:id", async (c) => {
