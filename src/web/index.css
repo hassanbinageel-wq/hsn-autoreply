@@ -7,11 +7,17 @@
 @import "@fontsource/cairo/arabic-800.css";
 @import "@fontsource/cairo/latin-800.css";
 
+/* Thmanyah Sans (thmanyah.com) — the interface font. Medium covers semibold, Black covers extrabold. */
+@font-face { font-family: "Thmanyah Sans"; font-weight: 400; font-display: swap; src: url("./fonts/thmanyahsans-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Thmanyah Sans"; font-weight: 500 600; font-display: swap; src: url("./fonts/thmanyahsans-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Thmanyah Sans"; font-weight: 700; font-display: swap; src: url("./fonts/thmanyahsans-Bold.woff2") format("woff2"); }
+@font-face { font-family: "Thmanyah Sans"; font-weight: 800 900; font-display: swap; src: url("./fonts/thmanyahsans-Black.woff2") format("woff2"); }
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif;
-  --font-display: "Cairo", "IBM Plex Sans Arabic", system-ui, sans-serif;
+  --font-sans: "Thmanyah Sans", "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif;
+  --font-display: "Thmanyah Sans", "Cairo", "IBM Plex Sans Arabic", system-ui, sans-serif;
   --color-brand-50: #f5f3ff;
   --color-brand-100: #ede9fe;
   --color-brand-500: #8b5cf6;
