@@ -90,6 +90,7 @@ export async function applyTopup(env: Env, o: { tenantId: number; messages: numb
     o.tenantId, cy.key, o.messages, o.packId ?? null, o.paymentId ?? null, o.amount ?? 0, source, o.actor ?? (o.paymentId ? `payment:${o.paymentId}` : "owner"), now,
   );
   await setSetting(env.DB, o.tenantId, `plan_alert_messages_${cy.key}`, 0);
+  await setSetting(env.DB, o.tenantId, `plan_alert_messages_day_${cy.key}`, "");
   const n = o.messages.toLocaleString("en-US");
   await audit(env.DB, o.tenantId, o.actor ?? "moyasar", "subscription.topup", String(o.messages), { payment: o.paymentId ?? null, amount: o.amount ?? 0, cycle: cy.key });
   if (o.paymentId) {
@@ -97,7 +98,7 @@ export async function applyTopup(env: Env, o: { tenantId: number; messages: numb
     const t = await first<{ name: string }>(env.DB, "SELECT name FROM tenants WHERE id = ?", o.tenantId);
     await notify(env, o.tenantId, "plan", `✅ تم الشحن: انضافت ${n} رسالة لرصيدك (${sar} ر.س)، وتصلح لين يتجدد العدّاد.`, undefined, { link: "/subscription" });
     await notify(env, OWNER_TENANT, "plan", `💳 شحن رسائل: «${t?.name ?? o.tenantId}» اشترى ${n} رسالة بـ ${sar} ر.س${isTestKey(env) ? " (تجريبي)" : ""}`, undefined, { link: "/owner?tab=topups" });
-  } else {
+  } else if (o.messages > 0) {
     await notify(env, o.tenantId, "plan", `🎁 أضفنا لك ${n} رسالة على رصيد هذي الدورة.`, undefined, { link: "/subscription" });
   }
 }

@@ -417,7 +417,7 @@ export function App() {
           const pct = c.limit === null ? 0 : c.limit === 0 ? 100 : Math.min(100, (c.used / c.limit) * 100);
           return (
             <Link to="/subscription" className="mt-3 block rounded-2xl border border-[var(--border)] p-3">
-              <b className="block text-xs">رسائل الدورة الحالية</b>
+              <b className="block text-xs">الرسائل</b>
               <span className="muted text-[11px]">{c.used.toLocaleString("en-US")} من {c.limit === null ? "غير محدود" : c.limit.toLocaleString("en-US")} رسالة{c.extra ? ` (منها ${c.extra.toLocaleString("en-US")} إضافية)` : ""}</span>
               <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]"><span className={`block h-full rounded-full ${pct >= 90 ? "bg-red-500" : "grad"}`} style={{ width: `${c.limit === null ? 3 : Math.max(2, pct)}%` }} /></span>
             </Link>

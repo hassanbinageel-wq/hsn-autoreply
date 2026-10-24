@@ -202,4 +202,46 @@ describe("offers", () => {
     expect((await call("/api/owner/offer-templates", OWNER)).body.templates).toMatchObject([{ label: "عرضي", title: "عرض رمضان" }]);
     expect((await call("/api/owner/offer-templates", OWNER, "PUT", [{ ...next[0], link: "javascript:x" }])).status).toBe(422);
   });
+
+  it("audience by plan: subscribers of chosen plans, or everyone except them", async () => {
+    const a = await register("shop_a"); // basic
+    const b = await register("shop_b");
+    await DB.prepare("UPDATE tenants SET plan_id = 'pro' WHERE id = ?").bind(b.tid).run();
+    const onlyPro = (await call("/api/owner/offers", OWNER, "POST", offer({ audience: "plans", plan_ids: ["pro"] }))).body.id;
+    const notPro = (await call("/api/owner/offers", OWNER, "POST", offer({ audience: "except_plans", plan_ids: ["pro"] }))).body.id;
+    expect((await call("/api/owner/offers", OWNER, "POST", offer({ audience: "plans", plan_ids: [] }))).status).toBe(422);
+    expect((await call("/api/promos", a.h)).body.offers.map((o: any) => o.id)).toEqual([notPro]);
+    expect((await call("/api/promos", b.h)).body.offers.map((o: any) => o.id)).toEqual([onlyPro]);
+    expect((await call(`/api/owner/offers/${onlyPro}/stats`, OWNER)).body.targeted).toBe(1);
+  });
+
+  it("a real discount: only the customer the offer is for pays less, on the chosen plan, while it runs", async () => {
+    stubMoyasar();
+    await DB.prepare("UPDATE plans SET card_price_halalas = 9900, price_period = 'month' WHERE id = 'pro'").run();
+    await DB.prepare("UPDATE plans SET card_price_halalas = 4900, price_period = 'month' WHERE id = 'basic'").run();
+    const a = await register("shop_a");
+    const b = await register("shop_b");
+    await call("/api/owner/offers", OWNER, "POST", offer({ audience: "tenants", tenant_ids: [a.tid], discount_pct: 30, discount_plans: ["pro"] }));
+    const proFor = async (h: H) => (await call("/api/subscription", h)).body.plans.find((p: any) => p.id === "pro");
+    expect(await proFor(a.h)).toMatchObject({ card_price: 99, offer_pct: 30, offer_card_price: 69.3 });
+    expect((await proFor(b.h)).offer_pct).toBeUndefined();
+    expect((await call("/api/subscription", a.h)).body.plans.find((p: any) => p.id === "basic").offer_pct).toBeUndefined(); // other plan
+    // the upgrade difference (49 → 99 on day 0 = 50 SAR) gets 30% off for her only
+    expect((await call("/api/subscription/upgrade/quote?plan_id=pro", a.h)).body).toMatchObject({ amount: 35, discount_pct: 30 });
+    expect((await call("/api/subscription/upgrade/quote?plan_id=pro", b.h)).body).toMatchObject({ amount: 50, discount_pct: 0 });
+    await call("/api/subscription/upgrade", a.h, "POST", { plan_id: "pro" });
+    expect(reqs.at(-1)!.body.amount).toBe(3500);
+    const pay = await DB.prepare("SELECT offer_id FROM card_payments ORDER BY id DESC LIMIT 1").first<any>();
+    expect(pay.offer_id).not.toBeNull();
+  });
+
+  it("the owner can take messages off a customer's cycle too (not below zero)", async () => {
+    const { tid } = await register("shop_a");
+    expect((await call(`/api/owner/tenants/${tid}/credits`, OWNER, "POST", { messages: -400 })).body).toMatchObject({ ok: true, limit: 600 });
+    expect((await getEntitlement(DB, tid)).limits.monthly_messages).toBe(600);
+    expect((await call(`/api/owner/tenants/${tid}/credits`, OWNER, "POST", { messages: -700 })).status).toBe(422);
+    expect((await call(`/api/owner/tenants/${tid}/credits`, OWNER, "POST", { messages: 0 })).status).toBe(422);
+    const notes = (await DB.prepare("SELECT COUNT(*) AS n FROM app_notifications WHERE tenant_id = ?").bind(tid).first<any>()).n;
+    expect(notes).toBe(0); // taking messages off is silent
+  });
 });

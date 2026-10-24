@@ -51,6 +51,9 @@ export type Offer = {
   icon: string | null;
   starts_at: number | null;
   ends_at: number;
+  /** A real card discount (%) the customer gets while the offer runs, on these plans (null = every plan). */
+  discount_pct?: number | null;
+  discount_plans?: string[] | null;
 };
 
 /** Ready offer contents the owner picks from (and edits, saved in the owner setting "offer_templates"). */

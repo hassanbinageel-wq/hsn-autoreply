@@ -59,7 +59,6 @@ export function TopupsTab() {
       </Card>
       {edit && <PackModal pack={edit} plans={plans} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
       <TopupSettingsCard initial={data.settings} />
-      <GiftCard onDone={reload} />
       <Card title="آخر عمليات الشحن">
         {!data.sales.length ? <p className="muted py-3 text-center text-sm">ما فيه عمليات بعد.</p> : (
           <div className="divide-y divide-[var(--border)] text-sm">
@@ -192,51 +191,28 @@ function TopupSettingsCard({ initial }: { initial: TopupSettings }) {
   );
 }
 
-/** Gift messages to one customer's current cycle. */
-function GiftCard({ onDone }: { onDone: () => void }) {
-  const { data } = useAsync(() => api<any[]>("/api/owner/tenants"), []);
-  const [tid, setTid] = useState(0);
-  const [count, setCount] = useState(1000);
-  const [busy, setBusy] = useState(false);
-  const customers = (data ?? []).filter((t) => !t.is_owner);
-  const give = async () => {
-    setBusy(true);
-    try {
-      await api(`/api/owner/tenants/${tid}/credits`, { body: { messages: count } });
-      toast("انضافت الرسائل ووصله إشعار");
-      onDone();
-    } catch (e: any) {
-      toast(e.message, "bad");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Card title="🎁 إهداء رسائل لعميل">
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label="العميل">
-          <select className="input min-w-[12rem]" value={tid} onChange={(e) => setTid(+e.target.value)}>
-            <option value={0}>اختر عميل</option>
-            {customers.map((t) => <option key={t.id} value={t.id}>{t.name}{t.username ? ` (${t.username})` : ""}</option>)}
-          </select>
-        </Field>
-        <Field label="عدد الرسائل"><input className="input w-32" type="number" min={1} value={count} onChange={(e) => setCount(+e.target.value)} /></Field>
-        <button className="btn btn-primary" disabled={busy || !tid || count < 1} onClick={give}>{busy ? "…" : "أضف للدورة الحالية"}</button>
-      </div>
-    </Card>
-  );
-}
-
 // ---- Offers
 
-type OfferForm = { id?: number; title: string; body: string; cta: string; link: string; custom_link: string; theme: string; icon: string; starts_at: number | null; ends_at: number | null; audience: "all" | "tenants"; tenant_ids: number[]; active: boolean };
-const EMPTY_OFFER: OfferForm = { title: "", body: "", cta: "استفد الحين", link: "/subscription", custom_link: "", theme: "violet", icon: "🎁", starts_at: null, ends_at: null, audience: "all", tenant_ids: [], active: true };
+type Audience = "all" | "plans" | "except_plans" | "tenants";
+type OfferForm = {
+  id?: number; title: string; body: string; cta: string; link: string; custom_link: string; theme: string; icon: string; starts_at: number | null; ends_at: number | null;
+  audience: Audience; tenant_ids: number[]; plan_ids: string[]; discount_pct: number | null; discount_plans: string[]; active: boolean;
+};
+const EMPTY_OFFER: OfferForm = { title: "", body: "", cta: "استفد الحين", link: "/subscription", custom_link: "", theme: "violet", icon: "🎁", starts_at: null, ends_at: null, audience: "all", tenant_ids: [], plan_ids: [], discount_pct: null, discount_plans: [], active: true };
+const AUDIENCES: Array<[Audience, string]> = [["all", "كل العملاء"], ["plans", "مشتركين باقات"], ["except_plans", "الكل ماعدا باقات"], ["tenants", "عملاء أختارهم"]];
+
+/** Who an offer is for, in words (cards and details). */
+export function audienceText(o: { audience: string; tenant_ids: number[]; plan_ids: string[] }, plans: Array<{ id: string; name: string }>): string {
+  const names = (o.plan_ids ?? []).map((id) => plans.find((p) => p.id === id)?.name ?? id).join("، ");
+  return o.audience === "all" ? "كل العملاء" : o.audience === "tenants" ? `${o.tenant_ids.length} عميل مختار` : o.audience === "plans" ? `مشتركين: ${names}` : `الكل ماعدا: ${names}`;
+}
 const ICONS = ["🎁", "🔥", "⚡", "🚀", "💜", "⭐", "🎉", "💰", "📣", "⏳"];
 
 export function OffersTab() {
   const { data, loading, error, reload } = useAsync(() => api<any>("/api/owner/offers"), []);
   const [edit, setEdit] = useState<OfferForm | null>(null);
   const [statsFor, setStatsFor] = useState<any | null>(null);
+  const { data: plans } = useAsync(() => api<Array<{ id: string; name: string }>>("/api/owner/plans"), []);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   if (loading && !data) return <Spinner />;
@@ -256,12 +232,12 @@ export function OffersTab() {
               <Card key={o.id} className="self-start">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <span className={`chip ${cls}`}>{l}</span>
-                  <span className="muted text-xs">{o.audience === "all" ? "كل العملاء" : `${o.tenant_ids.length} عميل`} · {o.clicks} ضغطة</span>
+                  <span className="muted text-xs">{audienceText(o, plans ?? [])}{o.discount_pct ? ` · خصم ${o.discount_pct}%` : ""} · {o.clicks} ضغطة</span>
                 </div>
                 <OfferCard o={o} now={now} />
                 <div className="mt-3 flex justify-end gap-2">
                   <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setStatsFor(o)}><Icon name="chart" size={15} />التفاصيل والتحليل</button>
-                  <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setEdit({ ...EMPTY_OFFER, ...o, body: o.body ?? "", cta: o.cta ?? "", icon: o.icon ?? "", link: OFFER_LINKS.some((x) => x.to === o.link) ? o.link : "custom", custom_link: OFFER_LINKS.some((x) => x.to === o.link) ? "" : o.link })}>تعديل</button>
+                  <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setEdit({ ...EMPTY_OFFER, ...o, discount_pct: o.discount_pct ?? null, body: o.body ?? "", cta: o.cta ?? "", icon: o.icon ?? "", link: OFFER_LINKS.some((x) => x.to === o.link) ? o.link : "custom", custom_link: OFFER_LINKS.some((x) => x.to === o.link) ? "" : o.link })}>تعديل</button>
                 </div>
               </Card>
             );
@@ -269,7 +245,7 @@ export function OffersTab() {
         </div>
       )}
       {edit && <OfferModal offer={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); reload(); }} />}
-      {statsFor && <OfferStatsModal offer={statsFor} onClose={() => setStatsFor(null)} />}
+      {statsFor && <OfferStatsModal offer={statsFor} plans={plans ?? []} onClose={() => setStatsFor(null)} />}
     </div>
   );
 }
@@ -279,6 +255,15 @@ function OfferModal({ offer, onClose, onDone }: { offer: OfferForm; onClose: () 
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
   const { data: tenants } = useAsync(() => api<any[]>("/api/owner/tenants"), []);
+  const { data: plans } = useAsync(() => api<Array<{ id: string; name: string; active: number }>>("/api/owner/plans"), []);
+  const planChips = (sel: string[], onChange: (v: string[]) => void) => (
+    <div className="flex flex-wrap gap-1.5">
+      {(plans ?? []).filter((p) => p.active).map((p) => {
+        const on = sel.includes(p.id);
+        return <button key={p.id} type="button" className={`chip ${on ? "bg-violet-500/15 text-violet-700 dark:text-violet-300" : "surface-2"}`} onClick={() => onChange(on ? sel.filter((x) => x !== p.id) : [...sel, p.id])}>{on ? "✓ " : ""}{p.name}</button>;
+      })}
+    </div>
+  );
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   const tz = currentTz();
@@ -291,7 +276,9 @@ function OfferModal({ offer, onClose, onDone }: { offer: OfferForm; onClose: () 
     try {
       const body = {
         title: f.title, body: f.body || null, cta: f.cta || null, link: f.link === "custom" ? f.custom_link.trim() : f.link, theme: f.theme, icon: f.icon || null,
-        starts_at: f.starts_at, ends_at: f.ends_at, audience: f.audience, tenant_ids: f.audience === "tenants" ? f.tenant_ids : undefined, active: f.active,
+        starts_at: f.starts_at, ends_at: f.ends_at, audience: f.audience, tenant_ids: f.audience === "tenants" ? f.tenant_ids : undefined,
+        plan_ids: f.audience === "plans" || f.audience === "except_plans" ? f.plan_ids : undefined,
+        discount_pct: f.discount_pct || null, discount_plans: f.discount_pct ? f.discount_plans : null, active: f.active,
       };
       await api(f.id ? `/api/owner/offers/${f.id}` : "/api/owner/offers", { method: f.id ? "PUT" : "POST", body });
       toast(f.id ? "انحفظ العرض" : "انضاف العرض");
@@ -346,10 +333,15 @@ function OfferModal({ offer, onClose, onDone }: { offer: OfferForm; onClose: () 
             <Field label="ينتهي" hint="العدّاد ينزل لهذا الوقت"><DateTimeField label="نهاية العرض" clearable={false} value={utcToLocalInput(f.ends_at, tz)} onChange={(v) => set({ ends_at: localInputToUtc(v, tz) })} /></Field>
           </div>
           <Field label="يظهر لـ">
-            <div className="seg mb-2" role="tablist">
-              <button type="button" className={f.audience === "all" ? "on" : ""} onClick={() => set({ audience: "all" })}>كل العملاء</button>
-              <button type="button" className={f.audience === "tenants" ? "on" : ""} onClick={() => set({ audience: "tenants" })}>عملاء أختارهم</button>
+            <div className="mb-2 flex flex-wrap gap-1.5" role="radiogroup">
+              {AUDIENCES.map(([k, l]) => <button key={k} type="button" role="radio" aria-checked={f.audience === k} className={`chip ${f.audience === k ? "grad text-white" : "surface-2"}`} onClick={() => set({ audience: k })}>{l}</button>)}
             </div>
+            {(f.audience === "plans" || f.audience === "except_plans") && (
+              <div className="space-y-1">
+                <span className="muted text-xs">{f.audience === "plans" ? "يظهر للمشتركين في:" : "يظهر للكل ماعدا المشتركين في:"}</span>
+                {planChips(f.plan_ids, (v) => set({ plan_ids: v }))}
+              </div>
+            )}
             {f.audience === "tenants" && (
               <div className="space-y-2">
                 <input className="input" type="search" placeholder="ابحث عن عميل" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -368,6 +360,18 @@ function OfferModal({ offer, onClose, onDone }: { offer: OfferForm; onClose: () 
               </div>
             )}
           </Field>
+          <div className="surface-2 space-y-2 rounded-2xl p-3">
+            <Toggle checked={!!f.discount_pct} onChange={(v) => set({ discount_pct: v ? 30 : null })} label="خصم فعلي عند الدفع" description="ينخصم من سعر البطاقة والترقية تلقائيًا — بس للعملاء اللي يظهر لهم هذا العرض، ولين ينتهي." />
+            {!!f.discount_pct && (
+              <>
+                <Field label="نسبة الخصم %"><input className="input w-28" type="number" min={1} max={90} value={f.discount_pct} onChange={(e) => set({ discount_pct: Math.max(1, Math.min(90, +e.target.value || 1)) })} /></Field>
+                <div className="space-y-1">
+                  <span className="muted text-xs">على باقات (بدون اختيار = كل الباقات):</span>
+                  {planChips(f.discount_plans, (v) => set({ discount_plans: v }))}
+                </div>
+              </>
+            )}
+          </div>
           <Toggle checked={f.active} onChange={(v) => set({ active: v })} label="مفعّل" />
         </div>
         <div className="md:sticky md:top-0 md:self-start">
@@ -429,14 +433,14 @@ function OfferTemplates({ current, onPick }: { current: OfferForm; onPick: (t: O
 }
 
 /** One offer's numbers: for how many, who saw it, who opened it, who paid after it. */
-function OfferStatsModal({ offer, onClose }: { offer: any; onClose: () => void }) {
+function OfferStatsModal({ offer, plans, onClose }: { offer: any; plans: Array<{ id: string; name: string }>; onClose: () => void }) {
   const { data, loading, error } = useAsync(() => api<any>(`/api/owner/offers/${offer.id}/stats`), [offer.id]);
   const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)}%` : "—");
   return (
     <Modal open onClose={onClose} title={`تفاصيل «${offer.title}»`}>
       {loading && !data ? <Spinner /> : error ? <Alert tone="bad">{error}</Alert> : (
         <div className="space-y-4">
-          <p className="muted text-sm">{offer.audience === "all" ? "لكل العملاء" : `لـ ${offer.tenant_ids.length} عميل مختار`} · {offer.ends_at > Date.now() ? `ينتهي ${fmtTime(offer.ends_at)}` : `انتهى ${fmtTime(offer.ends_at)}`}</p>
+          <p className="muted text-sm">{audienceText(offer, plans)}{offer.discount_pct ? ` · خصم فعلي ${offer.discount_pct}%` : ""} · {offer.ends_at > Date.now() ? `ينتهي ${fmtTime(offer.ends_at)}` : `انتهى ${fmtTime(offer.ends_at)}`}</p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
             {[["المستهدفين", n(data.targeted), ""], ["شافوه", n(data.viewed), pct(data.viewed, data.targeted)], ["ضغطوا", n(data.clicked), pct(data.clicked, data.viewed)], ["اشتروا بعده", n(data.converted), pct(data.converted, data.viewed)], ["الإيراد", `${n(data.revenue)} ر.س`, ""]].map(([l, v, sub]) => (
               <div key={l} className="surface-2 rounded-xl p-3 text-center">

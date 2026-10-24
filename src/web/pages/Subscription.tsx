@@ -86,7 +86,7 @@ export function SubscriptionPage() {
     }
     const ok = await askConfirm({
       title: `الدفع بالبطاقة — ${plan.name}`,
-      message: `راح تنتقل لصفحة الدفع الآمنة وتدفع ${plan.card_price.toLocaleString("en-US")} ر.س بمدى أو فيزا أو ماستركارد أو Apple Pay. بعد الدفع تتفعّل الباقة تلقائيًا${data.active && data.plan?.id === planId ? "، والمدة الجديدة تنضاف بعد تاريخ انتهاء اشتراكك الحالي" : data.active ? " — تنبيه: باقتك الحالية تتغيّر لهذي الباقة، والأيام المتبقية تنضاف لها" : ""}. أكواد الخصم ما تنطبق على الدفع بالبطاقة.`,
+      message: `راح تنتقل لصفحة الدفع الآمنة وتدفع ${(plan.offer_card_price ?? plan.card_price).toLocaleString("en-US")} ر.س${plan.offer_pct ? ` (بعد خصم العرض ${plan.offer_pct}%)` : ""} بمدى أو فيزا أو ماستركارد أو Apple Pay. بعد الدفع تتفعّل الباقة تلقائيًا${data.active && data.plan?.id === planId ? "، والمدة الجديدة تنضاف بعد تاريخ انتهاء اشتراكك الحالي" : data.active ? " — تنبيه: باقتك الحالية تتغيّر لهذي الباقة، والأيام المتبقية تنضاف لها" : ""}. أكواد الخصم ما تنطبق على الدفع بالبطاقة.`,
       confirmLabel: "انتقل للدفع",
     });
     if (!ok) return;
@@ -231,7 +231,7 @@ function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url:
   const [busy, setBusy] = useState(false);
   const chosen = higher.find((p: any) => p.id === (target || higher[0]?.id));
   const { data: quote, error: quoteError } = useAsync(
-    () => (chosen ? api<{ amount: number; days_left: number; used_messages: number; messages_limit: number | null; new_value: number; credit: number }>(`/api/subscription/upgrade/quote?plan_id=${encodeURIComponent(chosen.id)}`) : Promise.resolve(null)),
+    () => (chosen ? api<{ amount: number; days_left: number; used_messages: number; messages_limit: number | null; new_value: number; credit: number; discount_pct: number }>(`/api/subscription/upgrade/quote?plan_id=${encodeURIComponent(chosen.id)}`) : Promise.resolve(null)),
     [chosen?.id],
   );
   // The «upgraded» notice shows once per upgrade (remembered on this device) and hides after 15 seconds.
@@ -284,6 +284,7 @@ function UpgradeCard({ data, onPay }: { data: any; onPay: (r: { id: number; url:
                   <li>الأيام الباقية: <b>{quote.days_left}</b> يوم (تبقى نفسها)</li>
                   <li>رسائل هذي الدورة: <b>{quote.used_messages.toLocaleString("en-US")}</b>{quote.messages_limit ? ` من ${quote.messages_limit.toLocaleString("en-US")}` : ""}</li>
                   <li>«{chosen.name}» للأيام الباقية: <b>{sar(quote.new_value)}</b> − المتبقي من باقتك: <b>{sar(quote.credit)}</b></li>
+                  {quote.discount_pct > 0 && <li className="font-bold text-emerald-700 dark:text-emerald-400">🎁 عرض خاص لك: خصم {quote.discount_pct}% على الفرق</li>}
                 </ul>
                 <button className="btn btn-primary w-full" disabled={busy} onClick={pay}><Icon name="lock" size={17} />ادفع الفرق {sar(quote.amount)} وترقَّ الحين</button>
               </>

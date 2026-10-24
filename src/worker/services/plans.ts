@@ -84,7 +84,7 @@ export async function getEntitlement(db: D1Database, tenantId: number, now = Dat
   // Top-up messages of this cycle raise the cycle's limit (used after the plan's own, since one counter counts both).
   if (limits.monthly_messages === null) return { ...base, active: true, limits };
   const extra = await cycleCredits(db, tenantId, cycleOf(t.plan_started_at ?? t.created_at, t.plan_expires_at, now).key);
-  return { ...base, active: true, limits: { ...limits, monthly_messages: limits.monthly_messages + extra }, extra_messages: extra };
+  return { ...base, active: true, limits: { ...limits, monthly_messages: Math.max(0, limits.monthly_messages + extra) }, extra_messages: extra };
 }
 
 /** Messages added to one usage cycle of a customer (top-ups bought or given by the owner). */

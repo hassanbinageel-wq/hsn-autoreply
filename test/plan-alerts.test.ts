@@ -47,6 +47,22 @@ describe("customer notifications: own plan usage, owner notices", () => {
     expect(await runPlanAlerts(TEST_ENV, AT + 60_000)).toBe(0);
   });
 
+  it("messages: a reminder every day while 80% or more is used; out of messages: the ready message, then daily reminders", async () => {
+    const a = await customer("متجر أ");
+    await setUsage(a, 850);
+    expect(await runPlanAlerts(TEST_ENV, AT)).toBe(1);
+    expect(await runPlanAlerts(TEST_ENV, AT + 20 * 60_000)).toBe(0); // same day
+    expect(await runPlanAlerts(TEST_ENV, AT + 86_400_000)).toBe(1); // next day again
+    await setUsage(a, 1000);
+    expect(await runPlanAlerts(TEST_ENV, AT + 86_400_000 + 10 * 60_000)).toBe(1); // ran out later that day: at once
+    expect(await runPlanAlerts(TEST_ENV, AT + 2 * 86_400_000)).toBe(1); // still out next day: a reminder
+    const n = await notes(a);
+    expect(n.map((x: any) => x.kind)).toEqual(["plan", "plan", "message", "plan"]);
+    expect(n[3].title).toContain("خلصت رسائل دورتك");
+    expect((await DB.prepare("SELECT COUNT(*) AS n FROM owner_messages WHERE tenant_id = ?").bind(a).first<any>()).n).toBe(1);
+    expect((await notes(1)).length).toBe(1); // the owner hears once
+  });
+
   it("an owner notice reaches every active customer, not the owner or suspended customers", async () => {
     const a = await customer("أ");
     const s = await customer("موقوف");

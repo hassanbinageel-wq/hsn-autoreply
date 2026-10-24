@@ -5,7 +5,7 @@ import { Field, Modal, Tip, toast } from "./ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, convertPrice, formatAmount, orderFeatures, type ExchangeRates, type PlanLimits } from "../../shared/plans";
 
 export interface Catalog {
-  plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_before?: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits; card_price?: number | null }>;
+  plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_before?: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits; card_price?: number | null; offer_pct?: number; offer_card_price?: number }>;
   rates: ExchangeRates;
   featured?: { plan_id: string | null; label: string };
   feature_order?: string[];
@@ -97,7 +97,8 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
       <div ref={track} className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-[8%] pb-2 pt-4 [scrollbar-width:none] sm:px-[18%] lg:mx-0 lg:grid lg:grid-cols-3 lg:items-stretch lg:gap-4 lg:overflow-visible lg:px-0 [&::-webkit-scrollbar]:hidden">
         {catalog.plans.map((p, i) => {
           const before = p.price_amount !== null ? convertPrice(p.price_amount, p.price_currency, cur, catalog.rates) : null;
-          const pct = off(coupon, p.id);
+          // A coupon typed here, or a running offer's discount for this customer (whichever is bigger).
+          const pct = Math.max(off(coupon, p.id), p.offer_pct ?? 0);
           const price = before === null ? null : discounted(before, pct);
           // The owner's "price before" (struck through), or the price before the coupon.
           const old = pct > 0 ? before : p.price_before ? convertPrice(p.price_before, p.price_currency, cur, catalog.rates) : null;
@@ -106,6 +107,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
           return (
             <div key={p.id} ref={(el) => { cards.current[i] = el; }} data-i={i} className={`card relative flex w-[84%] min-w-0 shrink-0 snap-center flex-col p-5 sm:w-[64%] lg:w-auto ${isFeatured ? "ring-2 ring-violet-500 lg:-translate-y-1 lg:shadow-xl lg:shadow-violet-500/10" : ""}`}>
               {isFeatured && <span className="grad absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-extrabold text-white shadow">{badge}</span>}
+              {!!p.offer_pct && <span className="absolute -top-3 right-4 whitespace-nowrap rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-extrabold text-white shadow">🎁 عرض خاص لك −{p.offer_pct}%</span>}
               <div className="flex items-start justify-between gap-2">
                 <b className="font-display text-lg font-extrabold">{p.name}</b>
                 {isCurrent && <span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">باقتك</span>}

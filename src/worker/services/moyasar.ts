@@ -5,6 +5,7 @@ import { notify } from "./notify";
 import { extendPlan, PERIOD_DAYS } from "./plans";
 import { withSchedulingNotice } from "./publish";
 import { applyTopup } from "./topups";
+import { discounted, offerDiscount } from "./offers";
 
 /**
  * Card payments (Mada / Visa / Mastercard / Apple Pay) through Moyasar's hosted invoice page, at a fixed SAR price
@@ -56,21 +57,24 @@ export async function startCardPayment(env: Env, tenantId: number, planId: strin
   if (!cardEnabled(env)) throw new PayError("card_off", "الدفع بالبطاقة غير متاح حاليًا — استخدم طرق الدفع الأخرى", 409);
   const plan = await payablePlan(env, planId);
   if (!plan) throw new PayError("not_payable", "هذي الباقة ما تندفع بالبطاقة — استخدم طرق الدفع الأخرى");
-  return createInvoice(env, { tenantId, planId: plan.id, days: plan.days, amount: plan.amount, description: `شيّك — ${plan.name} (${plan.days} يوم)`, actor, siteOrigin }, now);
+  // A running offer may give this customer (only) a discount on this plan.
+  const off = await offerDiscount(env.DB, tenantId, plan.id, now);
+  const amount = off ? discounted(plan.amount, off.pct) : plan.amount;
+  return createInvoice(env, { tenantId, planId: plan.id, days: plan.days, amount, description: `شيّك — ${plan.name} (${plan.days} يوم)${off ? ` — عرض ${off.pct}%` : ""}`, actor, siteOrigin, offerId: off?.offer_id }, now);
 }
 
 /** Opens a Moyasar invoice for an amount (a plan period, or an upgrade difference when `upgradeId` is set). */
 export async function createInvoice(
   env: Env,
-  o: { tenantId: number; planId: string; days: number; amount: number; description: string; actor: string; siteOrigin?: string; upgradeId?: number; topup?: { packId: number; messages: number } },
+  o: { tenantId: number; planId: string; days: number; amount: number; description: string; actor: string; siteOrigin?: string; upgradeId?: number; topup?: { packId: number; messages: number }; offerId?: number },
   now = Date.now(),
 ): Promise<{ id: number; url: string }> {
   if (!cardEnabled(env)) throw new PayError("card_off", "الدفع بالبطاقة غير متاح حاليًا — استخدم طرق الدفع الأخرى", 409);
   if (o.amount < 100) throw new PayError("too_small", "أقل مبلغ للدفع بالبطاقة 1 ر.س");
   const row = await run(
     env.DB,
-    "INSERT INTO card_payments (tenant_id, plan_id, days, amount, currency, created_by, upgrade_id, topup_pack_id, topup_messages, created_at, updated_at) VALUES (?, ?, ?, ?, 'SAR', ?, ?, ?, ?, ?, ?)",
-    o.tenantId, o.planId, o.days, o.amount, o.actor, o.upgradeId ?? null, o.topup?.packId ?? null, o.topup?.messages ?? null, now, now,
+    "INSERT INTO card_payments (tenant_id, plan_id, days, amount, currency, created_by, upgrade_id, topup_pack_id, topup_messages, offer_id, created_at, updated_at) VALUES (?, ?, ?, ?, 'SAR', ?, ?, ?, ?, ?, ?, ?)",
+    o.tenantId, o.planId, o.days, o.amount, o.actor, o.upgradeId ?? null, o.topup?.packId ?? null, o.topup?.messages ?? null, o.offerId ?? null, now, now,
   );
   const id = Number(row.meta.last_row_id);
   const base = env.PUBLIC_BASE_URL.replace(/\/+$/, "");

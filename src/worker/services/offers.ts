@@ -2,19 +2,58 @@ import { all, first, run } from "../lib/db";
 import type { Offer } from "../../shared/promos";
 
 /**
- * Offers: a side box with a countdown that the owner shows to every customer or to chosen ones, for a time window.
- * A customer only ever sees offers addressed to all customers or listing their own tenant id.
+ * Offers: a side box with a countdown that the owner shows for a time window to every customer, to subscribers of
+ * chosen plans (or everyone except them), or to chosen customers. An offer can also carry a real discount on chosen
+ * plans: only the customers it is for get it, on card payments and upgrades, while it runs.
  */
 
-type OfferRow = Offer & { audience: string; tenant_ids: string | null; active: number; views: number; clicks: number; created_at: number; updated_at: number };
+type OfferRow = Offer & {
+  audience: string; tenant_ids: string | null; plan_ids: string | null; discount_pct: number | null; discount_plans: string | null;
+  active: number; views: number; clicks: number; created_at: number; updated_at: number;
+};
 
-const visibleTo = (o: OfferRow, tenantId: number) => o.audience === "all" || (o.tenant_ids ? (JSON.parse(o.tenant_ids) as number[]).includes(tenantId) : false);
+const ids = <T>(raw: string | null): T[] => (raw ? (JSON.parse(raw) as T[]) : []);
+
+/** Whether a customer (on plan `planId`, maybe none) is one of the offer's audience. */
+function visibleTo(o: OfferRow, tenantId: number, planId: string | null): boolean {
+  if (o.audience === "all") return true;
+  if (o.audience === "tenants") return ids<number>(o.tenant_ids).includes(tenantId);
+  if (o.audience === "plans") return !!planId && ids<string>(o.plan_ids).includes(planId);
+  if (o.audience === "except_plans") return !planId || !ids<string>(o.plan_ids).includes(planId);
+  return false;
+}
+
+async function planOf(db: D1Database, tenantId: number): Promise<string | null> {
+  return (await first<{ plan_id: string | null }>(db, "SELECT plan_id FROM tenants WHERE id = ?", tenantId))?.plan_id ?? null;
+}
+
+async function runningFor(db: D1Database, tenantId: number, now: number): Promise<OfferRow[]> {
+  const [rows, planId] = await Promise.all([
+    all<OfferRow>(db, "SELECT * FROM offers WHERE active = 1 AND ends_at > ? AND (starts_at IS NULL OR starts_at <= ?) ORDER BY ends_at", now, now),
+    planOf(db, tenantId),
+  ]);
+  return rows.filter((o) => visibleTo(o, tenantId, planId));
+}
 
 /** Offers running now for one customer, the soonest to end first. */
 export async function offersFor(db: D1Database, tenantId: number, now = Date.now()): Promise<Offer[]> {
-  const rows = await all<OfferRow>(db, "SELECT * FROM offers WHERE active = 1 AND ends_at > ? AND (starts_at IS NULL OR starts_at <= ?) ORDER BY ends_at", now, now);
-  return rows.filter((o) => visibleTo(o, tenantId)).map(({ id, title, body, cta, link, theme, icon, starts_at, ends_at }) => ({ id, title, body, cta, link, theme, icon, starts_at, ends_at }));
+  return (await runningFor(db, tenantId, now)).map(({ id, title, body, cta, link, theme, icon, starts_at, ends_at, discount_pct, discount_plans }) => ({
+    id, title, body, cta, link, theme, icon, starts_at, ends_at, discount_pct: discount_pct ?? null, discount_plans: discount_plans ? ids<string>(discount_plans) : null,
+  }));
 }
+
+/** The best running offer discount this customer has on a plan (card payment or upgrade to it), if any. */
+export async function offerDiscount(db: D1Database, tenantId: number, planId: string, now = Date.now()): Promise<{ pct: number; offer_id: number } | null> {
+  let best: { pct: number; offer_id: number } | null = null;
+  for (const o of await runningFor(db, tenantId, now)) {
+    if (!o.discount_pct || (o.discount_plans && !ids<string>(o.discount_plans).includes(planId))) continue;
+    if (!best || o.discount_pct > best.pct) best = { pct: o.discount_pct, offer_id: o.id };
+  }
+  return best;
+}
+
+/** An amount in halalas after a discount (Moyasar's minimum is 1 SAR). */
+export const discounted = (amount: number, pct: number) => Math.max(100, Math.round((amount * (100 - pct)) / 100));
 
 /** Notes that the customer was shown these offers (the first time only). */
 export async function markViewed(db: D1Database, tenantId: number, offers: Offer[], now = Date.now()): Promise<void> {
@@ -25,7 +64,7 @@ export async function markViewed(db: D1Database, tenantId: number, offers: Offer
 /** Counts a click on an offer the customer can see; false when it is not theirs or not running. */
 export async function clickOffer(db: D1Database, tenantId: number, id: number, now = Date.now()): Promise<boolean> {
   const o = await first<OfferRow>(db, "SELECT * FROM offers WHERE id = ? AND active = 1 AND ends_at > ?", id, now);
-  if (!o || !visibleTo(o, tenantId)) return false;
+  if (!o || !visibleTo(o, tenantId, await planOf(db, tenantId))) return false;
   await run(db, "UPDATE offers SET clicks = clicks + 1 WHERE id = ?", id);
   await run(db, "INSERT OR IGNORE INTO offer_events (offer_id, tenant_id, kind, created_at) VALUES (?, ?, 'click', ?)", id, tenantId, now);
   return true;
@@ -42,9 +81,8 @@ const GRACE_MS = 3 * 86_400_000;
 export async function offerStats(db: D1Database, id: number) {
   const o = await first<OfferRow>(db, "SELECT * FROM offers WHERE id = ?", id);
   if (!o) return null;
-  const targeted = o.audience === "all"
-    ? (await first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM tenants WHERE is_owner = 0 AND status = 'active'"))?.n ?? 0
-    : (JSON.parse(o.tenant_ids ?? "[]") as number[]).length;
+  const customers = await all<{ id: number; plan_id: string | null }>(db, "SELECT id, plan_id FROM tenants WHERE is_owner = 0 AND status = 'active'");
+  const targeted = customers.filter((t) => visibleTo(o, t.id, t.plan_id)).length;
   const events = await all<{ tenant_id: number; name: string | null; kind: string; created_at: number }>(
     db,
     "SELECT e.tenant_id, t.name, e.kind, e.created_at FROM offer_events e LEFT JOIN tenants t ON t.id = e.tenant_id WHERE e.offer_id = ? ORDER BY e.created_at",
@@ -87,5 +125,5 @@ export async function offerStats(db: D1Database, id: number) {
 
 export async function listOffers(db: D1Database) {
   const rows = await all<OfferRow>(db, "SELECT * FROM offers ORDER BY id DESC LIMIT 100");
-  return rows.map((o) => ({ ...o, active: !!o.active, tenant_ids: o.tenant_ids ? (JSON.parse(o.tenant_ids) as number[]) : [] }));
+  return rows.map((o) => ({ ...o, active: !!o.active, tenant_ids: ids<number>(o.tenant_ids), plan_ids: ids<string>(o.plan_ids), discount_plans: o.discount_plans ? ids<string>(o.discount_plans) : [] }));
 }

@@ -89,6 +89,7 @@ function CustomersTab() {
   const { data, loading, error, reload } = useAsync(() => api<any[]>("/api/owner/tenants"), []);
   const { data: plans } = useAsync(() => api<any[]>("/api/owner/plans"), []);
   const [planFor, setPlanFor] = useState<any>(null);
+  const [creditsFor, setCreditsFor] = useState<any>(null);
   const [messageFor, setMessageFor] = useState<any | null>(null);
   const [diagnoseFor, setDiagnoseFor] = useState<any | null>(null);
   const [adding, setAdding] = useState(false);
@@ -128,6 +129,7 @@ function CustomersTab() {
   return (
     <div className="space-y-5">
       {adding && <NewCustomer onClose={() => setAdding(false)} onDone={reload} />}
+      {creditsFor && <CreditsModal t={creditsFor} onClose={() => setCreditsFor(null)} onDone={() => { setCreditsFor(null); reload(); }} />}
       {messageFor && <MessageModal tenant={messageFor} preset={preset} onClose={() => { setMessageFor(null); setPreset(null); }} />}
       {diagnoseFor && <DiagnoseModal tenant={diagnoseFor} onClose={() => setDiagnoseFor(null)} />}
       {planFor && <SetPlan t={planFor} plans={plans ?? []} onClose={() => setPlanFor(null)} onDone={() => { setPlanFor(null); reload(); }} />}
@@ -184,7 +186,7 @@ function CustomersTab() {
                 <div><b className="font-display block text-base">{t.active_campaigns}/{t.campaigns}</b><span className="muted">حملات نشطة</span></div>
                 <div><b className="font-display block text-base">{t.flows_30d}</b><span className="muted">تفاعل (30 يوم)</span></div>
               </div>
-              <SubscriptionBar t={t} onEdit={() => setPlanFor(t)} />
+              <SubscriptionBar t={t} onEdit={() => setPlanFor(t)} onMessages={() => (t.plan_id && t.messages_limit != null ? setCreditsFor(t) : toast("العميل ما عنده باقة بحد رسائل", "bad"))} />
               <button type="button" className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl py-1.5 text-sm font-semibold text-violet-700 hover:bg-violet-500/5 dark:text-violet-300" aria-expanded={open.has(t.id)} onClick={() => toggle(t.id)}>
                 التفاصيل <Icon name="chev" size={16} className={`transition ${open.has(t.id) ? "rotate-180" : ""}`} />
               </button>
@@ -250,7 +252,7 @@ function CustomersTab() {
 const DAY = 86_400_000;
 
 /** Days left in the customer's subscription as a bar (green → amber → red), with the plan and monthly usage. */
-function SubscriptionBar({ t, onEdit }: { t: any; onEdit: () => void }) {
+function SubscriptionBar({ t, onEdit, onMessages }: { t: any; onEdit: () => void; onMessages: () => void }) {
   const now = Date.now();
   const exp: number | null = t.plan_expires_at ?? null;
   const active = !!exp && exp > now;
@@ -260,7 +262,8 @@ function SubscriptionBar({ t, onEdit }: { t: any; onEdit: () => void }) {
   const pct = active ? Math.max(3, Math.min(100, Math.round(((exp! - now) / total) * 100))) : 0;
   const tone = !active ? "bg-red-500" : daysLeft <= 3 ? "bg-red-500" : daysLeft <= 7 ? "bg-amber-500" : "bg-emerald-500";
   return (
-    <button type="button" onClick={onEdit} className="mt-3 block w-full rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-3 text-right transition hover:border-violet-400" title="تعديل الاشتراك">
+    <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-3 transition hover:border-violet-400">
+    <button type="button" onClick={onEdit} className="block w-full text-right" title="تعديل الاشتراك">
       <div className="flex items-center justify-between gap-2 text-xs">
         <span className="font-display text-sm font-extrabold">{t.plan_name ?? "بدون باقة"}</span>
         <span className={`font-bold ${!active ? "text-red-600" : daysLeft <= 3 ? "text-red-600" : daysLeft <= 7 ? "text-amber-600" : "text-emerald-600"}`}>
@@ -271,8 +274,55 @@ function SubscriptionBar({ t, onEdit }: { t: any; onEdit: () => void }) {
         <div className={`h-full rounded-full ${tone} transition-all`} style={{ width: `${pct}%` }} />
       </div>
       <div className="muted mt-1.5 text-[11px]">{exp ? `${active ? "ينتهي" : "انتهى"} ${fmtDate(exp)}` : "اضغط لتعيين باقة"}</div>
-      <MessagesMeter used={t.messages_month ?? 0} limit={t.plan_id ? (t.messages_limit === null || t.messages_limit === undefined ? null : t.messages_limit + (t.messages_extra ?? 0)) : 0} extra={t.messages_extra ?? 0} />
     </button>
+      <button type="button" className="-mx-1 block w-[calc(100%+0.5rem)] rounded-lg px-1 pb-1 text-right hover:bg-[var(--surface)]" title="زيادة أو إنقاص رسائل الدورة" onClick={onMessages}>
+        <MessagesMeter used={t.messages_month ?? 0} limit={t.plan_id ? (t.messages_limit === null || t.messages_limit === undefined ? null : t.messages_limit + (t.messages_extra ?? 0)) : 0} extra={t.messages_extra ?? 0} />
+      </button>
+    </div>
+  );
+}
+
+/** Add messages to (or take them off) a customer's current cycle. */
+function CreditsModal({ t, onClose, onDone }: { t: any; onClose: () => void; onDone: () => void }) {
+  const plan = t.messages_limit ?? 0;
+  const extra = t.messages_extra ?? 0;
+  const [mode, setMode] = useState<"add" | "remove">("add");
+  const [count, setCount] = useState(1000);
+  const [busy, setBusy] = useState(false);
+  const total = plan + extra;
+  const after = Math.max(0, total + (mode === "add" ? count : -count));
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api(`/api/owner/tenants/${t.id}/credits`, { body: { messages: mode === "add" ? count : -count } });
+      toast(mode === "add" ? "انضافت الرسائل ووصله إشعار" : "انقصت الرسائل");
+      onDone();
+    } catch (e: any) {
+      toast(e.message, "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} title={`رسائل «${t.name}» لهذي الدورة`} center>
+      <div className="space-y-4">
+        <div className="grid grid-cols-3 gap-2 text-center text-sm">
+          <div className="surface-2 rounded-xl p-2"><div className="muted text-xs">الباقة</div><b>{plan.toLocaleString("en-US")}</b></div>
+          <div className="surface-2 rounded-xl p-2"><div className="muted text-xs">إضافي</div><b>{extra.toLocaleString("en-US")}</b></div>
+          <div className="surface-2 rounded-xl p-2"><div className="muted text-xs">استخدم</div><b>{(t.messages_month ?? 0).toLocaleString("en-US")}</b></div>
+        </div>
+        <div className="seg" role="tablist">
+          <button type="button" className={mode === "add" ? "on" : ""} onClick={() => setMode("add")}>➕ زيادة</button>
+          <button type="button" className={mode === "remove" ? "on" : ""} onClick={() => setMode("remove")}>➖ إنقاص</button>
+        </div>
+        <Field label="عدد الرسائل"><input className="input" type="number" min={1} value={count} onChange={(e) => setCount(Math.max(1, +e.target.value || 1))} /></Field>
+        <p className="text-sm">الرصيد بعد التعديل: <b>{after.toLocaleString("en-US")}</b> رسالة لهذي الدورة {mode === "add" ? "· يوصله إشعار بالإضافة" : "· بدون إشعار"}</p>
+        <div className="flex justify-end gap-2">
+          <button className="btn btn-ghost" onClick={onClose}>إلغاء</button>
+          <button className="btn btn-primary" disabled={busy || count < 1 || (mode === "remove" && count > total)} onClick={save}>{busy ? "…" : "حفظ"}</button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -282,7 +332,7 @@ function MessagesMeter({ used, limit, extra = 0 }: { used: number; limit: number
   return (
     <div className="mt-2.5">
       <div className="flex justify-between text-[11px]">
-        <span className="font-semibold">رسائل الدورة (30 يوم)</span>
+        <span className="font-semibold">الرسائل</span>
         <span className="muted" dir="ltr">{used.toLocaleString("en-US")} / {limit === null ? "∞" : limit.toLocaleString("en-US")}{extra ? ` (+${extra.toLocaleString("en-US")})` : ""}</span>
       </div>
       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-label="رسائل الشهر" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>

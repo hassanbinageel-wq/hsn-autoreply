@@ -1,6 +1,7 @@
 import type { Env } from "../env";
 import { first } from "../lib/db";
 import { cardPriceHalalas, PayError } from "./moyasar";
+import { discounted, offerDiscount } from "./offers";
 import { CYCLE_MS, monthlyMessages, parseLimits, PERIOD_DAYS, usageCycle } from "./plans";
 
 const DAY = 86_400_000;
@@ -19,8 +20,11 @@ export interface UpgradeQuote {
   new_value: number;
   /** What is left of the current plan: its days left, less the messages used beyond the time that has passed. */
   credit: number;
-  /** new_value − credit, rounded up to whole riyals, at least 1 SAR (halalas). */
+  /** new_value − credit, rounded up to whole riyals, at least 1 SAR (halalas); less a running offer's discount. */
   amount: number;
+  /** The offer discount (%) on the higher plan that this customer has now, already taken off `amount`. */
+  discount_pct: number;
+  offer_id: number | null;
 }
 
 type PlanPrice = { id: string; name: string; active: number; sort: number; limits: string; card_price_halalas: number | null; price_amount: number | null; price_currency: string; price_period: string };
@@ -58,7 +62,9 @@ export async function quoteUpgrade(env: Env, tenantId: number, toPlan: string, n
   const overUse = Math.max(0, timeAhead - unused) * fromPerDay * (CYCLE_MS / DAY);
   const newValue = Math.round(toPerDay * leftDays);
   const credit = Math.max(0, Math.round(fromPerDay * leftDays - overUse));
-  const amount = Math.max(100, Math.ceil((newValue - credit) / 100) * 100);
+  const full = Math.max(100, Math.ceil((newValue - credit) / 100) * 100);
+  const off = await offerDiscount(env.DB, tenantId, to.id, now);
+  const amount = off ? discounted(full, off.pct) : full;
   return {
     from_plan: t.plan_id,
     to_plan: to.id,
@@ -70,6 +76,8 @@ export async function quoteUpgrade(env: Env, tenantId: number, toPlan: string, n
     new_value: newValue,
     credit,
     amount,
+    discount_pct: off?.pct ?? 0,
+    offer_id: off?.offer_id ?? null,
   };
 }
 

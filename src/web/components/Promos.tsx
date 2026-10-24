@@ -187,6 +187,60 @@ export function PromoLayer({ route }: { route: string }) {
   );
 }
 
+/**
+ * Goes to an in-app link even when it is the page already open (then the page is told again, e.g. to open the
+ * top-up window), and brings the plans into view for subscription links.
+ */
+function goTo(link: string) {
+  const target = `#${link}`;
+  if (location.hash === target) window.dispatchEvent(new HashChangeEvent("hashchange"));
+  else location.hash = target;
+  if (link.includes("topup")) return;
+  if (!link.startsWith("/subscription")) return void setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 100);
+  // The page may still be loading: wait for the plans (up to ~4 s), then bring them into view.
+  let tries = 0;
+  const find = () => {
+    const el = document.getElementById("plans");
+    if (el) setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+    else if (++tries < 25) setTimeout(find, 160);
+  };
+  setTimeout(find, 100);
+}
+
+/** A short, quiet two-note chime (no sound file). Browsers only allow sound after the person has touched the page. */
+let audio: AudioContext | null = null;
+function chime() {
+  try {
+    const AC = window.AudioContext ?? (window as any).webkitAudioContext;
+    if (!AC) return;
+    audio ??= new AC();
+    const play = () => {
+      const ctx = audio!;
+      const t0 = ctx.currentTime + 0.02;
+      [659.25, 987.77].forEach((f, i) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sine";
+        o.frequency.value = f;
+        const t = t0 + i * 0.16;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.07, t + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+        o.connect(g).connect(ctx.destination);
+        o.start(t);
+        o.stop(t + 1);
+      });
+    };
+    if (audio.state === "running") play();
+    else {
+      const go = () => { audio!.resume().then(play).catch(() => undefined); };
+      audio.resume().then(() => (audio!.state === "running" ? play() : window.addEventListener("pointerdown", go, { once: true }))).catch(() => window.addEventListener("pointerdown", go, { once: true }));
+    }
+  } catch {
+    /* no sound: fine */
+  }
+}
+
 function useNow(ms = 1000) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -259,11 +313,17 @@ function OfferBox({ offers, hidden }: { offers: Offer[]; hidden: boolean }) {
   const [closed, setClosed] = useState<number[]>(() => { try { return JSON.parse(read(CLOSED_OFFERS) ?? "[]"); } catch { return []; } });
   const live = offers.filter((o) => o.ends_at > now);
   const shown = live.find((o) => !closed.includes(o.id));
+  useEffect(() => {
+    if (hidden || !shown) return;
+    const key = `hsn.offerChime.${shown.id}`;
+    try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, "1"); } catch { /* storage blocked: chime anyway */ }
+    chime();
+  }, [shown?.id, hidden]);
   if (hidden || !live.length) return null;
   const open = (o: Offer) => {
     api(`/api/offers/${o.id}/click`, { method: "POST" }).catch(() => undefined);
     if (/^https:\/\//.test(o.link)) openExternal(o.link);
-    else location.hash = `#${o.link}`;
+    else goTo(o.link);
   };
   const close = (id: number) => {
     const next = [...closed.filter((x) => live.some((o) => o.id === x)), id];
