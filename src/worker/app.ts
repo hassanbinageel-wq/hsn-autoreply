@@ -731,7 +731,7 @@ export function createApp() {
     if (!(await rateLimit(c.env.DB, `signup_code:${clientIp(c)}`, 6, 60 * 60_000))) return apiError(c, 429, "rate_limited", "طلبات كثيرة — حاول بعد ساعة");
     const p = await parseBody(c, z.object({ email: z.string().trim().max(254).email("اكتب إيميل صحيح") }));
     if (!p.ok) return p.res;
-    if (await isDisposable(c.env.DB, p.data.email)) return apiError(c, 422, "email_disposable", "الباقة المجانية تحتاج إيميل دائم — الإيميلات المؤقتة ما تنقبل");
+    if (await isDisposable(c.env.DB, p.data.email)) return apiError(c, 422, "email_disposable", "النظام يرفض الإيميلات المؤقتة");
     if (!(await rateLimit(c.env.DB, `signup_code:${p.data.email.toLowerCase()}`, 4, 60 * 60_000))) return apiError(c, 429, "rate_limited", "أرسلنا رموز كثيرة لهذا الإيميل — حاول بعد ساعة");
     const r = await sendSignupCode(c.env, p.data.email);
     if (!r.ok) {
@@ -766,7 +766,7 @@ export function createApp() {
     if (freePlan) {
       if (emailEnabled(c.env)) {
         if (!p.data.email) return apiError(c, 422, "email_required", "اكتب إيميلك — الباقة المجانية تحتاج إيميل مؤكَّد");
-        if (await isDisposable(c.env.DB, p.data.email)) return apiError(c, 422, "email_disposable", "الباقة المجانية تحتاج إيميل دائم — الإيميلات المؤقتة ما تنقبل");
+        if (await isDisposable(c.env.DB, p.data.email)) return apiError(c, 422, "email_disposable", "النظام يرفض الإيميلات المؤقتة");
         if (!p.data.email_code) return apiError(c, 422, "email_code_required", "اكتب رمز التأكيد اللي وصلك على إيميلك — إذا ما ظهر لك مربع الرمز، حدّث الصفحة");
         if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE email = ? COLLATE NOCASE AND email_verified_at IS NOT NULL", p.data.email)) return apiError(c, 409, "email_taken", "هذا الإيميل مستخدم في حساب ثاني");
       }
