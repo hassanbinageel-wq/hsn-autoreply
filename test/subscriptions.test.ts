@@ -410,26 +410,54 @@ describe("the free plan", () => {
   }
   const takeFree = (h: H) => call("/api/subscription/free", h, "POST", { plan_id: "free" });
 
-  it("is off until the owner turns it on; sign-up needs no payment or code, and the plan starts from «اشتراكي» after the email is confirmed", async () => {
-    const reg = (username: string) => call("/api/auth/register", {}, "POST", { name: "متجر", username, password: "another-strong-password", plan_id: "free", email: `${username}@example.com` });
-    expect((await reg("free_a")).status).toBe(422);
-    const put = await activateFree();
-    expect(put.status, JSON.stringify(put.body)).toBe(200);
-    const plan = (await call("/api/public/plans")).body.plans.find((p: any) => p.id === "free");
-    expect(plan).toMatchObject({ free: true, price_label: "مجاناً", card_price: null });
-    expect((await reg("free_a")).status).toBe(200);
-    const tenant = () => DB.prepare("SELECT t.plan_id, t.plan_expires_at FROM tenants t JOIN admin_users u ON u.tenant_id = t.id WHERE u.username = 'free_a'").first<any>();
-    expect((await tenant()).plan_id).toBeNull(); // not before the email is confirmed
-    const h = await login("free_a", "another-strong-password");
-    const refused = await takeFree(h);
-    expect(refused.status).toBe(422);
-    expect(refused.body.error.code).toBe("email_required");
-    await confirmEmail("free_a");
-    expect((await takeFree(h)).status).toBe(200);
-    const t = await tenant();
-    expect(t.plan_id).toBe("free");
-    expect(t.plan_expires_at).toBeGreaterThan(Date.now() + 29 * 86_400_000);
-    expect(await DB.prepare("SELECT COUNT(*) AS n FROM card_payments").first<any>()).toMatchObject({ n: 0 });
+  it("is off until the owner turns it on; sign-up confirms the email inside the form and starts the plan right away", async () => {
+    const { vi } = await import("vitest");
+    const sent: string[] = [];
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", async (u: any, init?: RequestInit) => {
+      if (String(u).includes("resend.com")) {
+        sent.push(String(JSON.parse(String(init?.body)).text));
+        return new Response("{}", { status: 200 });
+      }
+      return real(u, init);
+    });
+    try {
+      const body = (extra: Record<string, unknown> = {}) => ({ name: "متجر", username: "free_a", password: "another-strong-password", plan_id: "free", email: "free_a@example.com", ...extra });
+      expect((await call("/api/auth/register", {}, "POST", body())).status).toBe(422); // the plan is off
+      const put = await activateFree();
+      expect(put.status, JSON.stringify(put.body)).toBe(200);
+      const plan = (await call("/api/public/plans")).body.plans.find((p: any) => p.id === "free");
+      expect(plan).toMatchObject({ free: true, price_label: "مجاناً", card_price: null });
+      // no code yet / throw-away email: refused, nothing created
+      expect((await call("/api/auth/register", {}, "POST", body())).body.error.code).toBe("email_code_required");
+      expect((await call("/api/auth/register/email-code", {}, "POST", { email: "x@yopmail.com" })).body.error.code).toBe("email_disposable");
+      expect((await call("/api/auth/register/email-code", {}, "POST", { email: "free_a@example.com" })).status).toBe(200);
+      const code = sent.at(-1)!.match(/\d{6}/)![0];
+      const wrong = code === "000000" ? "111111" : "000000";
+      expect((await call("/api/auth/register", {}, "POST", body({ email_code: wrong }))).body.error.code).toBe("invalid_email_code");
+      expect(await DB.prepare("SELECT 1 FROM admin_users WHERE username = 'free_a'").first()).toBeNull();
+      expect((await call("/api/auth/register", {}, "POST", body({ email_code: code }))).status).toBe(200);
+      const t = await DB.prepare("SELECT t.plan_id, t.plan_expires_at, u.email, u.email_verified_at FROM tenants t JOIN admin_users u ON u.tenant_id = t.id WHERE u.username = 'free_a'").first<any>();
+      expect(t.plan_id).toBe("free");
+      expect(t.plan_expires_at).toBeGreaterThan(Date.now() + 29 * 86_400_000);
+      expect(t.email).toBe("free_a@example.com");
+      expect(t.email_verified_at).toBeTruthy();
+      expect(await DB.prepare("SELECT COUNT(*) AS n FROM card_payments").first<any>()).toMatchObject({ n: 0 });
+      // the same email cannot back a second sign-up
+      expect((await call("/api/auth/register/email-code", {}, "POST", { email: "free_a@example.com" })).body.error.code).toBe("email_taken");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("a new account without a plan gets no «out of messages» window", async () => {
+    await activateFree();
+    const r = await call("/api/owner/tenants", OWNER, "POST", { name: "متجر", username: "no_plan", password: "another-strong-password" });
+    expect(r.status).toBe(200);
+    const h = await login("no_plan", "another-strong-password");
+    const promos = (await call("/api/promos", h)).body;
+    expect(promos.popup).toBeNull();
+    expect(promos.topup.out).toBe(false);
   });
 
   it("a customer takes it once per period, can move up to a paid plan, and cannot drop to it from a paid one", async () => {

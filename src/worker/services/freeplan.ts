@@ -48,15 +48,18 @@ export async function freePlanRefusal(env: Env, tenantId: number, userId: number
     return { code: "free_used_ig", message: `حساب إنستقرام ${acc.username ? `@${acc.username} ` : ""}استخدم الباقة المجانية من قبل — تقدر تشترك بباقة مدفوعة` };
   }
   const renewing = await first(env.DB, "SELECT 1 FROM free_activations WHERE tenant_id = ? LIMIT 1", tenantId);
-  if (!renewing) {
-    const n = await first<{ n: number }>(
-      env.DB,
-      "SELECT COUNT(DISTINCT tenant_id) AS n FROM free_activations WHERE ip_hash = ? AND at > ? AND tenant_id != ?",
-      await ipHash(env, ip), now - WEEK, tenantId,
-    );
-    if ((n?.n ?? 0) >= FREE_PER_NETWORK_WEEK) return { code: "free_network_limit", message: "تفعّلت باقات مجانية كثيرة من نفس الشبكة هذا الأسبوع — حاول لاحقًا أو اشترك بباقة مدفوعة" };
-  }
+  if (!renewing) return networkRefusal(env, ip, tenantId, now);
   return null;
+}
+
+/** The weekly cap on new free accounts from one network (tenantId: the customer asking, 0 at sign-up). */
+export async function networkRefusal(env: Env, ip: string, tenantId = 0, now = Date.now()): Promise<FreeRefusal | null> {
+  const n = await first<{ n: number }>(
+    env.DB,
+    "SELECT COUNT(DISTINCT tenant_id) AS n FROM free_activations WHERE ip_hash = ? AND at > ? AND tenant_id != ?",
+    await ipHash(env, ip), now - WEEK, tenantId,
+  );
+  return (n?.n ?? 0) >= FREE_PER_NETWORK_WEEK ? { code: "free_network_limit", message: "تفعّلت باقات مجانية كثيرة من نفس الشبكة هذا الأسبوع — حاول لاحقًا أو اشترك بباقة مدفوعة" } : null;
 }
 
 /** Records a free-plan start: the network (hashed) and, when an Instagram account is connected, its claim. */

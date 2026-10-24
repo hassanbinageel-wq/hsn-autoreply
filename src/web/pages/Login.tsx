@@ -58,6 +58,21 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   }, [payPlanId]);
   const cardSignup = register && !!payPlan;
   const [email, setEmail] = useState("");
+  // Free plan: the email is confirmed inside this form (a code is emailed, typed here), then the plan starts.
+  const freeSignup = register && !!payPlan?.free;
+  const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
+  const [emailCode, setEmailCode] = useState("");
+  const sendCode = async (): Promise<boolean> => {
+    try {
+      await api("/api/auth/register/email-code", { body: { email: email.trim() } });
+      setCodeSentTo(email.trim());
+      setEmailCode("");
+      return true;
+    } catch (e: any) {
+      if (e.code === "email_off") return false; // email sending is off: sign up without the code
+      throw e;
+    }
+  };
   useEffect(() => {
     document.title = `${plans ? "الباقات" : register ? "إنشاء حساب" : "تسجيل الدخول"} · شيّك`;
   }, [plans, register]);
@@ -120,20 +135,24 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
       if (status?.needs_setup) {
         await api("/api/auth/setup", { body: { setup_token: setupToken, username, password } });
       } else if (register) {
+        // First press on a free sign-up: send the email code and wait for it (unless email sending is off).
+        if (freeSignup && codeSentTo !== email.trim() && (await sendCode())) {
+          setBusy(false);
+          return;
+        }
         let ref: string | undefined;
         try {
           ref = localStorage.getItem("hsn_ref") || undefined;
         } catch {
           /* private mode */
         }
-        await api("/api/auth/register", { body: { name: name.trim(), username: username.trim(), password, code: cardSignup ? undefined : code, plan_id: cardSignup ? payPlan!.id : undefined, ref, email: email.trim() || undefined } });
+        await api("/api/auth/register", { body: { name: name.trim(), username: username.trim(), password, code: cardSignup ? undefined : code, plan_id: cardSignup ? payPlan!.id : undefined, ref, email: email.trim() || undefined, email_code: freeSignup && emailCode ? emailCode : undefined } });
         try {
           localStorage.removeItem("hsn_ref");
         } catch {
           /* private mode */
         }
-        // The free plan starts from «اشتراكي» once the email is confirmed.
-        location.hash = payPlan?.free ? "#/subscription" : !cardSignup ? "#/" : location.hash;
+        if (!cardSignup || payPlan?.free) location.hash = "#/";
       }
       await signIn(username, password);
       if (register && cardSignup && !payPlan?.free) {
@@ -209,7 +228,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               <span className="text-2xl">{payPlan!.free ? "🎁" : "💳"}</span>
               <span className="flex-1 leading-tight">
                 <b className="block text-sm">{payPlan!.name} — {payPlan!.free ? payPlan!.price_label || "مجاناً" : `${payPlan!.card_price.toLocaleString("en-US")} ر.س`}</b>
-                <span className="muted text-xs">{payPlan!.free ? "بدون دفع ولا كود — بعد إنشاء الحساب أكّد إيميلك وفعّلها من «اشتراكي»" : "تدفع بالبطاقة بعد إنشاء الحساب، وتتفعّل الباقة فورًا — بدون كود"}</span>
+                <span className="muted text-xs">{payPlan!.free ? "بدون دفع ولا كود — تأكّد إيميلك هنا وتتفعّل على طول" : "تدفع بالبطاقة بعد إنشاء الحساب، وتتفعّل الباقة فورًا — بدون كود"}</span>
               </span>
               <a href="#/plans" className="text-xs font-semibold text-violet-700 underline dark:text-violet-300">تغيير</a>
             </div>
@@ -231,6 +250,14 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             <Field label="إيميلك" hint="لاسترجاع حسابك إذا نسيت كلمة المرور — يوصلك رمز تأكيد عليه. ما نرسل عليه إعلانات.">
               <input className="input" dir="ltr" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" required maxLength={254} />
             </Field>
+          )}
+          {freeSignup && codeSentTo && codeSentTo === email.trim() && !status?.needs_setup && (
+            <div className="space-y-2 rounded-2xl border border-violet-500/30 bg-violet-500/[0.06] p-3.5">
+              <Field label={<>📬 الرمز اللي وصلك على <b dir="ltr">{codeSentTo}</b></>} hint="ما وصلك؟ شيّك على البريد غير المرغوب (Spam). الرمز صالح 15 دقيقة.">
+                <input className="input text-center text-lg tracking-[0.3em]" dir="ltr" inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={8} value={emailCode} onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ""))} placeholder="123456" required />
+              </Field>
+              <button type="button" className="text-xs font-semibold text-violet-700 underline dark:text-violet-300" disabled={busy} onClick={() => sendCode().then((ok) => ok && setError(null), (e) => setError(e.message))}>إعادة إرسال الرمز</button>
+            </div>
           )}
           {register && !status?.needs_setup && (
             <Field label="اسم المستخدم" hint="اسمك — عربي أو إنجليزي، يظهر داخل التطبيق.">
@@ -255,7 +282,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
             </button>
           )}
           <button type="submit" className="btn btn-primary min-h-12 w-full text-[15px]" disabled={busy || !status}>
-            {busy ? "…" : status?.needs_setup ? "إنشاء حساب الإدارة والدخول" : cardSignup ? "إنشاء الحساب والانتقال للدفع" : register ? "إنشاء الحساب والدخول" : "تسجيل الدخول"}
+            {busy ? "…" : status?.needs_setup ? "إنشاء حساب الإدارة والدخول" : freeSignup ? (codeSentTo === email.trim() ? "تأكيد الرمز وإنشاء الحساب" : "أرسل رمز التأكيد لإيميلي") : cardSignup ? "إنشاء الحساب والانتقال للدفع" : register ? "إنشاء الحساب والدخول" : "تسجيل الدخول"}
           </button>
           {!status?.needs_setup &&
             (register ? (

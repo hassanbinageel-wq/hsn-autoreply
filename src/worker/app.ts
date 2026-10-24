@@ -69,7 +69,8 @@ import { applyReferral, customerHealth, findCoupon, normCode, publicCoupon, refe
 import { storeAnalytics, storeCampaignDetail, storeProductCosts, storeProducts } from "./services/store";
 import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
-import { duplicateIgFlags, freePlanRefusal, recordFreeStart } from "./services/freeplan";
+import { duplicateIgFlags, freePlanRefusal, networkRefusal, recordFreeStart } from "./services/freeplan";
+import { isDisposableEmail } from "../shared/disposable";
 import { auditCampaignComments } from "./services/audit";
 import { LIMITS, hasPublishScope, isImage, isVideo, optionalScopes, publishScopeMode, removeFiles, validatePost, verifyMediaUrl, wantsPublishScope, withSchedulingNotice, type PostKind } from "./services/publish";
 import { captureInsights, insightsAccount, insightsScopeMode, insightsSummary, mediaInsightsSeries, wantsInsightsScope } from "./services/insights";
@@ -87,7 +88,7 @@ import { parsePerms } from "./services/staff";
 import { permsFor } from "../shared/staff";
 
 const MAX_STAFF = 10;
-import { confirmEmailCode, confirmPasswordChange, requestPasswordReset, resetPassword, sendEmailCode, startPasswordChange } from "./services/recovery";
+import { confirmEmailCode, confirmPasswordChange, requestPasswordReset, resetPassword, sendEmailCode, sendSignupCode, startPasswordChange, useSignupCode } from "./services/recovery";
 import { emailEnabled, lastEmailError } from "./services/email";
 import { newRecoveryCodes, newTotpSecret, normRecovery, otpauthUri, verifyTotp } from "./lib/totp";
 import { DEFAULT_MESSAGE_TEMPLATES, OUT_OF_MESSAGES_TEMPLATE, type MessageTemplates } from "../shared/messageTemplates";
@@ -725,6 +726,22 @@ export function createApp() {
     return c.json({ ok: true, username: r.username });
   });
 
+  // The free plan's sign-up confirms the email first: this sends the code to type into the sign-up form.
+  app.post("/api/auth/register/email-code", async (c) => {
+    if (!(await rateLimit(c.env.DB, `signup_code:${clientIp(c)}`, 6, 60 * 60_000))) return apiError(c, 429, "rate_limited", "طلبات كثيرة — حاول بعد ساعة");
+    const p = await parseBody(c, z.object({ email: z.string().trim().max(254).email("اكتب إيميل صحيح") }));
+    if (!p.ok) return p.res;
+    if (isDisposableEmail(p.data.email)) return apiError(c, 422, "email_disposable", "الباقة المجانية تحتاج إيميل دائم — الإيميلات المؤقتة ما تنقبل");
+    if (!(await rateLimit(c.env.DB, `signup_code:${p.data.email.toLowerCase()}`, 4, 60 * 60_000))) return apiError(c, 429, "rate_limited", "أرسلنا رموز كثيرة لهذا الإيميل — حاول بعد ساعة");
+    const r = await sendSignupCode(c.env, p.data.email);
+    if (!r.ok) {
+      if (r.error === "email_not_configured") return apiError(c, 503, "email_off", "إرسال الإيميلات غير مفعّل");
+      if (r.error === "email_taken") return apiError(c, 409, "email_taken", "هذا الإيميل مستخدم في حساب ثاني — سجّل دخولك أو استخدم إيميل ثاني");
+      return apiError(c, 503, "email_failed", "ما قدرنا نرسل الإيميل الحين — حاول بعد شوي");
+    }
+    return c.json({ ok: true });
+  });
+
   // Self sign-up with an activation code, or (when card payment is on) with a plan to pay for right after:
   // that account starts without a plan and is activated by the card payment.
   app.post("/api/auth/register", async (c) => {
@@ -743,12 +760,35 @@ export function createApp() {
       return apiError(c, 422, "code_required", "أدخل كود التفعيل، أو اختر باقة من صفحة الباقات وادفع بالبطاقة");
     }
     if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم الحساب هذا مسجّل من قبل — اختر غيره");
+    // The free plan: a confirmed, lasting email (the code from the form) and the weekly cap per network; it then
+    // starts right away. Without email sending, only the network cap applies.
+    let emailConfirmed = false;
+    if (freePlan) {
+      if (emailEnabled(c.env)) {
+        if (!p.data.email) return apiError(c, 422, "email_required", "اكتب إيميلك — الباقة المجانية تحتاج إيميل مؤكَّد");
+        if (isDisposableEmail(p.data.email)) return apiError(c, 422, "email_disposable", "الباقة المجانية تحتاج إيميل دائم — الإيميلات المؤقتة ما تنقبل");
+        if (!p.data.email_code) return apiError(c, 422, "email_code_required", "اكتب رمز التأكيد اللي وصلك على إيميلك");
+        if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE email = ? COLLATE NOCASE AND email_verified_at IS NOT NULL", p.data.email)) return apiError(c, 409, "email_taken", "هذا الإيميل مستخدم في حساب ثاني");
+      }
+      const net = await networkRefusal(c.env, clientIp(c));
+      if (net) return apiError(c, 409, net.code, net.message);
+      if (emailEnabled(c.env)) {
+        const v = await useSignupCode(c.env.DB, p.data.email!, p.data.email_code!);
+        if (v !== "ok") return apiError(c, 422, "invalid_email_code", v === "expired" ? "الرمز انتهى أو كثرت المحاولات — اطلب رمز جديد" : "رمز التأكيد غير صحيح");
+        emailConfirmed = true;
+      }
+    }
     const hash = await hashPassword(p.data.password, c.env.PASSWORD_PEPPER, Number(c.env.PBKDF2_ITERATIONS || 100_000));
     const t = await first<{ id: number }>(c.env.DB, "INSERT INTO tenants (name, created_at, updated_at) VALUES (?, ?, ?) RETURNING id", p.data.name, now, now);
     const tid = t!.id;
     try {
       await run(c.env.DB, "INSERT INTO admin_users (username, password_hash, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", p.data.username, hash, tid, now, now);
       if (withCode) await redeemCode(c.env.DB, tid, p.data.code!, now);
+      else if (freePlan) {
+        if (emailConfirmed) await run(c.env.DB, "UPDATE admin_users SET email = ?, email_verified_at = ? WHERE tenant_id = ?", p.data.email!.toLowerCase(), now, tid);
+        await extendPlan(c.env.DB, tid, freePlan.id, PERIOD_DAYS[freePlan.price_period] ?? 30, now);
+        await recordFreeStart(c.env, tid, clientIp(c), now);
+      }
     } catch (e) {
       await deleteTenantData(c.env.DB, tid);
       if (e instanceof RedeemError) return apiError(c, 422, e.code, e.message);
@@ -757,7 +797,7 @@ export function createApp() {
     await seedStarterTemplates(c.env.DB, tid, now);
     await audit(c.env.DB, tid, p.data.username, "tenant.registered", String(tid), withCode ? undefined : { pay_plan: p.data.plan_id });
     // The email (for password recovery) gets a confirmation code; it works for recovery once confirmed.
-    if (p.data.email) {
+    if (p.data.email && !emailConfirmed) {
       const u = await first<{ id: number }>(c.env.DB, "SELECT id FROM admin_users WHERE tenant_id = ? ORDER BY id LIMIT 1", tid);
       if (u) {
         await run(c.env.DB, "UPDATE admin_users SET email = ? WHERE id = ?", p.data.email.toLowerCase(), u.id);
@@ -1219,13 +1259,15 @@ export function createApp() {
   });
   api.get("/promos", async (c) => {
     if (c.get("session").is_owner) return c.json({ topup: null, popup: null, offers: [] });
-    const [st, offers] = await Promise.all([topupState(c.env, T(c)), offersFor(c.env.DB, T(c))]);
+    const [st, offers, ent] = await Promise.all([topupState(c.env, T(c)), offersFor(c.env.DB, T(c)), ENT(c)]);
     await markViewed(c.env.DB, T(c), offers);
     const pop = st.settings.popup;
+    // Messages notes only for a running subscription: a new account without a plan has nothing "used up".
+    const running = ent.active && !!ent.plan;
     return c.json({
-      topup: { out: st.out, show: st.show, can_buy: st.can_buy, used: st.used, limit: st.limit, resets_at: st.resets_at, cycle_key: st.cycle_key },
+      topup: { out: running && st.out, show: running && st.show, can_buy: st.can_buy, used: st.used, limit: st.limit, resets_at: st.resets_at, cycle_key: st.cycle_key },
       // The window from the owner's share of messages used (default: used up), shown after the owner's delay.
-      popup: pop.enabled && st.limit !== null && st.used >= (st.limit * pop.show_at) / 100 && (st.limit > 0 || st.out)
+      popup: running && pop.enabled && st.limit !== null && st.used >= (st.limit * pop.show_at) / 100 && (st.limit > 0 || st.out)
         ? { title: pop.title, body: pop.body, cta: pop.cta, cancel: pop.cancel, icon: pop.icon ?? null, buy: st.can_buy, delay_min: pop.delay_min }
         : null,
       offers,

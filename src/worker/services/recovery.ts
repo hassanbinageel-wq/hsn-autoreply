@@ -169,3 +169,36 @@ export async function confirmPasswordChange(env: Env, userId: number, keepSessio
     }).catch(() => undefined);
   return "ok";
 }
+
+/** A code to confirm an email inside the sign-up form, before the account exists (the free plan needs it). */
+export async function sendSignupCode(env: Env, email: string, now = Date.now()): Promise<{ ok: boolean; error?: string }> {
+  if (!emailEnabled(env)) return { ok: false, error: "email_not_configured" };
+  const e = normEmail(email);
+  if (await first(env.DB, "SELECT 1 FROM admin_users WHERE email = ? COLLATE NOCASE AND email_verified_at IS NOT NULL", e)) return { ok: false, error: "email_taken" };
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
+  await run(
+    env.DB,
+    "INSERT INTO signup_codes (email, code_hash, attempts, expires_at, created_at) VALUES (?, ?, 0, ?, ?) ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, attempts = 0, expires_at = excluded.expires_at, created_at = excluded.created_at",
+    e, await sha256Hex(`signup:${e}:${code}`), now + CODE_TTL, now,
+  );
+  return sendEmail(env, {
+    to: e,
+    subject: `رمز تأكيد إيميلك: ${code}`,
+    text: `رمز تأكيد إيميلك في شيّك: ${code}\nاكتبه في صفحة إنشاء الحساب. صالح 15 دقيقة.\nإذا ما طلبت هذا، تجاهل الرسالة.`,
+    html: emailLayout({ title: "تأكيد إيميلك", lines: ["اكتب هذا الرمز في صفحة إنشاء الحساب لتأكيد إيميلك.", "الرمز صالح 15 دقيقة."], code }),
+  });
+}
+
+/** Checks (and on success uses up) a sign-up email code. */
+export async function useSignupCode(db: D1Database, email: string, code: string, now = Date.now()): Promise<"ok" | "invalid" | "expired"> {
+  const e = normEmail(email);
+  const row = await first<{ code_hash: string; attempts: number; expires_at: number }>(db, "SELECT code_hash, attempts, expires_at FROM signup_codes WHERE email = ?", e);
+  if (!row) return "invalid";
+  if (row.expires_at < now || row.attempts >= 5) return "expired";
+  if ((await sha256Hex(`signup:${e}:${code.replace(/\D/g, "")}`)) !== row.code_hash) {
+    await run(db, "UPDATE signup_codes SET attempts = attempts + 1 WHERE email = ?", e);
+    return "invalid";
+  }
+  await run(db, "DELETE FROM signup_codes WHERE email = ?", e);
+  return "ok";
+}

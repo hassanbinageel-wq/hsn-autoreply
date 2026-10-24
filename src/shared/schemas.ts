@@ -145,6 +145,8 @@ export const registerSchema = z.object({
   ref: z.string().trim().max(20).optional(),
   // For password recovery (confirmed by a code after sign-up).
   email: z.string().trim().max(254).email("اكتب إيميل صحيح").optional().or(z.literal("").transform(() => undefined)),
+  // The code emailed from the sign-up form (the free plan confirms the email before the account is made).
+  email_code: z.string().trim().max(10).optional(),
 });
 
 const limitNum = z.number().int().min(0).max(10_000_000).nullable();
