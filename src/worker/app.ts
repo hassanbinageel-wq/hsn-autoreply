@@ -1201,7 +1201,10 @@ export function createApp() {
     const pop = st.settings.popup;
     return c.json({
       topup: { out: st.out, show: st.show, can_buy: st.can_buy, used: st.used, limit: st.limit, resets_at: st.resets_at, cycle_key: st.cycle_key },
-      popup: st.out && pop.enabled ? { title: pop.title, body: pop.body, cta: pop.cta, cancel: pop.cancel, icon: pop.icon ?? null, buy: st.can_buy } : null,
+      // The window from the owner's share of messages used (default: used up), shown after the owner's delay.
+      popup: pop.enabled && st.limit !== null && st.used >= (st.limit * pop.show_at) / 100 && (st.limit > 0 || st.out)
+        ? { title: pop.title, body: pop.body, cta: pop.cta, cancel: pop.cancel, icon: pop.icon ?? null, buy: st.can_buy, delay_min: pop.delay_min }
+        : null,
       offers,
     });
   });
@@ -1805,7 +1808,10 @@ export function createApp() {
       z.object({
         max_per_cycle: z.number().int().min(0).max(100),
         show_at_pct: z.number().int().min(50).max(100),
+        alert_steps: z.array(z.number().int().min(50).max(99)).max(10).optional(),
         popup: z.object({
+          show_at: z.number().int().min(50).max(100).optional(),
+          delay_min: z.number().int().min(0).max(240).optional(),
           enabled: z.boolean(),
           title: z.string().trim().min(2).max(80),
           body: z.string().trim().min(2).max(400),

@@ -27,7 +27,7 @@ function table(title: string, rows: Group[], total: number, empty = "لا يوج
     .join("")}</tbody></table></section>`;
 }
 
-function reportHtml(r: Report, origin: string, print = true, fonts?: { regular: string; bold: string }): string {
+function reportHtml(r: Report, origin: string, print = true): string {
   const period = r.days ? `${date(r.from)} — ${date(r.to)}` : `كل الفترة حتى ${date(r.to)}`;
   const top = r.by_plan[0];
   const avg = r.total.count ? r.total.revenue / r.total.count : 0;
@@ -41,8 +41,8 @@ function reportHtml(r: Report, origin: string, print = true, fonts?: { regular: 
     notPaid.length ? `عمليات ما اكتملت: ${notPaid.map(([k, v]) => `${STATUS[k] ?? k} ${v}`).join("، ")}.` : null,
   ].filter(Boolean);
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تقرير المدفوعات — شيّك</title><style>
-@font-face{font-family:T;src:url(${fonts?.regular ?? `${origin}/fonts/thmanyahsans-Regular.woff2`});font-weight:400}
-@font-face{font-family:T;src:url(${fonts?.bold ?? `${origin}/fonts/thmanyahsans-Bold.woff2`});font-weight:700}
+${print ? `@font-face{font-family:T;src:url(${origin}/fonts/thmanyahsans-Regular.woff2);font-weight:400}
+@font-face{font-family:T;src:url(${origin}/fonts/thmanyahsans-Bold.woff2);font-weight:700}` : ""}
 @page{size:A4;margin:14mm 12mm}
 *{box-sizing:border-box}body{font-family:T,system-ui,sans-serif;color:#1c1a2b;font-size:12px;line-height:1.6;margin:0}
 header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #7c3aed;padding-bottom:8px;margin-bottom:14px}header .muted{white-space:nowrap}
@@ -79,13 +79,9 @@ ${print ? `<script>document.fonts.ready.then(function(){setTimeout(function(){wi
  */
 async function downloadPdf(r: Report): Promise<void> {
   const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import("jspdf"), import("html2canvas")]);
-  // The page is drawn by the browser itself (SVG foreignObject) so Arabic words join and space correctly; fonts
-  // must then be inside the page as data URLs.
-  const asData = async (path: string) => {
-    const blob = await (await fetch(path)).blob();
-    return await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = () => rej(new Error("font")); fr.readAsDataURL(blob); });
-  };
-  const fonts = { regular: await asData("/fonts/thmanyahsans-Regular.woff2"), bold: await asData("/fonts/thmanyahsans-Bold.woff2") };
+  // The page is drawn by the browser itself (SVG foreignObject) so Arabic words join and space correctly. That
+  // drawing cannot load web fonts, so the file uses the system font — and the page is measured in the same font,
+  // so the page breaks fall exactly between rows.
   const W = 794; // A4 width in CSS pixels at 96 dpi
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
@@ -94,25 +90,52 @@ async function downloadPdf(r: Report): Promise<void> {
   try {
     await new Promise<void>((res) => {
       frame.onload = () => res();
-      frame.srcdoc = reportHtml(r, location.origin, false, fonts).replace("<body>", `<body style="width:${W}px;padding:34px 30px;background:#fff">`);
+      frame.srcdoc = reportHtml(r, location.origin, false).replace("<body>", `<body style="width:${W}px;padding:34px 30px;background:#fff">`);
     });
     const doc = frame.contentDocument!;
     await doc.fonts.ready;
-    const canvas = await html2canvas(doc.body, { scale: 2, backgroundColor: "#ffffff", width: W, windowWidth: W, logging: false, foreignObjectRendering: true });
+    // Where a page may end: before a section, a summary box, or a table row (never inside one). A page that
+    // starts inside a table repeats that table's header row.
+    const top = (el: Element) => el.getBoundingClientRect().top;
+    const cuts = new Map<number, { headTop: number; headH: number } | null>();
+    doc.querySelectorAll("section, h2, .kpis, .box, body > p").forEach((el) => cuts.set(Math.floor(top(el)), null));
+    doc.querySelectorAll("table").forEach((t) => {
+      const head = t.querySelector("thead");
+      const hr = head?.getBoundingClientRect();
+      t.querySelectorAll("tbody tr").forEach((tr, i) => {
+        if (i > 0) cuts.set(Math.floor(top(tr)), hr ? { headTop: hr.top, headH: hr.height } : null);
+      });
+    });
+    const totalH = Math.ceil(doc.body.scrollHeight);
+    const canvas = await html2canvas(doc.body, { scale: 2, backgroundColor: "#ffffff", width: W, windowWidth: W, height: totalH, windowHeight: totalH, logging: false, foreignObjectRendering: true });
+    const S = canvas.width / W; // canvas pixels per CSS pixel
     const pdf = new jsPDF({ unit: "pt", format: "a4", compress: true });
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
-    const slice = Math.floor(canvas.width * (pageH / pageW)); // canvas pixels per page
-    for (let y = 0, page = 0; y < canvas.height; y += slice, page++) {
+    const k = pageW / W; // PDF points per CSS pixel
+    const margin = 26; // pt, top and bottom of every page after the first
+    const points = [...cuts.keys()].sort((x, y) => x - y);
+    let start = 0;
+    for (let page = 0; start < totalH - 2; page++) {
+      const head = page > 0 ? cuts.get(start) ?? null : null;
+      const room = (pageH - (page ? margin * 2 : margin)) / k - (head ? head.headH : 0);
+      const limit = start + room;
+      const end = totalH <= limit ? totalH : points.filter((y) => y > start + 40 && y <= limit).pop() ?? Math.floor(limit);
       const part = document.createElement("canvas");
+      const headPx = head ? Math.round(head.headH * S) : 0;
       part.width = canvas.width;
-      part.height = Math.min(slice, canvas.height - y);
+      part.height = headPx + Math.round((end - start) * S);
       const ctx = part.getContext("2d")!;
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, part.width, part.height);
-      ctx.drawImage(canvas, 0, y, canvas.width, part.height, 0, 0, canvas.width, part.height);
+      if (head) ctx.drawImage(canvas, 0, Math.round(head.headTop * S), canvas.width, headPx, 0, 0, canvas.width, headPx);
+      ctx.drawImage(canvas, 0, Math.round(start * S), canvas.width, part.height - headPx, 0, headPx, canvas.width, part.height - headPx);
       if (page) pdf.addPage();
-      pdf.addImage(part.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, pageW, (part.height * pageW) / canvas.width);
+      pdf.addImage(part.toDataURL("image/jpeg", 0.92), "JPEG", 0, page ? margin : 0, pageW, part.height / S * k);
+      pdf.setFontSize(8);
+      pdf.setTextColor(150);
+      pdf.text(`${page + 1}`, pageW / 2, pageH - 10, { align: "center" });
+      start = end;
     }
     const day = new Date().toISOString().slice(0, 10);
     pdf.save(`shayyek-payments-${r.days ? `${r.days}d` : "all"}-${day}.pdf`);

@@ -111,7 +111,7 @@ export function TopupPicker({ onCancel }: { onCancel?: () => void }) {
   );
 }
 
-type Promos = { topup: { out: boolean; cycle_key: string; used: number; limit: number | null } | null; popup: { title: string; body: string; cta: string; cancel: string; icon: string | null; buy: boolean } | null; offers: Offer[] };
+type Promos = { topup: { out: boolean; cycle_key: string; used: number; limit: number | null } | null; popup: { title: string; body: string; cta: string; cancel: string; icon: string | null; buy: boolean; delay_min?: number } | null; offers: Offer[] };
 
 /** The icon on top of the out-of-messages window: the owner's image, else 📭. */
 export function PopupIcon({ src }: { src?: string | null }) {
@@ -123,6 +123,7 @@ export function PopupIcon({ src }: { src?: string | null }) {
 }
 
 const POPUP_KEY = "hsn.outPopup";
+const APP_OPENED = Date.now();
 const CLOSED_OFFERS = "hsn.closedOffers";
 const read = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const write = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* storage blocked: shown again next time */ } };
@@ -133,20 +134,24 @@ export function PromoLayer({ route }: { route: string }) {
   const [popup, setPopup] = useState(false);
   const [topup, setTopup] = useState(false);
   const reloadRef = useRef<(() => void) | null>(null);
+  const popupTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     let stop = false;
     const load = () => api<Promos>("/api/promos").then((d) => {
       if (stop) return;
       setP(d);
       const key = `${d.topup?.cycle_key}:${new Date().toDateString()}`;
-      if (d.popup && read(POPUP_KEY) !== key) setPopup(true);
+      if (!d.popup || read(POPUP_KEY) === key || popupTimer.current) return;
+      // The owner's delay counts from when the app was opened.
+      const wait = Math.max(0, (d.popup.delay_min ?? 0) * 60_000 - (Date.now() - APP_OPENED));
+      popupTimer.current = setTimeout(() => { popupTimer.current = null; if (!stop && read(POPUP_KEY) !== key) setPopup(true); }, wait);
     }).catch(() => undefined);
     load();
     const t = setInterval(load, 10 * 60_000);
     const onShow = () => { if (document.visibilityState === "visible") load(); };
     document.addEventListener("visibilitychange", onShow);
     reloadRef.current = load;
-    return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", onShow); };
+    return () => { stop = true; clearInterval(t); if (popupTimer.current) clearTimeout(popupTimer.current); document.removeEventListener("visibilitychange", onShow); };
   }, []);
   // A new offer shows on the next page change (at most once a minute), without reopening the app.
   const lastRoute = useRef(0);

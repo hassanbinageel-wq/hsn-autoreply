@@ -153,7 +153,28 @@ function TopupSettingsCard({ initial }: { initial: TopupSettings }) {
               </select>
             </Field>
           </div>
-          <Toggle checked={s.popup.enabled} onChange={(v) => pop("enabled", v)} label="نافذة في وسط الشاشة لما تخلص رسائل العميل" description="تطلع مرة باليوم ما دام رصيده خالص." />
+          <Field label="تنبيهات الجرس عند استهلاك" hint="كل نسبة يوصله عندها إشعار مرة وحدة بالدورة — و100% (خلصت) ترسل رسالة «خلصت الرسائل» دايم">
+            <div className="flex flex-wrap gap-1.5">
+              {[50, 60, 70, 75, 80, 85, 90, 95].map((v) => {
+                const on = s.alert_steps.includes(v);
+                return <button key={v} type="button" className={`chip ${on ? "bg-violet-500/15 text-violet-700 dark:text-violet-300" : "surface-2"}`} onClick={() => setS({ ...s, alert_steps: (on ? s.alert_steps.filter((x) => x !== v) : [...s.alert_steps, v]).sort((a, b) => a - b) })}>{on ? "✓ " : ""}{v}%</button>;
+              })}
+              <span className="chip bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">✓ 100%</span>
+            </div>
+          </Field>
+          <Toggle checked={s.popup.enabled} onChange={(v) => pop("enabled", v)} label="نافذة في وسط الشاشة" description="تطلع مرة باليوم ما دام استهلاكه فوق النسبة اللي تحددها." />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="تظهر عند استهلاك">
+              <select className="input" value={s.popup.show_at} onChange={(e) => setS({ ...s, popup: { ...s.popup, show_at: +e.target.value } })}>
+                {[70, 80, 85, 90, 95, 100].map((v) => <option key={v} value={v}>{v === 100 ? "لما تخلص (100%)" : `${v}%`}</option>)}
+              </select>
+            </Field>
+            <Field label="بعد فتح التطبيق بـ">
+              <select className="input" value={s.popup.delay_min} onChange={(e) => setS({ ...s, popup: { ...s.popup, delay_min: +e.target.value } })}>
+                {[0, 1, 2, 3, 5, 10, 15, 30, 60].map((v) => <option key={v} value={v}>{v === 0 ? "على طول" : `${v} دقيقة`}</option>)}
+              </select>
+            </Field>
+          </div>
           <Field label="الأيقونة" hint="PNG أو JPG أو WEBP — تنعرض مربعة">
             <div className="flex items-center gap-3">
               <PopupIcon src={s.popup.icon} />

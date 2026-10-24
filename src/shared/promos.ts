@@ -6,15 +6,25 @@ export type TopupSettings = {
   max_per_cycle: number;
   /** Show the «اشحن رسائل» button from this share of the cycle's messages (%). */
   show_at_pct: number;
-  /** The window in the middle of the screen when a customer runs out of messages. */
-  popup: { enabled: boolean; title: string; body: string; cta: string; cancel: string; /** PNG/WEBP data URL; null = the default 📭 */ icon?: string | null };
+  /** Usage notes on the bell at these shares of the cycle's messages (%), once each; used up (100%) always sends the ready message. */
+  alert_steps: number[];
+  /** The window in the middle of the screen: from `show_at`% of the messages used, `delay_min` minutes after the app opens, once a day. */
+  popup: {
+    enabled: boolean; title: string; body: string; cta: string; cancel: string;
+    /** PNG/WEBP data URL; null = the default 📭 */ icon?: string | null;
+    show_at: number;
+    delay_min: number;
+  };
 };
 
 export const DEFAULT_TOPUP_SETTINGS: TopupSettings = {
   max_per_cycle: 0,
   show_at_pct: 90,
+  alert_steps: [85, 90, 95],
   popup: {
     enabled: true,
+    show_at: 100,
+    delay_min: 0,
     title: "خلصت رسائل دورتك",
     body: "ردودك التلقائية متوقفة لين يتجدد العدّاد. تقدر تشحن رسائل إضافية الحين وترجع حملاتك تشتغل على طول.",
     cta: "اشحن رسائل",
@@ -22,9 +32,10 @@ export const DEFAULT_TOPUP_SETTINGS: TopupSettings = {
   },
 };
 
-export function topupSettingsOf(v: Partial<TopupSettings> | null | undefined): TopupSettings {
+export function topupSettingsOf(v: (Partial<Omit<TopupSettings, "popup">> & { popup?: Partial<TopupSettings["popup"]> }) | null | undefined): TopupSettings {
   const d = DEFAULT_TOPUP_SETTINGS;
-  return { ...d, ...(v ?? {}), popup: { ...d.popup, ...(v?.popup ?? {}) } };
+  const steps = [...new Set((v?.alert_steps ?? d.alert_steps).filter((x) => Number.isInteger(x) && x >= 50 && x < 100))].sort((a, b) => a - b);
+  return { ...d, ...(v ?? {}), alert_steps: steps, popup: { ...d.popup, ...(v?.popup ?? {}) } };
 }
 
 /** Looks of an offer box (gradient + text colors). */

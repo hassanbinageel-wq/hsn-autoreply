@@ -8,6 +8,7 @@ import { cloudflareUsage } from "./cfusage";
 import { domainInfo } from "./domain";
 import { drawsThisMonth, getEntitlement, monthlyMessages, usageCycle } from "./plans";
 import { weeklyReport, weeklyText } from "./growth";
+import { topupSettings } from "./topups";
 import { tzOffsetMinutes } from "./analytics";
 import { serviceDomain } from "./domain";
 import { DEFAULT_MESSAGE_TEMPLATES, fillMessage, OUT_OF_MESSAGES_TEMPLATE, type MessageTemplates } from "../../shared/messageTemplates";
@@ -269,7 +270,7 @@ export async function buildDailyReport(db: D1Database, tenantId: number, now = D
 }
 
 /**
- * Every 10 minutes: each customer's own plan usage — messages: once each at 85%, 90%, 95% and used up; draws: at 80% and when used up.
+ * Every 10 minutes: each customer's own plan usage — messages: once each at the owner's steps (85%, 90%, 95% by default) and used up; draws: at 80% and when used up.
  * Told once per threshold per usage cycle (30 days of the subscription) (in the app, and on Telegram when set up). The owner has no limits.
  */
 export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number> {
@@ -293,7 +294,8 @@ export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number>
         // Messages: one note each at 85%, 90% and 95% of the cycle's messages (plan + top-ups), once per cycle;
         // used up (100%): the owner's ready «خلصت الرسائل» message (editable in the templates), and the owner is
         // told. Jumping several steps at once sends only the highest one.
-        const step = [100, 95, 90, 85].find((x) => pct * 100 >= x) ?? 0;
+        const steps = [100, ...(await topupSettings(env.DB)).alert_steps.slice().reverse()];
+        const step = steps.find((x) => pct * 100 >= x) ?? 0;
         if (!step) continue;
         const cycleKey = `plan_alert_messages_${cy.key}`;
         if ((await getSetting<number>(env.DB, t.id, cycleKey, 0)) >= step) continue;

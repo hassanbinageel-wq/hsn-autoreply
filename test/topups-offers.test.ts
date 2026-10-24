@@ -279,4 +279,22 @@ describe("offers", () => {
     expect(rep.payments).toHaveLength(2);
     expect((await call("/api/owner/payments-report", a.h)).status).toBe(403);
   });
+
+  it("the owner sets the usage-note steps and when the window shows (share used + delay)", async () => {
+    const { h, tid } = await register("shop_a");
+    const base = { max_per_cycle: 0, show_at_pct: 90, popup: { enabled: true, title: "قربت تخلص", body: "اشحن الحين", cta: "اشحن", cancel: "لاحقًا", show_at: 80, delay_min: 5 } };
+    expect((await call("/api/owner/topups/settings", OWNER, "PUT", { ...base, alert_steps: [70, 90] })).status).toBe(200);
+    await setUsage(tid, 790);
+    expect((await call("/api/promos", h)).body.popup).toBeNull(); // below 80%
+    await setUsage(tid, 800);
+    expect((await call("/api/promos", h)).body.popup).toMatchObject({ title: "قربت تخلص", delay_min: 5 });
+    const at = Math.floor(Date.now() / 600_000) * 600_000 + 3 * 60_000;
+    expect(await runPlanAlerts(TEST_ENV, at)).toBe(1); // 70% step
+    await setUsage(tid, 880);
+    expect(await runPlanAlerts(TEST_ENV, at)).toBe(0); // no 85% step any more
+    await setUsage(tid, 900);
+    expect(await runPlanAlerts(TEST_ENV, at)).toBe(1); // 90%
+    const titles = (await DB.prepare("SELECT title FROM app_notifications WHERE tenant_id = ? ORDER BY id").bind(tid).all<any>()).results.map((r: any) => r.title.match(/\d+%/)?.[0]);
+    expect(titles).toEqual(["70%", "90%"]);
+  });
 });
