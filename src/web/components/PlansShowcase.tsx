@@ -16,6 +16,9 @@ export interface Catalog {
   price_note?: string;
 }
 
+/** Points shown on a plan card before «عرض كل المزايا». */
+const TOP_FEATURES = 5;
+
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
 
 /** Every point of a plan, each with a hover / tap explanation, in the order the owner set. */
@@ -38,19 +41,22 @@ export function Features({ limits, order, hideMissing = false }: { limits: PlanL
   };
   const keys = orderFeatures(order);
   if (!hideMissing) return <ul className="space-y-2 text-sm">{keys.map(render)}</ul>;
-  // Plan cards: what the plan includes; what it lacks folds into one line so plans compare at a glance.
+  // Plan cards: the first points the plan includes (in the owner's order); the rest of what it includes, and
+  // what it lacks, fold into one line so cards stay the same height and plans compare at a glance.
   const included = (k: string) => (k === "draws_per_month" ? limits.draws_per_month !== 0 : k === "staff" ? (limits.staff ?? 0) !== 0 : k in LIMIT_HINTS || !!(limits as any)[k]);
+  const has = keys.filter(included);
   const missing = keys.filter((k) => !included(k));
+  const more = has.slice(TOP_FEATURES);
   return (
     <div className="text-sm">
-      <ul className="space-y-2">{keys.filter(included).map(render)}</ul>
-      {missing.length > 0 && (
+      <ul className="space-y-2">{has.slice(0, TOP_FEATURES).map(render)}</ul>
+      {more.length + missing.length > 0 && (
         <details className="group mt-3">
           <summary className="muted inline-flex min-h-8 cursor-pointer list-none items-center gap-1.5 text-xs font-semibold [&::-webkit-details-marker]:hidden">
             <Icon name="chev" size={14} className="transition group-open:rotate-180" />
-            {missing.length} {missing.length <= 10 ? "مزايا" : "ميزة"} في الباقات الأعلى
+            {more.length ? `عرض كل المزايا (+${more.length})` : `${missing.length} ${missing.length <= 10 ? "مزايا" : "ميزة"} في الباقات الأعلى`}
           </summary>
-          <ul className="mt-2 space-y-2">{missing.map(render)}</ul>
+          <ul className="mt-2 space-y-2">{[...more, ...missing].map(render)}</ul>
         </details>
       )}
     </div>
@@ -70,9 +76,13 @@ const priceText = (p: Catalog["plans"][number], cur: string, rates: ExchangeRate
   return v === null ? p.price_label ?? "" : `${formatAmount(v, cur)} / ${PRICE_PERIODS[p.price_period] ?? PRICE_PERIODS.month}`;
 };
 
+/** Desktop grid: every plan on one row (up to four). */
+const ROW_COLS: Record<number, string> = { 1: "@4xl:grid-cols-1", 2: "@4xl:grid-cols-2", 3: "@4xl:grid-cols-3", 4: "@4xl:grid-cols-4" };
+
 /**
- * Plan cards, prices converted with the owner's exchange rates. On phones they are a swipeable carousel
- * (first plan shown first, an arrow and dots to move to the next); from md up a three-column grid.
+ * Plan cards, prices converted with the owner's exchange rates. Sized by the space they get (not the screen):
+ * narrow (phones) a swipeable carousel that opens on the customer's plan (or the featured one), with the plan
+ * names above and dots below; medium (tablets) two cards per row; wide (desktop) all plans on one row.
  */
 export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, coupon = null }: { catalog: Catalog; cur: string; currentPlanId?: string | null; onChoose?: () => void; onCardPay?: (planId: string) => void; coupon?: Coupon }) {
   const featured = catalog.featured ? catalog.featured.plan_id : catalog.plans.length >= 3 ? catalog.plans[1].id : null;
@@ -90,11 +100,35 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
     cards.current.forEach((c) => c && io.observe(c));
     return () => io.disconnect();
   }, [catalog.plans.length]);
-  const go = (i: number) => cards.current[Math.max(0, Math.min(catalog.plans.length - 1, i))]?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  // Centers a card in the carousel (measured on screen, so it works the same right-to-left); the page itself never scrolls.
+  const go = (i: number, smooth = true) => {
+    const root = track.current;
+    const card = cards.current[Math.max(0, Math.min(catalog.plans.length - 1, i))];
+    if (!root || !card || root.scrollWidth <= root.clientWidth) return;
+    const a = card.getBoundingClientRect();
+    const b = root.getBoundingClientRect();
+    root.scrollBy({ left: a.left + a.width / 2 - (b.left + b.width / 2), behavior: smooth ? "smooth" : "auto" });
+  };
+  // Open on the customer's own plan, or the featured one.
+  const start = Math.max(0, catalog.plans.findIndex((p) => p.id === (currentPlanId || featured)));
+  useEffect(() => {
+    setActive(start);
+    requestAnimationFrame(() => go(start, false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [start, catalog.plans.length]);
   const many = catalog.plans.length > 1;
   return (
-    <div className="relative">
-      <div ref={track} className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-[8%] pb-2 pt-4 [scrollbar-width:none] sm:px-[18%] lg:mx-0 lg:grid lg:grid-cols-3 lg:items-stretch lg:gap-4 lg:overflow-visible lg:px-0 [&::-webkit-scrollbar]:hidden">
+    <div className="@container relative">
+      {many && (
+        <div className="mb-1 flex flex-wrap justify-center gap-1.5 @2xl:hidden" role="tablist" aria-label="الباقات">
+          {catalog.plans.map((p, i) => (
+            <button key={p.id} type="button" role="tab" aria-selected={i === active} onClick={() => go(i)} className={`rounded-full border px-3 py-1 text-xs font-bold transition ${i === active ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-200" : "border-[var(--border)] muted"}`}>
+              {p.name.replace(/^الباقة\s+/, "")}
+            </button>
+          ))}
+        </div>
+      )}
+      <div ref={track} className={`-mx-4 flex items-start snap-x snap-mandatory gap-3 overflow-x-auto px-[10%] pb-2 pt-4 [scrollbar-width:none] @2xl:mx-0 @2xl:grid @2xl:grid-cols-2 @2xl:items-stretch @2xl:gap-4 @2xl:gap-y-6 @2xl:overflow-visible @2xl:px-0 ${ROW_COLS[Math.min(4, catalog.plans.length)] ?? "@4xl:grid-cols-4"} [&::-webkit-scrollbar]:hidden`}>
         {catalog.plans.map((p, i) => {
           const before = p.price_amount !== null ? convertPrice(p.price_amount, p.price_currency, cur, catalog.rates) : null;
           // A coupon typed here, or a running offer's discount for this customer (whichever is bigger).
@@ -105,15 +139,15 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
           const isFeatured = p.id === featured;
           const isCurrent = p.id === currentPlanId;
           return (
-            <div key={p.id} ref={(el) => { cards.current[i] = el; }} data-i={i} className={`card relative flex w-[84%] min-w-0 shrink-0 snap-center flex-col p-5 sm:w-[64%] lg:w-auto ${isFeatured ? "ring-2 ring-violet-500 lg:-translate-y-1 lg:shadow-xl lg:shadow-violet-500/10" : ""}`}>
+            <div key={p.id} ref={(el) => { cards.current[i] = el; }} data-i={i} className={`card relative flex w-[80%] min-w-0 shrink-0 snap-center flex-col p-5 @md:w-[64%] @2xl:w-auto @4xl:p-4 @6xl:p-5 ${isFeatured ? "ring-2 ring-violet-500 @2xl:shadow-xl @2xl:shadow-violet-500/10" : ""}`}>
               {isFeatured && <span className="grad absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-extrabold text-white shadow">{badge}</span>}
               {!!p.offer_pct && <span className="absolute -top-3 right-4 whitespace-nowrap rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-extrabold text-white shadow">🎁 عرض خاص لك −{p.offer_pct}%</span>}
               <div className="flex items-start justify-between gap-2">
                 <b className="font-display text-lg font-extrabold">{p.name}</b>
                 {isCurrent && <span className="chip bg-violet-500/10 text-violet-700 dark:text-violet-200">باقتك</span>}
               </div>
-              {p.description && <p className="muted mt-1 min-h-[2.5em] text-xs leading-relaxed">{p.description}</p>}
-              <div className="mt-3 border-y border-[var(--border)] py-3">
+              <p className={`muted mt-1 min-h-[2.5em] text-xs leading-relaxed @2xl:min-h-[3.4em] ${p.description ? "" : "hidden @2xl:block"}`}>{p.description}</p>
+              <div className="mt-3 border-y border-[var(--border)] py-3 @2xl:min-h-[7.25rem]">
                 {price !== null ? (
                   <div className="flex flex-wrap items-baseline gap-1.5">
                     <span className={`font-display font-extrabold text-violet-600 dark:text-violet-300 text-3xl`}>{formatAmount(price, cur)}</span>
@@ -130,7 +164,7 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
               {onCardPay && p.free ? (
                 <>
                   <button type="button" onClick={() => onCardPay(p.id)} className={`btn mt-4 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>ابدأ مجانًا</button>
-                  <div className="muted mt-1 text-center text-[11px]">بدون دفع — تتفعّل فورًا</div>
+                  <div className="muted mt-1 text-center text-[11px]">بدون دفع ولا بطاقة</div>
                 </>
               ) : onCardPay && p.card_price ? (
                 <>
@@ -148,20 +182,15 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
         })}
       </div>
       {many && (
-        <div className="mt-3 flex items-center justify-center gap-3 lg:hidden">
-          <button type="button" aria-label="الباقة السابقة" disabled={active === 0} onClick={() => go(active - 1)} className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] shadow-sm disabled:opacity-30">
-            <Icon name="arrowL" size={18} className="rotate-180" />
-          </button>
-          <div className="flex gap-1.5" aria-hidden>
+        <div className="mt-3 @2xl:hidden">
+          <div className="flex justify-center gap-1.5" aria-hidden>
             {catalog.plans.map((p, i) => (
-              <button key={p.id} type="button" tabIndex={-1} aria-label={`باقة ${p.name}`} onClick={() => go(i)} className="flex h-6 items-center px-0.5">
+              <button key={p.id} type="button" tabIndex={-1} onClick={() => go(i)} className="flex h-6 items-center px-0.5">
                 <span className={`block h-2 rounded-full transition-all ${i === active ? "w-6 bg-violet-600" : "w-2 bg-[var(--border)]"}`} />
               </button>
             ))}
           </div>
-          <button type="button" aria-label="الباقة التالية" disabled={active === catalog.plans.length - 1} onClick={() => go(active + 1)} className="grad flex h-10 w-10 items-center justify-center rounded-full text-white shadow disabled:opacity-30">
-            <Icon name="arrowL" size={18} />
-          </button>
+          <p className="muted text-center text-xs">⟵ اسحب يمين ويسار لباقي الباقات ⟶</p>
         </div>
       )}
     </div>

@@ -69,6 +69,7 @@ import { applyReferral, customerHealth, findCoupon, normCode, publicCoupon, refe
 import { storeAnalytics, storeCampaignDetail, storeProductCosts, storeProducts } from "./services/store";
 import { domainInfo } from "./services/domain";
 import { recoverMissedComments } from "./services/recover";
+import { duplicateIgFlags, freePlanRefusal, recordFreeStart } from "./services/freeplan";
 import { auditCampaignComments } from "./services/audit";
 import { LIMITS, hasPublishScope, isImage, isVideo, optionalScopes, publishScopeMode, removeFiles, validatePost, verifyMediaUrl, wantsPublishScope, withSchedulingNotice, type PostKind } from "./services/publish";
 import { captureInsights, insightsAccount, insightsScopeMode, insightsSummary, mediaInsightsSeries, wantsInsightsScope } from "./services/insights";
@@ -748,7 +749,6 @@ export function createApp() {
     try {
       await run(c.env.DB, "INSERT INTO admin_users (username, password_hash, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", p.data.username, hash, tid, now, now);
       if (withCode) await redeemCode(c.env.DB, tid, p.data.code!, now);
-      else if (freePlan) await extendPlan(c.env.DB, tid, freePlan.id, PERIOD_DAYS[freePlan.price_period] ?? 30, now);
     } catch (e) {
       await deleteTenantData(c.env.DB, tid);
       if (e instanceof RedeemError) return apiError(c, 422, e.code, e.message);
@@ -1111,7 +1111,11 @@ export function createApp() {
     if (e.active && e.plan?.id === plan.id) return apiError(c, 409, "already_free", `باقتك المجانية فعّالة لين ${new Date(e.expires_at ?? 0).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { day: "numeric", month: "long", timeZone: "Asia/Riyadh" })} — تقدر تجددها بعد ما تنتهي`);
     const block = await planChangeBlock(c.env, T(c), plan.id);
     if (block) return apiError(c, 409, block.code, block.message);
+    if (!(await rateLimit(c.env.DB, `free_start:${T(c)}`, 10, 60 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد شوي");
+    const refused = await freePlanRefusal(c.env, T(c), c.get("session").user_id, clientIp(c));
+    if (refused) return apiError(c, refused.code === "email_required" || refused.code === "email_disposable" ? 422 : 409, refused.code, refused.message);
     const r = await withSchedulingNotice(c.env, T(c), () => extendPlan(c.env.DB, T(c), plan.id, PERIOD_DAYS[plan.price_period] ?? 30));
+    await recordFreeStart(c.env, T(c), clientIp(c));
     await audit(c.env.DB, T(c), c.get("session").username, "subscription.free", plan.id, { expires_at: r.expires_at });
     return c.json({ ok: true, ...r });
   });
@@ -1622,6 +1626,7 @@ export function createApp() {
       c.env.DB,
       `SELECT t.id, t.name, t.is_owner, t.status, t.notes, t.created_at, t.plan_id, t.plan_expires_at, t.plan_started_at,
               (SELECT p.name FROM plans p WHERE p.id = t.plan_id) AS plan_name,
+              (SELECT p.free FROM plans p WHERE p.id = t.plan_id) AS plan_free,
               (SELECT u.messages FROM usage_counters u WHERE u.tenant_id = t.id
                   AND u.month = 'c' || CAST(COALESCE(t.plan_started_at, t.created_at) AS INTEGER) || '-' || CAST(MAX(0, (CAST(? AS INTEGER) - CAST(COALESCE(t.plan_started_at, t.created_at) AS INTEGER)) / ${CYCLE_MS}) AS INTEGER)) AS messages_month,
               (SELECT json_extract(p.limits, '$.monthly_messages') FROM plans p WHERE p.id = t.plan_id) AS messages_limit,
@@ -1643,7 +1648,9 @@ export function createApp() {
       Date.now(),
       since,
     );
-    return c.json(rows);
+    // Instagram accounts that already used the free plan with another customer.
+    const dup = await duplicateIgFlags(c.env.DB);
+    return c.json(rows.map((r) => ({ ...r, plan_free: !!r.plan_free, dup_ig: dup.get(r.id) ?? null })));
   });
   owner.post("/tenants", async (c) => {
     const p = await parseBody(c, tenantCreateSchema);

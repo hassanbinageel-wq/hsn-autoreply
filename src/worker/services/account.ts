@@ -1,5 +1,6 @@
 import type { Env } from "../env";
 import { audit, first, run } from "../lib/db";
+import { checkFreeOnConnect } from "./freeplan";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
 import { notify } from "./notify";
 import { HttpMetaClient, INSTAGRAM_SCOPES, WEBHOOK_FIELDS } from "../meta/client";
@@ -155,6 +156,7 @@ export async function completeOAuth(env: Env, code: string, tenantId: number): P
   if (!acc) return { ok: false, error: "account_owned_by_other_customer: هذا الحساب مربوط بعميل آخر في الخدمة — تواصل مع الإدارة" };
   await subscribeWebhooks(env, acc.id, token);
   await audit(env.DB, tenantId, "admin", "account.connected", igUserId, { username: me.data.username, scopes });
+  await checkFreeOnConnect(env, tenantId, igUserId, me.data.username ?? null, now);
   return { ok: true, accountId: acc.id };
 }
 

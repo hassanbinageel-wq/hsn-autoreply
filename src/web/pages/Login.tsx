@@ -132,7 +132,8 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         } catch {
           /* private mode */
         }
-        if (!cardSignup || payPlan?.free) location.hash = "#/";
+        // The free plan starts from «اشتراكي» once the email is confirmed.
+        location.hash = payPlan?.free ? "#/subscription" : !cardSignup ? "#/" : location.hash;
       }
       await signIn(username, password);
       if (register && cardSignup && !payPlan?.free) {
@@ -184,7 +185,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           <div>
             <h1 className="text-[28px] font-extrabold leading-tight">{status?.needs_setup ? "إعداد حساب الإدارة" : register ? "أنشئ حسابك ✨" : "أهلًا بعودتك 👋"}</h1>
             <p className="muted mt-1.5 text-sm empty:hidden">
-              {status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : cardSignup ? (payPlan?.free ? "أنشئ حسابك وتبدأ مجانًا على طول." : "أنشئ حسابك، وبعدها تنتقل مباشرة لصفحة الدفع الآمنة.") : register ? "عندك كود تفعيل؟ أنشئ حسابك وابدأ مباشرة." : ""}
+              {status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : cardSignup ? (payPlan?.free ? "أنشئ حسابك، أكّد إيميلك، وابدأ مجانًا." : "أنشئ حسابك، وبعدها تنتقل مباشرة لصفحة الدفع الآمنة.") : register ? "عندك كود تفعيل؟ أنشئ حسابك وابدأ مباشرة." : ""}
             </p>
           </div>
           {isNative && !API_BASE && <Alert tone="bad">لم يُحدَّد عنوان الخادم في هذا الإصدار (VITE_API_BASE).</Alert>}
@@ -208,7 +209,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
               <span className="text-2xl">{payPlan!.free ? "🎁" : "💳"}</span>
               <span className="flex-1 leading-tight">
                 <b className="block text-sm">{payPlan!.name} — {payPlan!.free ? payPlan!.price_label || "مجاناً" : `${payPlan!.card_price.toLocaleString("en-US")} ر.س`}</b>
-                <span className="muted text-xs">{payPlan!.free ? "تتفعّل فورًا بعد إنشاء الحساب — بدون دفع ولا كود" : "تدفع بالبطاقة بعد إنشاء الحساب، وتتفعّل الباقة فورًا — بدون كود"}</span>
+                <span className="muted text-xs">{payPlan!.free ? "بدون دفع ولا كود — بعد إنشاء الحساب أكّد إيميلك وفعّلها من «اشتراكي»" : "تدفع بالبطاقة بعد إنشاء الحساب، وتتفعّل الباقة فورًا — بدون كود"}</span>
               </span>
               <a href="#/plans" className="text-xs font-semibold text-violet-700 underline dark:text-violet-300">تغيير</a>
             </div>

@@ -6,6 +6,7 @@ import { api } from "../api";
 import { Icon } from "../components/Icon";
 import { PlansShowcase } from "../components/PlansShowcase";
 import { TopupPicker } from "../components/Promos";
+import { AccountEmailCard } from "../components/AccountEmail";
 import { extraNote, messagesLeft } from "../lib/messagesBar";
 import { Alert, Card, InfoDot, Spinner, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 
@@ -40,6 +41,11 @@ function MessagesMeter({ label, used, max, extra = 0 }: { label: React.ReactNode
 
 export function SubscriptionPage() {
   const { data, loading, error, reload } = useAsync(() => api<any>("/api/subscription"), []);
+  const { data: email, reload: reloadEmail } = useAsync(() => api<{ email: string | null; verified: boolean; enabled: boolean }>("/api/account/email").catch(() => null), []);
+  const freePlan = data?.plans?.find((p: any) => p.free);
+  const hasFree = !!freePlan;
+  // The free plan needs a confirmed email first (when emails are on); not shown to someone already on it.
+  const freeNeedsEmail = hasFree && !isStaff() && !!email?.enabled && !email.verified && !(data?.active && data?.plan?.id === freePlan.id);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const redeem = async () => {
@@ -119,6 +125,7 @@ export function SubscriptionPage() {
       reload();
     } catch (e: any) {
       toast(e.message, "bad");
+      if (e.code === "email_required") document.getElementById("free-email")?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   };
   // In the Android app the payment page opens in the browser; back in the app, this page checks the payment.
@@ -172,7 +179,12 @@ export function SubscriptionPage() {
       {data.active && !isStaff() && <TopupCard />}
       {canUpgrade && <ReferralCard />}
       <h2 id="plans" className="font-display scroll-mt-20 pt-2 text-lg font-extrabold">الباقات وطرق الدفع</h2>
-      <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={data.card_payments && !isStaff() ? payCard : undefined} />
+      {freeNeedsEmail && (
+        <div id="free-email" className="scroll-mt-20">
+          <AccountEmailCard title="📧 أكّد إيميلك لتفعيل الباقة المجانية" intro="الباقة المجانية تحتاج إيميل مؤكَّد (مو إيميل مؤقت). اكتب إيميلك ويوصلك رمز تأكيد." onVerified={reloadEmail} />
+        </div>
+      )}
+      <PlansShowcase catalog={data} currentPlanId={data.plan?.id} onCardPay={(data.card_payments || hasFree) && !isStaff() ? payCard : undefined} />
       {data.code_box?.enabled && (
         <Card title={data.code_box.title || "عندك كود تفعيل؟"}>
           {data.code_box.text && <p className="muted mb-3 whitespace-pre-line text-sm">{data.code_box.text}</p>}

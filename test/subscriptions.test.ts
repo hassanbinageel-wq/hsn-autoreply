@@ -399,29 +399,45 @@ describe("the free plan", () => {
     const limits = JSON.parse((await DB.prepare("SELECT limits FROM plans WHERE id = 'free'").first<any>()).limits);
     return call("/api/owner/plans/free", OWNER, "PUT", { name: "الباقة المجانية", free: true, price_label: "مجاناً", price_period: "month", active: true, limits: { public_reply: false, link_tracking: false, inbox_manual: false, telegram: false, recover: false, csv_export: false, draws_per_month: 0, draw_video: false, cards: false, ...limits } });
   };
+  const confirmEmail = (username: string, email = `${username}@example.com`) =>
+    DB.prepare("UPDATE admin_users SET email = ?, email_verified_at = ? WHERE username = ?").bind(email, Date.now(), username).run();
+  /** A customer (made by the owner) with a confirmed email, signed in from a given network. */
+  async function customer(username: string, ip = "10.0.0.1") {
+    const r = await call("/api/owner/tenants", OWNER, "POST", { name: `متجر ${username}`, username, password: "another-strong-password" });
+    await confirmEmail(username);
+    const h = { ...(await login(username, "another-strong-password")), "CF-Connecting-IP": ip };
+    return { h, tid: r.body.id as number };
+  }
+  const takeFree = (h: H) => call("/api/subscription/free", h, "POST", { plan_id: "free" });
 
-  it("is off until the owner turns it on; then shows its text price and signs up without paying or a code", async () => {
-    const reg = (username: string) => call("/api/auth/register", {}, "POST", { name: "متجر", username, password: "another-strong-password", plan_id: "free" });
+  it("is off until the owner turns it on; sign-up needs no payment or code, and the plan starts from «اشتراكي» after the email is confirmed", async () => {
+    const reg = (username: string) => call("/api/auth/register", {}, "POST", { name: "متجر", username, password: "another-strong-password", plan_id: "free", email: `${username}@example.com` });
     expect((await reg("free_a")).status).toBe(422);
     const put = await activateFree();
     expect(put.status, JSON.stringify(put.body)).toBe(200);
     const plan = (await call("/api/public/plans")).body.plans.find((p: any) => p.id === "free");
     expect(plan).toMatchObject({ free: true, price_label: "مجاناً", card_price: null });
     expect((await reg("free_a")).status).toBe(200);
-    const t = await DB.prepare("SELECT t.plan_id, t.plan_expires_at FROM tenants t JOIN admin_users u ON u.tenant_id = t.id WHERE u.username = 'free_a'").first<any>();
+    const tenant = () => DB.prepare("SELECT t.plan_id, t.plan_expires_at FROM tenants t JOIN admin_users u ON u.tenant_id = t.id WHERE u.username = 'free_a'").first<any>();
+    expect((await tenant()).plan_id).toBeNull(); // not before the email is confirmed
+    const h = await login("free_a", "another-strong-password");
+    const refused = await takeFree(h);
+    expect(refused.status).toBe(422);
+    expect(refused.body.error.code).toBe("email_required");
+    await confirmEmail("free_a");
+    expect((await takeFree(h)).status).toBe(200);
+    const t = await tenant();
     expect(t.plan_id).toBe("free");
     expect(t.plan_expires_at).toBeGreaterThan(Date.now() + 29 * 86_400_000);
     expect(await DB.prepare("SELECT COUNT(*) AS n FROM card_payments").first<any>()).toMatchObject({ n: 0 });
   });
 
-  it("a customer takes it from «اشتراكي» once per period, can move up to a paid plan, and cannot drop to it from a paid one", async () => {
+  it("a customer takes it once per period, can move up to a paid plan, and cannot drop to it from a paid one", async () => {
     await activateFree();
-    const r = await call("/api/owner/tenants", OWNER, "POST", { name: "متجر", username: "shop_f", password: "another-strong-password" });
-    const tid = r.body.id;
-    const h = await login("shop_f", "another-strong-password");
+    const { h, tid } = await customer("shop_f");
     expect((await call("/api/subscription/free", h, "POST", { plan_id: "basic" })).status).toBe(404); // not a free plan
-    expect((await call("/api/subscription/free", h, "POST", { plan_id: "free" })).status).toBe(200);
-    expect((await call("/api/subscription/free", h, "POST", { plan_id: "free" })).status).toBe(409);
+    expect((await takeFree(h)).status).toBe(200);
+    expect((await takeFree(h)).status).toBe(409);
     // free → paid: a fresh full period on the paid plan (not added to the free days)
     const [code] = await codes("basic", 30);
     const before = Date.now();
@@ -430,6 +446,57 @@ describe("the free plan", () => {
     expect(t.plan_id).toBe("basic");
     expect(t.plan_expires_at).toBeLessThan(before + 31 * 86_400_000);
     // paid → free while the paid plan runs: blocked
-    expect((await call("/api/subscription/free", h, "POST", { plan_id: "free" })).status).toBe(409);
+    expect((await takeFree(h)).status).toBe(409);
+  });
+
+  it("refuses throw-away email addresses", async () => {
+    await activateFree();
+    const { h } = await customer("shop_t");
+    await confirmEmail("shop_t", "x@mailinator.com");
+    const r = await takeFree(h);
+    expect(r.body.error.code).toBe("email_disposable");
+  });
+
+  it("at most 3 new free accounts per network per week; renewing your own does not count", async () => {
+    await activateFree();
+    for (const u of ["net_a1", "net_a2", "net_a3"]) expect((await takeFree((await customer(u, "10.9.9.9")).h)).status).toBe(200);
+    const fourth = await takeFree((await customer("net_a4", "10.9.9.9")).h);
+    expect(fourth.status).toBe(409);
+    expect(fourth.body.error.code).toBe("free_network_limit");
+    // another network is fine
+    expect((await takeFree((await customer("net_b1", "10.8.8.8")).h)).status).toBe(200);
+  });
+
+  it("is given once per Instagram account: another customer connecting the same account loses the free plan, and the owner sees it flagged", async () => {
+    const { checkFreeOnConnect } = await import("../src/worker/services/freeplan");
+    const env = (await import("cloudflare:workers")).env as any;
+    await activateFree();
+    const now = Date.now();
+    const a = await customer("ig_first");
+    await DB.prepare("INSERT INTO instagram_accounts (tenant_id, ig_user_id, username, status, token_ciphertext, token_iv, created_at, updated_at) VALUES (?, '1784DUP', 'dup_shop', 'active', 'x', 'y', ?, ?)").bind(a.tid, now, now).run();
+    expect((await takeFree(a.h)).status).toBe(200);
+    expect(await DB.prepare("SELECT tenant_id FROM free_claims WHERE ig_user_id = '1784DUP'").first<any>()).toMatchObject({ tenant_id: a.tid });
+
+    // the first customer is deleted and the account signs up again: the claim stays with the Instagram account
+    expect((await call(`/api/owner/tenants/${a.tid}`, OWNER, "DELETE", { confirm: "متجر ig_first" })).status).toBe(200);
+    const b = await customer("ig_second", "10.0.0.2");
+    expect((await takeFree(b.h)).status).toBe(200); // no account connected yet
+    await DB.prepare("INSERT INTO instagram_accounts (tenant_id, ig_user_id, username, status, token_ciphertext, token_iv, created_at, updated_at) VALUES (?, '1784DUP', 'dup_shop', 'active', 'x', 'y', ?, ?)").bind(b.tid, now, now).run();
+    expect(await checkFreeOnConnect(env, b.tid, "1784DUP", "dup_shop")).toBe("ended");
+    const ent = (await call("/api/subscription", b.h)).body;
+    expect(ent.active).toBe(false);
+    // trying again with that account is refused
+    expect((await takeFree(b.h)).body.error.code).toBe("free_used_ig");
+    // the customer is told, and the owner's list flags the account
+    expect(await DB.prepare("SELECT COUNT(*) AS n FROM app_notifications WHERE tenant_id = ? AND title = 'انتهت الباقة المجانية'").bind(b.tid).first<any>()).toMatchObject({ n: 1 });
+    const row = (await call("/api/owner/tenants", OWNER)).body.find((t: any) => t.id === b.tid);
+    expect(row.dup_ig).toMatchObject({ username: "dup_shop", first_tenant_id: 0, blocked: 1 });
+    // a paid plan is still open to them
+    const [code] = await codes("basic", 30);
+    expect((await call("/api/subscription/redeem", b.h, "POST", { code })).status).toBe(200);
+    // a different, fresh account on the free plan just claims it
+    const c = await customer("ig_third", "10.0.0.3");
+    expect((await takeFree(c.h)).status).toBe(200);
+    expect(await checkFreeOnConnect(env, c.tid, "1784NEW", "new_shop")).toBe("claimed");
   });
 });

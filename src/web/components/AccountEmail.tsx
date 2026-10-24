@@ -3,7 +3,7 @@ import { api } from "../api";
 import { Alert, Card, Field, toast, useAsync } from "./ui";
 
 /** Settings card: the account email used only for password recovery — add/change it, confirm with the emailed code. */
-export function AccountEmailCard() {
+export function AccountEmailCard({ title, intro, onVerified }: { title?: string; intro?: string; onVerified?: () => void } = {}) {
   const { data, reload } = useAsync(() => api<{ email: string | null; verified: boolean; enabled: boolean }>("/api/account/email"), []);
   const [editing, setEditing] = useState(false);
   const [email, setEmail] = useState("");
@@ -33,6 +33,7 @@ export function AccountEmailCard() {
       setSent(false);
       setEditing(false);
       reload();
+      onVerified?.();
     } catch (e: any) {
       toast(e.message, "bad");
     } finally {
@@ -41,7 +42,7 @@ export function AccountEmailCard() {
   };
   const pending = !!data.email && !data.verified;
   return (
-    <Card title="📧 إيميل استرجاع الحساب" className="h-full">
+    <Card title={title ?? "📧 إيميل استرجاع الحساب"} className="h-full">
       <div className="space-y-3 text-sm">
         {!data.enabled && <Alert tone="info">إرسال الإيميلات بيتفعّل قريب — تقدر تحفظ إيميلك بعدها.</Alert>}
         {data.verified && !editing ? (
@@ -51,7 +52,7 @@ export function AccountEmailCard() {
           </>
         ) : (
           <>
-            {!data.email && !editing && <p className="muted">أضف إيميلك عشان تقدر تسترجع حسابك لو نسيت كلمة المرور. ما نرسل عليه إعلانات.</p>}
+            {!data.email && !editing && <p className="muted">{intro ?? "أضف إيميلك عشان تقدر تسترجع حسابك لو نسيت كلمة المرور. ما نرسل عليه إعلانات."}</p>}
             {pending && !editing && !sent && (
               <Alert tone="warn">الإيميل <b dir="ltr">{data.email}</b> ما تأكد بعد — بدون تأكيد ما يوصلك رابط الاسترجاع.</Alert>
             )}

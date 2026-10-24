@@ -256,6 +256,10 @@ export async function deleteTenantData(db: D1Database, tenantId: number): Promis
     db.prepare("DELETE FROM usage_counters WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM message_credits WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM offer_events WHERE tenant_id = ?").bind(t),
+    db.prepare("DELETE FROM free_blocks WHERE tenant_id = ?").bind(t),
+    // The free-plan claim stays with the Instagram account (signing up again does not reset it), owned by nobody.
+    db.prepare("UPDATE free_claims SET tenant_id = 0 WHERE tenant_id = ?").bind(t),
+    db.prepare("UPDATE free_activations SET tenant_id = 0 WHERE tenant_id = ?").bind(t),
     db.prepare("DELETE FROM app_settings WHERE substr(key, 1, ?) = ?").bind(`t${t}:`.length, `t${t}:`),
     db.prepare("DELETE FROM sessions WHERE user_id IN (SELECT id FROM admin_users WHERE tenant_id = ?)").bind(t),
     db.prepare("DELETE FROM oauth_states WHERE user_id IN (SELECT id FROM admin_users WHERE tenant_id = ?)").bind(t),

@@ -108,6 +108,7 @@ function CustomersTab() {
   // Search by store (login) name, user name, email or Instagram handle; each card's details open on demand.
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<"new" | "most" | "least">("new");
+  const [only, setOnly] = useState<"all" | "free" | "dup">("all");
   const [open, setOpen] = useState<Set<number>>(() => new Set());
   const toggle = (id: number) => setOpen((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const act = async (fn: () => Promise<unknown>, msg: string) => {
@@ -121,7 +122,9 @@ function CustomersTab() {
   };
   const all = (data ?? []).filter((t) => !t.is_owner);
   const nq = normText(q);
-  const found = nq ? all.filter((t) => [t.name, t.username, t.email, t.ig_username].some((v) => v && normText(String(v)).includes(nq))) : all;
+  const dups = all.filter((t) => t.dup_ig);
+  const shown = only === "free" ? all.filter((t) => t.plan_free) : only === "dup" ? dups : all;
+  const found = nq ? shown.filter((t) => [t.name, t.username, t.email, t.ig_username].some((v) => v && normText(String(v)).includes(nq))) : shown;
   // Share of this cycle's messages used (plan + top-ups); unlimited or no plan sort last.
   const usage = (t: any) => {
     const limit = t.plan_id && t.messages_limit != null ? t.messages_limit + (t.messages_extra ?? 0) : null;
@@ -149,7 +152,20 @@ function CustomersTab() {
           <option value="most">الأكثر استهلاكًا للرسائل</option>
           <option value="least">الأقل استهلاكًا للرسائل</option>
         </select>
+        <select className="input !w-auto" value={only} onChange={(e) => setOnly(e.target.value as any)} aria-label="عرض">
+          <option value="all">كل العملاء</option>
+          <option value="free">🎁 الباقة المجانية ({all.filter((t) => t.plan_free).length})</option>
+          <option value="dup">⚠️ إنستقرام مكرر ({dups.length})</option>
+        </select>
       </div>
+      {dups.length > 0 && only !== "dup" && (
+        <Alert tone="warn">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>⚠️ <b>{dups.length}</b> {dups.length === 1 ? "عميل ربط" : "عملاء ربطوا"} حساب إنستقرام سبق واستخدم الباقة المجانية مع عميل ثاني — انتهت باقتهم المجانية تلقائيًا.</span>
+            <button className="btn btn-ghost min-h-9 text-xs" onClick={() => setOnly("dup")}>اعرضهم</button>
+          </div>
+        </Alert>
+      )}
       {q && data && <p className="muted text-sm">{customers.length ? `${customers.length} نتيجة` : "ما فيه عميل بهذا الاسم"}</p>}
       {loading && !data ? <Spinner /> : error ? <Alert tone="bad">{error}</Alert> : !all.length ? (
         <Empty title="لا يوجد عملاء بعد">اضغط «عميل جديد» لإنشاء أول حساب.</Empty>
@@ -183,6 +199,14 @@ function CustomersTab() {
                   <span className="h-1.5 w-1.5 rounded-full bg-current" />{t.status === "active" ? "نشط" : "موقوف"}
                 </span>
               </div>
+              {t.dup_ig && (
+                <div className="mt-3 rounded-2xl border border-amber-400/70 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/70 dark:bg-amber-950/40 dark:text-amber-200">
+                  <b className="block">⚠️ إنستقرام مكرر</b>
+                  <span className="block"><bdi dir="ltr">{t.dup_ig.username ? `@${t.dup_ig.username}` : "حسابه"}</bdi> استخدم الباقة المجانية من قبل.</span>
+                  <span className="block">أول عميل استخدمها: <b><bdi>{t.dup_ig.first_tenant_id ? t.dup_ig.first_name ?? `#${t.dup_ig.first_tenant_id}` : "عميل محذوف"}</bdi></b></span>
+                  <span className="block">{t.dup_ig.blocked > 0 ? `انتهت باقته المجانية تلقائيًا${t.dup_ig.blocked > 1 ? ` (${t.dup_ig.blocked} محاولات)` : ""} — يقدر يشترك بباقة مدفوعة.` : "ما يقدر يفعّل الباقة المجانية بهذا الحساب."}</span>
+                </div>
+              )}
               <div className="mt-3 grid grid-cols-3 gap-2 text-xs [&>div]:min-w-0">
                 <div><b className="font-display block truncate text-sm" dir="ltr" title={t.ig_username ? `@${t.ig_username}` : undefined} style={{ textAlign: "right" }}>{t.ig_username ? `@${t.ig_username}` : "—"}</b><span className="muted">{t.ig_status === "active" ? "إنستقرام متصل" : t.ig_username ? "غير متصل" : "لم يربط بعد"}</span></div>
                 <div><b className="font-display block text-base">{t.active_campaigns}/{t.campaigns}</b><span className="muted">حملات نشطة</span></div>
