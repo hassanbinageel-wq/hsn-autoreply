@@ -244,4 +244,39 @@ describe("offers", () => {
     const notes = (await DB.prepare("SELECT COUNT(*) AS n FROM app_notifications WHERE tenant_id = ?").bind(tid).first<any>()).n;
     expect(notes).toBe(0); // taking messages off is silent
   });
+
+  it("the owner's customer list shows this cycle's used messages and the added / taken-off ones", async () => {
+    const { tid } = await register("shop_a");
+    await setUsage(tid, 120);
+    await call(`/api/owner/tenants/${tid}/credits`, OWNER, "POST", { messages: 200 });
+    let row = (await call("/api/owner/tenants", OWNER)).body.find((t: any) => t.id === tid);
+    expect(row).toMatchObject({ messages_month: 120, messages_limit: 1000, messages_extra: 200 });
+    await call(`/api/owner/tenants/${tid}/credits`, OWNER, "POST", { messages: -500 });
+    row = (await call("/api/owner/tenants", OWNER)).body.find((t: any) => t.id === tid);
+    expect(row.messages_extra).toBe(-300);
+  });
+
+  it("payments report: totals, by kind / plan / pack / offer, owner only", async () => {
+    stubMoyasar();
+    await DB.prepare("UPDATE plans SET card_price_halalas = 4900, price_period = 'month' WHERE id = 'basic'").run();
+    const a = await register("shop_a");
+    const offerId = (await call("/api/owner/offers", OWNER, "POST", offer({ discount_pct: 20, discount_plans: ["basic"] }))).body.id;
+    const pack = (await call("/api/owner/topups/packs", OWNER, "POST", { messages: 2000, price: 15 })).body.id;
+    remote = { status: "paid" };
+    const r1 = await call("/api/subscription/pay", a.h, "POST", { plan_id: "basic" });
+    await call(`/api/subscription/pay/${r1.body.id}`, a.h);
+    // the stub hands out one invoice id: retire the first before the second payment
+    await DB.prepare("UPDATE card_payments SET invoice_id = 'inv_done1' WHERE id = ?").bind(r1.body.id).run();
+    reqs = [];
+    const r2 = await call("/api/topups/pay", a.h, "POST", { pack_id: pack });
+    await call(`/api/subscription/pay/${r2.body.id}`, a.h);
+    const rep = (await call("/api/owner/payments-report?days=30", OWNER)).body;
+    expect(rep.total).toMatchObject({ count: 2, revenue: 39.2 + 15, customers: 1 });
+    expect(rep.by_kind.map((g: any) => g.label).sort()).toEqual(["اشتراك باقة", "رسائل إضافية"].sort());
+    expect(rep.by_plan[0]).toMatchObject({ key: "basic", count: 1, revenue: 39.2 });
+    expect(rep.by_pack[0]).toMatchObject({ key: 2000, count: 1, revenue: 15 });
+    expect(rep.by_offer[0]).toMatchObject({ key: offerId, count: 1, revenue: 39.2 });
+    expect(rep.payments).toHaveLength(2);
+    expect((await call("/api/owner/payments-report", a.h)).status).toBe(403);
+  });
 });

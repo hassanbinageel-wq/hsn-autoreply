@@ -269,7 +269,7 @@ export async function buildDailyReport(db: D1Database, tenantId: number, now = D
 }
 
 /**
- * Every 10 minutes: each customer's own plan usage — messages: every day while 80% or more is used; draws: at 80% and when used up.
+ * Every 10 minutes: each customer's own plan usage — messages: once each at 85%, 90%, 95% and used up; draws: at 80% and when used up.
  * Told once per threshold per usage cycle (30 days of the subscription) (in the app, and on Telegram when set up). The owner has no limits.
  */
 export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number> {
@@ -288,38 +288,30 @@ export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number>
     for (const c of checks) {
       if (!c.limit) continue;
       const pct = c.used / c.limit;
-      const level = pct >= 1 ? 100 : pct >= 0.8 ? 80 : 0;
-      if (!level) continue;
       const n = (x: number) => x.toLocaleString("en-US");
       if (c.key === "messages") {
-        // Messages: a reminder every day while 80% or more is used (Riyadh day). Used up: the owner's ready
-        // «خلصت الرسائل» message (editable in the templates) — the first time in the cycle as an owner message
-        // (and the owner is told), then daily as a reminder with the same text.
-        // Once a day per level: running out later the same day still sends the «خلصت» message at once.
-        const day = `${new Date(now + 3 * 3_600_000).toISOString().slice(0, 10)}:${level}`;
-        const dayKey = `plan_alert_messages_day_${cy.key}`;
-        if ((await getSetting<string>(env.DB, t.id, dayKey, "")) === day) continue;
-        await setSetting(env.DB, t.id, dayKey, day);
-        if (level === 100) {
+        // Messages: one note each at 85%, 90% and 95% of the cycle's messages (plan + top-ups), once per cycle;
+        // used up (100%): the owner's ready «خلصت الرسائل» message (editable in the templates), and the owner is
+        // told. Jumping several steps at once sends only the highest one.
+        const step = [100, 95, 90, 85].find((x) => pct * 100 >= x) ?? 0;
+        if (!step) continue;
+        const cycleKey = `plan_alert_messages_${cy.key}`;
+        if ((await getSetting<number>(env.DB, t.id, cycleKey, 0)) >= step) continue;
+        await setSetting(env.DB, t.id, cycleKey, step);
+        if (step === 100) {
           const templates = await getSetting<MessageTemplates>(env.DB, OWNER_TENANT, "message_templates", DEFAULT_MESSAGE_TEMPLATES);
           const tpl = templates.private?.find((x) => x.label === OUT_OF_MESSAGES_TEMPLATE) ?? DEFAULT_MESSAGE_TEMPLATES.private.find((x) => x.label === OUT_OF_MESSAGES_TEMPLATE)!;
-          const cycleKey = `plan_alert_messages_${cy.key}`;
-          if ((await getSetting<number>(env.DB, t.id, cycleKey, 0)) < 100) {
-            await setSetting(env.DB, t.id, cycleKey, 100);
-            await sendOwnerMessage(env, { tenantId: t.id, title: tpl.title, body: tpl.body, link: tpl.link, days: tpl.days }, now);
-            const name = (await first<{ name: string }>(env.DB, "SELECT name FROM tenants WHERE id = ?", t.id))?.name ?? String(t.id);
-            await notify(env, OWNER_TENANT, "plan", `📭 «${name}» خلّص رسائل دورته (${n(c.used)} من ${n(c.limit)}) — وصلته رسالة «${OUT_OF_MESSAGES_TEMPLATE}» تلقائيًا.`, undefined, { link: "/owner?tab=customers" });
-          } else {
-            const who = await first<{ name: string; plan_expires_at: number | null; plan_name: string | null }>(env.DB, "SELECT t.name, t.plan_expires_at, p.name AS plan_name FROM tenants t LEFT JOIN plans p ON p.id = t.plan_id WHERE t.id = ?", t.id);
-            const v = { name: who?.name ?? "", plan: who?.plan_name ?? null, expiresAt: who?.plan_expires_at ?? null };
-            await addAppNotification(env.DB, t.id, "plan", `${fillMessage(tpl.title, v, now)}\n${fillMessage(tpl.body, v, now)}`, now, tpl.link);
-          }
+          await sendOwnerMessage(env, { tenantId: t.id, title: tpl.title, body: tpl.body, link: tpl.link, days: tpl.days }, now);
+          const name = (await first<{ name: string }>(env.DB, "SELECT name FROM tenants WHERE id = ?", t.id))?.name ?? String(t.id);
+          await notify(env, OWNER_TENANT, "plan", `📭 «${name}» خلّص رسائل دورته (${n(c.used)} من ${n(c.limit)}) — وصلته رسالة «${OUT_OF_MESSAGES_TEMPLATE}» تلقائيًا.`, undefined, { link: "/owner?tab=customers" });
         } else {
-          await notify(env, t.id, "plan", `📨 استخدمت ${Math.round(pct * 100)}% من ${c.what} (${n(c.used)} من ${n(c.limit)})\nتقدر تشحن رسائل إضافية أو ترقّي باقتك من «اشتراكي» قبل لا تخلص.`);
+          await notify(env, t.id, "plan", `📨 استخدمت ${step}% من ${c.what} (${n(c.used)} من ${n(c.limit)})\nباقي ${n(Math.max(0, c.limit - c.used))} رسالة — تقدر تشحن رسائل إضافية أو ترقّي باقتك من «اشتراكي».`);
         }
         sent++;
         continue;
       }
+      const level = pct >= 1 ? 100 : pct >= 0.8 ? 80 : 0;
+      if (!level) continue;
       const key = `plan_alert_${c.key}_${cy.key}`;
       if ((await getSetting<number>(env.DB, t.id, key, 0)) >= level) continue;
       await setSetting(env.DB, t.id, key, level);

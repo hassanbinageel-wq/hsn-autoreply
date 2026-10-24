@@ -8,6 +8,7 @@ import { Icon } from "./components/Icon";
 import { NotificationBell } from "./components/NotificationBell";
 import { HelpWidget, IncidentBanner, useSupportCenter } from "./components/HelpWidget";
 import { PromoLayer } from "./components/Promos";
+import { extraNote, messagesLeft } from "./lib/messagesBar";
 import { AccountAvatar } from "./components/UserAvatar";
 import { LoginPage } from "./pages/Login";
 import { canOpenPage } from "../shared/staff";
@@ -414,12 +415,13 @@ export function App() {
         )}
         {shell.cycle && (() => {
           const c = shell.cycle;
-          const pct = c.limit === null ? 0 : c.limit === 0 ? 100 : Math.min(100, (c.used / c.limit) * 100);
+          const left = messagesLeft(c.used, c.limit);
+          const note = extraNote(c.extra);
           return (
             <Link to="/subscription" className="mt-3 block rounded-2xl border border-[var(--border)] p-3">
               <b className="block text-xs">الرسائل</b>
-              <span className="muted text-[11px]">{c.used.toLocaleString("en-US")} من {c.limit === null ? "غير محدود" : c.limit.toLocaleString("en-US")} رسالة{c.extra ? ` (منها ${c.extra.toLocaleString("en-US")} إضافية)` : ""}</span>
-              <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]"><span className={`block h-full rounded-full ${pct >= 90 ? "bg-red-500" : "grad"}`} style={{ width: `${c.limit === null ? 3 : Math.max(2, pct)}%` }} /></span>
+              <span className="muted text-[11px]">{c.used.toLocaleString("en-US")} من {c.limit === null ? "غير محدود" : c.limit.toLocaleString("en-US")} رسالة{note ? ` (${note})` : ""}</span>
+              <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]"><span className={`block h-full rounded-full ${left.tone}`} style={{ width: `${Math.max(left.pct > 0 ? 2 : 0, left.pct)}%` }} /></span>
             </Link>
           );
         })()}

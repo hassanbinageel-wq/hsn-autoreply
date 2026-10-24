@@ -34,7 +34,7 @@ const RULES: Rule[] = [
   { re: /^\/owner\/(tenants|health|broadcast|messages|message-templates)(\/.*)?$/, perms: ["owner_customers"] },
   { re: /^\/owner\/support(\/.*)?$/, perms: ["owner_support"] },
   { re: /^\/owner\/(plans|codes|coupons|referral|feature-order|featured-plan|topups|offers|offer-templates)(\/.*)?$/, perms: ["owner_plans"] },
-  { re: /^\/owner\/(payment-(providers|accounts|methods)|card-payments)(\/.*)?$/, perms: ["owner_payments"] },
+  { re: /^\/owner\/(payment-(providers|accounts|methods)|card-payments|payments-report)(\/.*)?$/, perms: ["owner_payments"] },
   { re: /^\/owner\/(branding|login-banner|settings)$/, perms: ["owner_branding"] },
 ];
 

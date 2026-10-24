@@ -1,6 +1,7 @@
 import { MESSAGE_LINKS } from "../../shared/plans";
 import { OwnerSupportTab } from "./Support";
 import { OffersTab, TopupsTab } from "./OwnerPromos";
+import { PaymentsReportCard } from "./OwnerReport";
 import { OUT_OF_MESSAGES_TEMPLATE, type MessageTemplate } from "../../shared/messageTemplates";
 import { PlaceholderChips, TemplateBar } from "../components/MessageTemplates";
 import { DiagnoseModal } from "../components/Diagnose";
@@ -15,6 +16,7 @@ import { BANNER_SIZES, DEFAULT_TEXTS, DesktopBanner, MobileBanner, PointIcon, to
 import { remixExists, remixName } from "../components/RemixIcon";
 import { Icon } from "../components/Icon";
 import { logoDataUrl } from "../lib/logoImage";
+import { extraNote, messagesLeft } from "../lib/messagesBar";
 import { Alert, Card, Empty, Field, Modal, Spinner, Tip, Toggle, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, LIMIT_ROW_LABELS, PRICE_PERIODS, formatPrice, orderFeatures } from "../../shared/plans";
 
@@ -328,15 +330,19 @@ function CreditsModal({ t, onClose, onDone }: { t: any; onClose: () => void; onD
 
 /** This month's messages against the plan's limit (null = unlimited). */
 function MessagesMeter({ used, limit, extra = 0 }: { used: number; limit: number | null; extra?: number }) {
-  const pct = limit === null ? 0 : limit === 0 ? 100 : Math.min(100, Math.round((used / limit) * 100));
+  const left = messagesLeft(used, limit);
+  const note = extraNote(extra);
   return (
     <div className="mt-2.5">
-      <div className="flex justify-between text-[11px]">
+      <div className="flex items-baseline justify-between gap-2 text-[11px]">
         <span className="font-semibold">الرسائل</span>
-        <span className="muted" dir="ltr">{used.toLocaleString("en-US")} / {limit === null ? "∞" : limit.toLocaleString("en-US")}{extra ? ` (+${extra.toLocaleString("en-US")})` : ""}</span>
+        <span className="muted text-left" dir="rtl">
+          <span dir="ltr">{used.toLocaleString("en-US")} / {limit === null ? "∞" : limit.toLocaleString("en-US")}</span>
+          {note && <span className={`block text-[10px] ${extra > 0 ? "text-orange-600 dark:text-orange-400" : "text-red-600 dark:text-red-400"}`}>({note})</span>}
+        </span>
       </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-label="رسائل الشهر" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-        <div className={`h-full rounded-full ${pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-violet-500"}`} style={{ width: `${limit === null ? 3 : Math.max(2, pct)}%` }} />
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--border)]" role="progressbar" aria-label="الرسائل المتبقية" aria-valuenow={Math.round(left.pct)} aria-valuemin={0} aria-valuemax={100}>
+        <div className={`h-full rounded-full ${left.tone}`} style={{ width: `${Math.max(left.pct > 0 ? 2 : 0, left.pct)}%` }} />
       </div>
     </div>
   );
@@ -685,7 +691,7 @@ export function OwnerPage() {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "topups" ? <TopupsTab /> : tab === "offers" ? <OffersTab /> : tab === "payments" ? <><UpgradesCard /><CardPaymentsCard /></> : <BrandingTab />}
+      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "topups" ? <TopupsTab /> : tab === "offers" ? <OffersTab /> : tab === "payments" ? <><PaymentsReportCard /><UpgradesCard /><CardPaymentsCard /></> : <BrandingTab />}
     </div>
   );
 }

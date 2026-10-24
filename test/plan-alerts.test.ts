@@ -22,20 +22,20 @@ beforeEach(async () => {
 });
 
 describe("customer notifications: own plan usage, owner notices", () => {
-  it("tells a customer at 80% and when the monthly messages are used up — once each, only on their bell", async () => {
+  it("tells a customer at 85% and when the messages are used up — once each, only on their bell", async () => {
     const a = await customer("متجر أ"); // basic: 1,000 messages
     const b = await customer("متجر ب");
-    await setUsage(a, 700);
+    await setUsage(a, 840);
     expect(await runPlanAlerts(TEST_ENV, AT)).toBe(0);
-    await setUsage(a, 820);
+    await setUsage(a, 860);
     expect(await runPlanAlerts(TEST_ENV, AT)).toBe(1);
     expect(await runPlanAlerts(TEST_ENV, AT)).toBe(0); // not twice
     await setUsage(a, 1000);
     expect(await runPlanAlerts(TEST_ENV, AT)).toBe(1);
     const n = await notes(a);
-    // 80%: a usage note; used up: the owner's ready «خلصت الرسائل» message, sent automatically
+    // 85%: a usage note; used up: the owner's ready «خلصت الرسائل» message, sent automatically
     expect(n.map((x: any) => x.kind)).toEqual(["plan", "message"]);
-    expect(n[0].title).toContain("82%");
+    expect(n[0].title).toContain("85%");
     expect(n[1].title).toContain("خلصت رسائل دورتك");
     expect(n[0].link).toBe("/subscription");
     expect(n[1].link).toBe("/subscription");
@@ -47,20 +47,31 @@ describe("customer notifications: own plan usage, owner notices", () => {
     expect(await runPlanAlerts(TEST_ENV, AT + 60_000)).toBe(0);
   });
 
-  it("messages: a reminder every day while 80% or more is used; out of messages: the ready message, then daily reminders", async () => {
-    const a = await customer("متجر أ");
-    await setUsage(a, 850);
-    expect(await runPlanAlerts(TEST_ENV, AT)).toBe(1);
-    expect(await runPlanAlerts(TEST_ENV, AT + 20 * 60_000)).toBe(0); // same day
-    expect(await runPlanAlerts(TEST_ENV, AT + 86_400_000)).toBe(1); // next day again
-    await setUsage(a, 1000);
-    expect(await runPlanAlerts(TEST_ENV, AT + 86_400_000 + 10 * 60_000)).toBe(1); // ran out later that day: at once
-    expect(await runPlanAlerts(TEST_ENV, AT + 2 * 86_400_000)).toBe(1); // still out next day: a reminder
+  it("messages: one note each at 85%, 90%, 95%, then the ready message at 100% — each once per cycle", async () => {
+    const a = await customer("متجر أ"); // 1,000 messages
+    const steps: Array<[number, number]> = [[849, 0], [850, 1], [880, 0], [900, 1], [949, 0], [950, 1], [990, 0], [1000, 1], [1000, 0]];
+    for (const [used, expected] of steps) {
+      await setUsage(a, used);
+      expect(await runPlanAlerts(TEST_ENV, AT), `at ${used}`).toBe(expected);
+    }
+    // the next day changes nothing (no daily repeats)
+    expect(await runPlanAlerts(TEST_ENV, AT + 86_400_000)).toBe(0);
     const n = await notes(a);
-    expect(n.map((x: any) => x.kind)).toEqual(["plan", "plan", "message", "plan"]);
-    expect(n[3].title).toContain("خلصت رسائل دورتك");
-    expect((await DB.prepare("SELECT COUNT(*) AS n FROM owner_messages WHERE tenant_id = ?").bind(a).first<any>()).n).toBe(1);
-    expect((await notes(1)).length).toBe(1); // the owner hears once
+    expect(n.map((x: any) => x.kind)).toEqual(["plan", "plan", "plan", "message"]);
+    expect(n.slice(0, 3).map((x: any) => x.title.match(/\d+%/)?.[0])).toEqual(["85%", "90%", "95%"]);
+    expect((await notes(1)).length).toBe(1); // the owner hears once, when it ran out
+  });
+
+  it("jumping several steps sends only the highest; taking messages off can bring the notes back", async () => {
+    const a = await customer("متجر أ");
+    await setUsage(a, 960);
+    expect(await runPlanAlerts(TEST_ENV, AT)).toBe(1);
+    expect((await notes(a)).map((x: any) => x.title.match(/\d+%/)?.[0])).toEqual(["95%"]);
+    // the owner takes 200 messages off: 960 of 800 = used up → the ready message
+    const cy = await usageCycle(DB, a, AT);
+    await DB.prepare("INSERT INTO message_credits (tenant_id, cycle_key, messages, source, created_at) VALUES (?, ?, -200, 'owner', ?)").bind(a, cy.key, AT).run();
+    expect(await runPlanAlerts(TEST_ENV, AT)).toBe(1);
+    expect((await notes(a)).at(-1).kind).toBe("message");
   });
 
   it("an owner notice reaches every active customer, not the owner or suspended customers", async () => {

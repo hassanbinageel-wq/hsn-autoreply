@@ -1601,10 +1601,10 @@ export function createApp() {
       `SELECT t.id, t.name, t.is_owner, t.status, t.notes, t.created_at, t.plan_id, t.plan_expires_at, t.plan_started_at,
               (SELECT p.name FROM plans p WHERE p.id = t.plan_id) AS plan_name,
               (SELECT u.messages FROM usage_counters u WHERE u.tenant_id = t.id
-                  AND u.month = 'c' || COALESCE(t.plan_started_at, t.created_at) || '-' || MAX(0, (? - COALESCE(t.plan_started_at, t.created_at)) / ${CYCLE_MS})) AS messages_month,
+                  AND u.month = 'c' || CAST(COALESCE(t.plan_started_at, t.created_at) AS INTEGER) || '-' || CAST(MAX(0, (CAST(? AS INTEGER) - CAST(COALESCE(t.plan_started_at, t.created_at) AS INTEGER)) / ${CYCLE_MS}) AS INTEGER)) AS messages_month,
               (SELECT json_extract(p.limits, '$.monthly_messages') FROM plans p WHERE p.id = t.plan_id) AS messages_limit,
               (SELECT SUM(m.messages) FROM message_credits m WHERE m.tenant_id = t.id
-                  AND m.cycle_key = 'c' || COALESCE(t.plan_started_at, t.created_at) || '-' || MAX(0, (? - COALESCE(t.plan_started_at, t.created_at)) / ${CYCLE_MS})) AS messages_extra,
+                  AND m.cycle_key = 'c' || CAST(COALESCE(t.plan_started_at, t.created_at) AS INTEGER) || '-' || CAST(MAX(0, (CAST(? AS INTEGER) - CAST(COALESCE(t.plan_started_at, t.created_at) AS INTEGER)) / ${CYCLE_MS}) AS INTEGER)) AS messages_extra,
               (SELECT u.username FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS username,
               (SELECT u.email FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email,
               (SELECT u.email_verified_at FROM admin_users u WHERE u.tenant_id = t.id ORDER BY u.id LIMIT 1) AS email_verified_at,
@@ -1916,6 +1916,57 @@ export function createApp() {
     await run(c.env.DB, "DELETE FROM offer_events WHERE offer_id = ?", idParam(c));
     await audit(c.env.DB, T(c), c.get("session").username, "offer.deleted", c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  // Payments report (the owner's PDF): paid card payments in a period, split by kind, plan, pack, offer, month, customer.
+  owner.get("/payments-report", async (c) => {
+    const days = Math.max(0, Math.min(3650, Number(c.req.query("days")) || 0));
+    const to = Date.now();
+    const from = days ? to - days * 86_400_000 : 0;
+    const rows = await all<{
+      id: number; tenant_id: number; tenant_name: string | null; plan_id: string; plan_name: string | null; amount: number; paid_at: number;
+      upgrade_id: number | null; topup_messages: number | null; offer_id: number | null; offer_title: string | null; offer_pct: number | null;
+    }>(
+      c.env.DB,
+      `SELECT k.id, k.tenant_id, t.name AS tenant_name, k.plan_id, p.name AS plan_name, k.amount, k.paid_at, k.upgrade_id, k.topup_messages,
+              k.offer_id, o.title AS offer_title, o.discount_pct AS offer_pct
+         FROM card_payments k LEFT JOIN tenants t ON t.id = k.tenant_id LEFT JOIN plans p ON p.id = k.plan_id LEFT JOIN offers o ON o.id = k.offer_id
+        WHERE k.status = 'paid' AND k.paid_at >= ? AND k.paid_at <= ? ORDER BY k.paid_at DESC`,
+      from, to,
+    );
+    const other = await all<{ status: string; n: number }>(c.env.DB, "SELECT status, COUNT(*) AS n FROM card_payments WHERE status != 'paid' AND created_at >= ? GROUP BY status", from);
+    const kindOf = (r: (typeof rows)[number]) => (r.topup_messages ? "topup" : r.upgrade_id ? "upgrade" : "plan");
+    const sar = (h: number) => Math.round(h) / 100;
+    const group = <K extends string | number>(key: (r: (typeof rows)[number]) => K | null, label: (r: (typeof rows)[number]) => string) => {
+      const m = new Map<K, { key: K; label: string; count: number; revenue: number }>();
+      for (const r of rows) {
+        const k = key(r);
+        if (k === null) continue;
+        const g = m.get(k) ?? { key: k, label: label(r), count: 0, revenue: 0 };
+        g.count++;
+        g.revenue += r.amount;
+        m.set(k, g);
+      }
+      return [...m.values()].map((g) => ({ ...g, revenue: sar(g.revenue) })).sort((a, b) => b.revenue - a.revenue || b.count - a.count);
+    };
+    const month = (ms: number) => new Date(ms + 3 * 3_600_000).toISOString().slice(0, 7);
+    return c.json({
+      from, to, days, test_mode: isTestKey(c.env),
+      total: { count: rows.length, revenue: sar(rows.reduce((x, r) => x + r.amount, 0)), customers: new Set(rows.map((r) => r.tenant_id)).size },
+      by_kind: group(kindOf, (r) => ({ plan: "اشتراك باقة", upgrade: "ترقية", topup: "رسائل إضافية" })[kindOf(r)]),
+      by_plan: group((r) => (kindOf(r) === "topup" ? null : r.plan_id), (r) => r.plan_name ?? r.plan_id),
+      by_pack: group((r) => r.topup_messages ?? null, (r) => `${(r.topup_messages ?? 0).toLocaleString("en-US")} رسالة`),
+      by_offer: group((r) => r.offer_id ?? null, (r) => `${r.offer_title ?? `عرض #${r.offer_id}`}${r.offer_pct ? ` (−${r.offer_pct}%)` : ""}`),
+      without_offer: rows.filter((r) => !r.offer_id).length,
+      by_month: group((r) => month(r.paid_at), (r) => month(r.paid_at)).sort((a, b) => String(a.key).localeCompare(String(b.key))),
+      by_customer: group((r) => r.tenant_id, (r) => r.tenant_name ?? `#${r.tenant_id}`).slice(0, 10),
+      not_paid: Object.fromEntries(other.map((o) => [o.status, o.n])),
+      payments: rows.map((r) => ({
+        id: r.id, at: r.paid_at, customer: r.tenant_name ?? `#${r.tenant_id}`, kind: kindOf(r),
+        what: r.topup_messages ? `${r.topup_messages.toLocaleString("en-US")} رسالة إضافية` : r.upgrade_id ? `ترقية إلى ${r.plan_name ?? r.plan_id}` : `باقة ${r.plan_name ?? r.plan_id}`,
+        amount: sar(r.amount), offer: r.offer_id ? r.offer_title ?? `#${r.offer_id}` : null,
+      })),
+    });
   });
 
   // Upgrades (automatic), newest first: who moved from which plan to which, the usage then and the amount paid.

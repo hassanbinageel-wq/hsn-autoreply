@@ -90,7 +90,6 @@ export async function applyTopup(env: Env, o: { tenantId: number; messages: numb
     o.tenantId, cy.key, o.messages, o.packId ?? null, o.paymentId ?? null, o.amount ?? 0, source, o.actor ?? (o.paymentId ? `payment:${o.paymentId}` : "owner"), now,
   );
   await setSetting(env.DB, o.tenantId, `plan_alert_messages_${cy.key}`, 0);
-  await setSetting(env.DB, o.tenantId, `plan_alert_messages_day_${cy.key}`, "");
   const n = o.messages.toLocaleString("en-US");
   await audit(env.DB, o.tenantId, o.actor ?? "moyasar", "subscription.topup", String(o.messages), { payment: o.paymentId ?? null, amount: o.amount ?? 0, cycle: cy.key });
   if (o.paymentId) {

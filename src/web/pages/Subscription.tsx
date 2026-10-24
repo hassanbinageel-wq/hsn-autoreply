@@ -6,22 +6,34 @@ import { api } from "../api";
 import { Icon } from "../components/Icon";
 import { PlansShowcase } from "../components/PlansShowcase";
 import { TopupPicker } from "../components/Promos";
+import { extraNote, messagesLeft } from "../lib/messagesBar";
 import { Alert, Card, InfoDot, Spinner, fmtDate, fmtTime, toast, useAsync } from "../components/ui";
 
 const n = (v: number | null) => (v === null ? "غير محدود" : v.toLocaleString("en-US"));
 
-function Meter({ label, used, max, extra = 0 }: { label: React.ReactNode; used: number; max: number | null; extra?: number }) {
+function Meter({ label, used, max }: { label: React.ReactNode; used: number; max: number | null }) {
   const pct = max === null ? 0 : max === 0 ? 100 : Math.min(100, Math.round((used / max) * 100));
-  // Top-up messages: the last part of the bar is orange (they are used after the plan's own).
-  const extraPct = max && extra ? Math.min(100, (extra / max) * 100) : 0;
   return (
     <div>
       <div className="flex justify-between text-sm"><span className="font-semibold">{label}</span><span className="muted">{used.toLocaleString("en-US")} / {n(max)}</span></div>
-      <div className="relative mt-1.5 h-2 overflow-hidden rounded-full bg-[var(--surface-2)]">
-        {extraPct > 0 && <div className="absolute inset-y-0 left-0 bg-orange-400/30" style={{ width: `${extraPct}%` }} />}
-        <div className={`relative h-full rounded-full ${pct >= 90 ? "bg-red-500" : "grad"}`} style={{ width: `${max === null ? 4 : Math.max(2, pct)}%` }} />
+      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[var(--surface-2)]">
+        <div className={`h-full rounded-full ${pct >= 90 ? "bg-red-500" : "grad"}`} style={{ width: `${max === null ? 4 : Math.max(2, pct)}%` }} />
       </div>
-      {extra > 0 && max !== null && <p className="muted mt-1 text-xs">الباقة {(max - extra).toLocaleString("en-US")} + <span className="font-semibold text-orange-600 dark:text-orange-400">إضافي {extra.toLocaleString("en-US")}</span></p>}
+    </div>
+  );
+}
+
+/** The cycle's messages: the bar shows what is left (full when unused), with the owner's additions or deductions. */
+function MessagesMeter({ label, used, max, extra = 0 }: { label: React.ReactNode; used: number; max: number | null; extra?: number }) {
+  const left = messagesLeft(used, max);
+  const note = extraNote(extra);
+  return (
+    <div>
+      <div className="flex justify-between text-sm"><span className="font-semibold">{label}</span><span className="muted">{used.toLocaleString("en-US")} / {n(max)}</span></div>
+      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[var(--surface-2)]">
+        <div className={`h-full rounded-full ${left.tone}`} style={{ width: `${Math.max(left.pct > 0 ? 2 : 0, left.pct)}%` }} />
+      </div>
+      <p className="muted mt-1 text-xs">باقي {max === null ? "غير محدود" : Math.max(0, max - used).toLocaleString("en-US")}{note ? <> · <span className={extra > 0 ? "font-semibold text-orange-600 dark:text-orange-400" : "font-semibold text-red-600 dark:text-red-400"}>{note}</span></> : null}</p>
     </div>
   );
 }
@@ -135,7 +147,7 @@ export function SubscriptionPage() {
           <p className="muted mt-1 text-sm">{data.expires_at ? `صالح حتى ${fmtTime(data.expires_at)}${daysLeft !== null && daysLeft > 0 ? ` (${daysLeft} يوم)` : ""}` : "لم يُفعَّل بعد"}</p>
           {data.active && (
             <div className="mt-4 space-y-3">
-              <Meter label={<span className="inline-flex items-center gap-1">رسائل الدورة الحالية <InfoDot text="كل رسالة يرسلها النظام تلقائيًا وتقبلها إنستقرام تنحسب وحدة: الرد العلني على التعليق، والرد الخاص على التعليق، والرسائل في الخاص (مثل رسالة الرابط والمتابعة). ما تنحسب: تجارب المحاكاة، والردود اللي ترسلها بيدك من صندوق الرسائل. العدّاد يتجدد كل 30 يوم من تاريخ تفعيل اشتراكك وما دام الاشتراك فعّال — وإذا انتهى الاشتراك يتجدد مع التجديد." /></span>} used={data.usage.messages} max={data.limits.monthly_messages} extra={data.extra_messages ?? 0} />
+              <MessagesMeter label={<span className="inline-flex items-center gap-1">الرسائل <InfoDot text="كل رسالة يرسلها النظام تلقائيًا وتقبلها إنستقرام تنحسب وحدة: الرد العلني على التعليق، والرد الخاص على التعليق، والرسائل في الخاص (مثل رسالة الرابط والمتابعة). ما تنحسب: تجارب المحاكاة، والردود اللي ترسلها بيدك من صندوق الرسائل. العدّاد يتجدد كل 30 يوم من تاريخ تفعيل اشتراكك وما دام الاشتراك فعّال — وإذا انتهى الاشتراك يتجدد مع التجديد." /></span>} used={data.usage.messages} max={data.limits.monthly_messages} extra={data.extra_messages ?? 0} />
               <p className="muted -mt-1 text-xs">{data.usage.resets_at ? `يتجدد عدّاد الرسائل والسحوبات في ${fmtDate(data.usage.resets_at)}` : "يتجدد عدّاد الرسائل والسحوبات مع تجديد اشتراكك"}</p>
               <Meter label="الحملات النشطة" used={data.usage.active_campaigns} max={data.limits.active_campaigns} />
               {data.limits.draws_per_month !== 0 && <Meter label="سحوبات الدورة الحالية" used={data.usage.draws_this_month} max={data.limits.draws_per_month} />}
