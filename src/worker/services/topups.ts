@@ -1,3 +1,4 @@
+import { messagesGonePct } from "../../shared/usage";
 import type { Env } from "../env";
 import { all, audit, first, getSetting, OWNER_TENANT, run, setSetting } from "../lib/db";
 import { topupSettingsOf, type TopupSettings } from "../../shared/promos";
@@ -41,19 +42,22 @@ export async function topupState(env: Env, tenantId: number, now = Date.now()) {
   const packs = ent.active && !ent.owner && limit !== null ? await packsFor(env.DB, ent.plan?.id ?? null) : [];
   const capped = settings.max_per_cycle > 0 && (bought?.n ?? 0) >= settings.max_per_cycle;
   const out = limit !== null && used >= limit;
+  // Share of the cycle's messages gone (taken-off ones count), as the bars show it.
+  const gone = messagesGonePct(used, limit, limit === null ? null : limit - extra);
   return {
     used,
     limit,
     plan_limit: limit === null ? null : limit - extra,
     extra,
     out,
+    gone,
     resets_at: cy.resets_at,
     cycle_key: cy.key,
     purchases: bought?.n ?? 0,
     packs,
     card: cardEnabled(env),
     // The button shows from the owner's threshold; buying is open while the plan is active and the cap not reached.
-    show: packs.length > 0 && limit !== null && limit > 0 && used / limit >= settings.show_at_pct / 100,
+    show: packs.length > 0 && limit !== null && (out || gone >= settings.show_at_pct),
     can_buy: packs.length > 0 && cardEnabled(env) && !capped,
     capped,
     settings,

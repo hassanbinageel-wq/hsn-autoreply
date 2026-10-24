@@ -147,11 +147,13 @@ export function PromoLayer({ route }: { route: string }) {
       popupTimer.current = setTimeout(() => { popupTimer.current = null; if (!stop && read(POPUP_KEY) !== key) setPopup(true); }, wait);
     }).catch(() => undefined);
     load();
+    // Every 10 minutes, when the app comes back to the screen, and when «اشتراكي» shows newer usage.
     const t = setInterval(load, 10 * 60_000);
     const onShow = () => { if (document.visibilityState === "visible") load(); };
     document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("shayyek:usage", load);
     reloadRef.current = load;
-    return () => { stop = true; clearInterval(t); if (popupTimer.current) clearTimeout(popupTimer.current); document.removeEventListener("visibilitychange", onShow); };
+    return () => { stop = true; clearInterval(t); if (popupTimer.current) clearTimeout(popupTimer.current); document.removeEventListener("visibilitychange", onShow); window.removeEventListener("shayyek:usage", load); };
   }, []);
   // A new offer shows on the next page change (at most once a minute), without reopening the app.
   const lastRoute = useRef(0);

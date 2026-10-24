@@ -1267,7 +1267,7 @@ export function createApp() {
     return c.json({
       topup: { out: running && st.out, show: running && st.show, can_buy: st.can_buy, used: st.used, limit: st.limit, resets_at: st.resets_at, cycle_key: st.cycle_key },
       // The window from the owner's share of messages used (default: used up), shown after the owner's delay.
-      popup: running && pop.enabled && st.limit !== null && st.used >= (st.limit * pop.show_at) / 100 && (st.limit > 0 || st.out)
+      popup: running && pop.enabled && st.limit !== null && (st.out || st.gone >= pop.show_at)
         ? { title: pop.title, body: pop.body, cta: pop.cta, cancel: pop.cancel, icon: pop.icon ?? null, buy: st.can_buy, delay_min: pop.delay_min }
         : null,
       offers,

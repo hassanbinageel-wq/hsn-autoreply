@@ -256,12 +256,19 @@ export function App() {
       ]).then(([account, unread, req, cycle]) => alive && setShell({ account, unread, usagePct: req?.pct, usageUsed: req?.used, cycle: cycle?.used == null ? null : cycle }));
     };
     load();
+    // Kept current: on every page change, when the app comes back to the screen, when a page saw newer usage
+    // (event "shayyek:usage"), and every minute (not faster: every open app counts against the free requests).
     const t = setInterval(load, 60_000);
+    const onShow = () => document.visibilityState === "visible" && load();
+    document.addEventListener("visibilitychange", onShow);
+    window.addEventListener("shayyek:usage", load);
     return () => {
       alive = false;
       clearInterval(t);
+      document.removeEventListener("visibilitychange", onShow);
+      window.removeEventListener("shayyek:usage", load);
     };
-  }, [auth, isOwner, route === "/inbox"]);
+  }, [auth, isOwner, route]);
 
   if (auth === "loading") return <div className="p-6"><Spinner /></div>;
   if (auth === "out") return <LoginPage onDone={checkAuth} />;

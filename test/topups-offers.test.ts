@@ -308,6 +308,22 @@ describe("offers", () => {
     expect((await call("/api/owner/payments-report?days=30", OWNER)).body.total.count).toBe(0);
   });
 
+  it("messages the owner takes off count as gone: the window and the alert follow the bar", async () => {
+    const { h, tid } = await register("shop_cut");
+    const base = { max_per_cycle: 0, show_at_pct: 90, alert_steps: [85, 90, 95], popup: { enabled: true, title: "الرجاء شراء الشحن", body: "اشحن", cta: "اشحن رسائل", cancel: "لاحقًا", show_at: 90, delay_min: 0 } };
+    expect((await call("/api/owner/topups/settings", OWNER, "PUT", base)).status).toBe(200);
+    expect((await call("/api/promos", h)).body.popup).toBeNull();
+    // basic = 1,000 messages; 950 taken off, none used → 50 left = 95% gone
+    expect((await call(`/api/owner/tenants/${tid}/credits`, OWNER, "POST", { messages: -950 })).status).toBe(200);
+    const promos = (await call("/api/promos", h)).body;
+    expect(promos.popup).toMatchObject({ title: "الرجاء شراء الشحن" });
+    const at = Math.floor(Date.now() / 600_000) * 600_000 + 3 * 60_000;
+    expect(await runPlanAlerts(TEST_ENV, at)).toBe(1);
+    const note = await DB.prepare("SELECT title, body FROM app_notifications WHERE tenant_id = ? ORDER BY id DESC LIMIT 1").bind(tid).first<any>();
+    expect(note.title).toContain("95%");
+    expect(note.body).toContain("باقي 50 رسالة");
+  });
+
   it("the owner sets the usage-note steps and when the window shows (share used + delay)", async () => {
     const { h, tid } = await register("shop_a");
     const base = { max_per_cycle: 0, show_at_pct: 90, popup: { enabled: true, title: "قربت تخلص", body: "اشحن الحين", cta: "اشحن", cancel: "لاحقًا", show_at: 80, delay_min: 5 } };

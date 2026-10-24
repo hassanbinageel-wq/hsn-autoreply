@@ -1,3 +1,4 @@
+import { messagesGonePct } from "../../shared/usage";
 import type { Env } from "../env";
 import type { NotifyKind } from "../engine/context";
 import { decryptSecret, encryptSecret } from "../lib/crypto";
@@ -287,8 +288,9 @@ export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number>
       { key: "draws", used: ent.limits.draws_per_month ? await drawsThisMonth(env.DB, t.id, now) : 0, limit: ent.limits.draws_per_month || null, what: "سحوبات باقتك لهذي الدورة", full: `ما تقدر تسوي سحب جديد ${when} أو ترقّي باقتك من «اشتراكي».` },
     ];
     for (const c of checks) {
-      if (!c.limit) continue;
-      const pct = c.used / c.limit;
+      if (c.limit === null || (c.key !== "messages" && !c.limit)) continue;
+      // Messages: the share gone counts messages the owner took off (like the bar); a limit of 0 is used up.
+      const pct = c.key === "messages" ? messagesGonePct(c.used, c.limit, c.limit - (ent.extra_messages ?? 0)) / 100 : c.used / c.limit;
       const n = (x: number) => x.toLocaleString("en-US");
       if (c.key === "messages") {
         // Messages: one note each at 85%, 90% and 95% of the cycle's messages (plan + top-ups), once per cycle;
@@ -307,7 +309,7 @@ export async function runPlanAlerts(env: Env, now = Date.now()): Promise<number>
           const name = (await first<{ name: string }>(env.DB, "SELECT name FROM tenants WHERE id = ?", t.id))?.name ?? String(t.id);
           await notify(env, OWNER_TENANT, "plan", `📭 «${name}» خلّص رسائل دورته (${n(c.used)} من ${n(c.limit)}) — وصلته رسالة «${OUT_OF_MESSAGES_TEMPLATE}» تلقائيًا.`, undefined, { link: "/owner?tab=customers" });
         } else {
-          await notify(env, t.id, "plan", `📨 استخدمت ${step}% من ${c.what} (${n(c.used)} من ${n(c.limit)})\nباقي ${n(Math.max(0, c.limit - c.used))} رسالة — تقدر تشحن رسائل إضافية أو ترقّي باقتك من «اشتراكي».`);
+          await notify(env, t.id, "plan", `📨 وصلت ${step}% من ${c.what}\nباقي ${n(Math.max(0, c.limit - c.used))} رسالة — تقدر تشحن رسائل إضافية أو ترقّي باقتك من «اشتراكي».`);
         }
         sent++;
         continue;

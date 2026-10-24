@@ -41,6 +41,10 @@ function MessagesMeter({ label, used, max, extra = 0 }: { label: React.ReactNode
 
 export function SubscriptionPage() {
   const { data, loading, error, reload } = useAsync(() => api<any>("/api/subscription"), []);
+  // The sidebar's messages card follows what this page shows.
+  useEffect(() => {
+    if (data) window.dispatchEvent(new Event("shayyek:usage"));
+  }, [data]);
   const { data: email, reload: reloadEmail } = useAsync(() => api<{ email: string | null; verified: boolean; enabled: boolean }>("/api/account/email").catch(() => null), []);
   const freePlan = data?.plans?.find((p: any) => p.free);
   const hasFree = !!freePlan;
