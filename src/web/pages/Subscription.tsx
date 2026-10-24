@@ -25,7 +25,7 @@ function Meter({ label, used, max }: { label: React.ReactNode; used: number; max
 
 /** The cycle's messages: the bar shows what is left (full when unused), with the owner's additions or deductions. */
 function MessagesMeter({ label, used, max, extra = 0 }: { label: React.ReactNode; used: number; max: number | null; extra?: number }) {
-  const left = messagesLeft(used, max);
+  const left = messagesLeft(used, max, max === null ? null : max - extra);
   const note = extraNote(extra);
   return (
     <div>

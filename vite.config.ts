@@ -49,7 +49,8 @@ export default defineConfig(({ mode }) => {
             // Only the public UI shell is cached — never API responses or auth pages.
             globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
             // Remix Icon (glyph list + font, ~350 KB) is fetched only where an icon is shown, not at install.
-            globIgnores: ["**/remixicon-*"],
+            // The PDF tools load only for the owner's report download: not worth precaching for every visitor.
+            globIgnores: ["**/remixicon-*", "**/jspdf*", "**/html2canvas*", "**/purify*", "**/index.es-*"],
             navigateFallback: "/index.html",
             // Server routes: tracked campaign links (/l/), media (/m/), card links (/c/) — never the app shell.
             navigateFallbackDenylist: [/^\/api\//, /^\/l\//, /^\/m\//, /^\/c\//, /^\/webhooks\//, /^\/oauth\//, /^\/meta\//, /^\/privacy/, /^\/terms/, /^\/refund/, /^\/data-deletion/, /^\/healthz/, /^\/app\.apk/, /^\/pricing/],

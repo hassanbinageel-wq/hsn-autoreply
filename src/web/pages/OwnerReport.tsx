@@ -27,7 +27,7 @@ function table(title: string, rows: Group[], total: number, empty = "لا يوج
     .join("")}</tbody></table></section>`;
 }
 
-function reportHtml(r: Report, origin: string): string {
+function reportHtml(r: Report, origin: string, print = true, fonts?: { regular: string; bold: string }): string {
   const period = r.days ? `${date(r.from)} — ${date(r.to)}` : `كل الفترة حتى ${date(r.to)}`;
   const top = r.by_plan[0];
   const avg = r.total.count ? r.total.revenue / r.total.count : 0;
@@ -41,11 +41,11 @@ function reportHtml(r: Report, origin: string): string {
     notPaid.length ? `عمليات ما اكتملت: ${notPaid.map(([k, v]) => `${STATUS[k] ?? k} ${v}`).join("، ")}.` : null,
   ].filter(Boolean);
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تقرير المدفوعات — شيّك</title><style>
-@font-face{font-family:T;src:url(${origin}/fonts/thmanyahsans-Regular.woff2);font-weight:400}
-@font-face{font-family:T;src:url(${origin}/fonts/thmanyahsans-Bold.woff2);font-weight:700}
+@font-face{font-family:T;src:url(${fonts?.regular ?? `${origin}/fonts/thmanyahsans-Regular.woff2`});font-weight:400}
+@font-face{font-family:T;src:url(${fonts?.bold ?? `${origin}/fonts/thmanyahsans-Bold.woff2`});font-weight:700}
 @page{size:A4;margin:14mm 12mm}
 *{box-sizing:border-box}body{font-family:T,system-ui,sans-serif;color:#1c1a2b;font-size:12px;line-height:1.6;margin:0}
-header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #7c3aed;padding-bottom:8px;margin-bottom:14px}
+header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #7c3aed;padding-bottom:8px;margin-bottom:14px}header .muted{white-space:nowrap}
 h1{font-size:22px;margin:0}h2{font-size:15px;margin:18px 0 6px}.muted{color:#6b6880}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.kpi{background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:10px;text-align:center}
 .kpi b{display:block;font-size:20px}.kpi span{color:#6b6880;font-size:11px}
@@ -69,13 +69,72 @@ ${table("أكثر العملاء دفعًا", r.by_customer, r.total.revenue)}
     .map((p) => `<tr><td>${p.id}</td><td>${esc(date(p.at))}</td><td>${esc(p.customer)}</td><td>${esc(p.what)}</td><td>${n(p.amount)} ر.س</td><td>${p.offer ? `<span class="tag">${esc(p.offer)}</span>` : "—"}</td></tr>`)
     .join("")}</tbody></table>` : `<p class="muted">ما فيه عمليات في هذي الفترة.</p>`}</section>
 <p class="muted" style="margin-top:16px">المبالغ شاملة الضريبة كما دُفعت عبر بوابة الدفع. «العروض» = دفعات طُبّق عليها خصم عرض.</p>
-<script>document.fonts.ready.then(function(){setTimeout(function(){window.print()},300)})</script>
+${print ? `<script>document.fonts.ready.then(function(){setTimeout(function(){window.print()},300)})</script>` : ""}
 </body></html>`;
+}
+
+/**
+ * Draws the report page off screen and saves it as a PDF file (A4 pages, as images so the Arabic text keeps its
+ * shape). The PDF tools load only when the button is pressed.
+ */
+async function downloadPdf(r: Report): Promise<void> {
+  const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import("jspdf"), import("html2canvas")]);
+  // The page is drawn by the browser itself (SVG foreignObject) so Arabic words join and space correctly; fonts
+  // must then be inside the page as data URLs.
+  const asData = async (path: string) => {
+    const blob = await (await fetch(path)).blob();
+    return await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = () => rej(new Error("font")); fr.readAsDataURL(blob); });
+  };
+  const fonts = { regular: await asData("/fonts/thmanyahsans-Regular.woff2"), bold: await asData("/fonts/thmanyahsans-Bold.woff2") };
+  const W = 794; // A4 width in CSS pixels at 96 dpi
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = `position:fixed;left:-${W * 3}px;top:0;width:${W}px;height:1123px;border:0;visibility:hidden`;
+  document.body.appendChild(frame);
+  try {
+    await new Promise<void>((res) => {
+      frame.onload = () => res();
+      frame.srcdoc = reportHtml(r, location.origin, false, fonts).replace("<body>", `<body style="width:${W}px;padding:34px 30px;background:#fff">`);
+    });
+    const doc = frame.contentDocument!;
+    await doc.fonts.ready;
+    const canvas = await html2canvas(doc.body, { scale: 2, backgroundColor: "#ffffff", width: W, windowWidth: W, logging: false, foreignObjectRendering: true });
+    const pdf = new jsPDF({ unit: "pt", format: "a4", compress: true });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const slice = Math.floor(canvas.width * (pageH / pageW)); // canvas pixels per page
+    for (let y = 0, page = 0; y < canvas.height; y += slice, page++) {
+      const part = document.createElement("canvas");
+      part.width = canvas.width;
+      part.height = Math.min(slice, canvas.height - y);
+      const ctx = part.getContext("2d")!;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, part.width, part.height);
+      ctx.drawImage(canvas, 0, y, canvas.width, part.height, 0, 0, canvas.width, part.height);
+      if (page) pdf.addPage();
+      pdf.addImage(part.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, pageW, (part.height * pageW) / canvas.width);
+    }
+    const day = new Date().toISOString().slice(0, 10);
+    pdf.save(`shayyek-payments-${r.days ? `${r.days}d` : "all"}-${day}.pdf`);
+  } finally {
+    frame.remove();
+  }
 }
 
 export function PaymentsReportCard() {
   const [days, setDays] = useState(30);
   const [busy, setBusy] = useState(false);
+  const download = async () => {
+    setBusy(true);
+    try {
+      await downloadPdf(await api<Report>(`/api/owner/payments-report?days=${days}`));
+      toast("تنزّل التقرير");
+    } catch (e: any) {
+      toast(e.message || "تعذّر تجهيز الملف", "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
   const make = async () => {
     // Open the window right away (inside the click) so the browser does not block it.
     const w = window.open("", "_blank");
@@ -96,7 +155,7 @@ export function PaymentsReportCard() {
   };
   return (
     <Card title="📄 تقرير المدفوعات (PDF)">
-      <p className="muted mb-3 text-sm">تقرير مرتب فيه الإيراد، والباقات الأكثر مبيعًا، والترقيات، وحزم الرسائل، والعروض اللي دفع منها العملاء، وأكثر العملاء دفعًا، وكل العمليات. يفتح في نافذة جديدة واختر «حفظ كـ PDF».</p>
+      <p className="muted mb-3 text-sm">تقرير مرتب فيه الإيراد، والباقات الأكثر مبيعًا، والترقيات، وحزم الرسائل، والعروض اللي دفع منها العملاء، وأكثر العملاء دفعًا، وكل العمليات. «تنزيل PDF» يحفظ الملف على جهازك مباشرة، و«عرض وطباعة» يفتحه في نافذة.</p>
       <div className="flex flex-wrap items-center gap-2">
         <select className="input !w-auto" value={days} onChange={(e) => setDays(+e.target.value)} aria-label="الفترة">
           <option value={7}>آخر 7 أيام</option>
@@ -105,7 +164,8 @@ export function PaymentsReportCard() {
           <option value={365}>آخر سنة</option>
           <option value={0}>كل الفترة</option>
         </select>
-        <button className="btn btn-primary" disabled={busy} onClick={make}><Icon name="download" size={17} />{busy ? "…" : "إصدار التقرير"}</button>
+        <button className="btn btn-primary" disabled={busy} onClick={download}><Icon name="download" size={17} />{busy ? "…" : "تنزيل PDF"}</button>
+        <button className="btn btn-ghost" disabled={busy} onClick={make}>عرض وطباعة</button>
       </div>
     </Card>
   );

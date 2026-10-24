@@ -259,9 +259,8 @@ function SubscriptionBar({ t, onEdit, onMessages }: { t: any; onEdit: () => void
   const exp: number | null = t.plan_expires_at ?? null;
   const active = !!exp && exp > now;
   const daysLeft = active ? Math.ceil((exp! - now) / DAY) : 0;
-  const start: number = t.plan_started_at && exp && t.plan_started_at < exp ? t.plan_started_at : (exp ?? now) - 30 * DAY;
-  const total = Math.max(1, (exp ?? now) - start);
-  const pct = active ? Math.max(3, Math.min(100, Math.round(((exp! - now) / total) * 100))) : 0;
+  // Days left out of a month (30 days): 15 days left = half. More than a month ahead stays full.
+  const pct = active ? Math.max(3, Math.min(100, Math.round(((exp! - now) / (30 * DAY)) * 100))) : 0;
   const tone = !active ? "bg-red-500" : daysLeft <= 3 ? "bg-red-500" : daysLeft <= 7 ? "bg-amber-500" : "bg-emerald-500";
   return (
     <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-3 transition hover:border-violet-400">
@@ -330,7 +329,7 @@ function CreditsModal({ t, onClose, onDone }: { t: any; onClose: () => void; onD
 
 /** This month's messages against the plan's limit (null = unlimited). */
 function MessagesMeter({ used, limit, extra = 0 }: { used: number; limit: number | null; extra?: number }) {
-  const left = messagesLeft(used, limit);
+  const left = messagesLeft(used, limit, limit === null ? null : limit - extra);
   const note = extraNote(extra);
   return (
     <div className="mt-2.5">

@@ -415,7 +415,7 @@ export function App() {
         )}
         {shell.cycle && (() => {
           const c = shell.cycle;
-          const left = messagesLeft(c.used, c.limit);
+          const left = messagesLeft(c.used, c.limit, c.limit === null ? null : c.limit - c.extra);
           const note = extraNote(c.extra);
           return (
             <Link to="/subscription" className="mt-3 block rounded-2xl border border-[var(--border)] p-3">
