@@ -1,7 +1,7 @@
 import type { Env } from "../env";
 import { all, audit, first, run } from "../lib/db";
 import { sha256Hex } from "../lib/crypto";
-import { isDisposableEmail } from "../../shared/disposable";
+import { isDisposable } from "../lib/disposable";
 import { emailEnabled } from "./email";
 import { addAppNotification } from "./notify";
 
@@ -41,7 +41,7 @@ export async function freePlanRefusal(env: Env, tenantId: number, userId: number
   if (emailEnabled(env)) {
     const u = await first<{ email: string | null; email_verified_at: number | null }>(env.DB, "SELECT email, email_verified_at FROM admin_users WHERE id = ?", userId);
     if (!u?.email || !u.email_verified_at) return { code: "email_required", message: "أكّد إيميلك أولًا (من هنا أو من «الإعدادات») وبعدها فعّل الباقة المجانية" };
-    if (isDisposableEmail(u.email)) return { code: "email_disposable", message: "الباقة المجانية تحتاج إيميل دائم — الإيميلات المؤقتة ما تنقبل. غيّر إيميلك من «الإعدادات»" };
+    if (await isDisposable(env.DB, u.email)) return { code: "email_disposable", message: "الباقة المجانية تحتاج إيميل دائم — الإيميلات المؤقتة ما تنقبل. غيّر إيميلك من «الإعدادات»" };
   }
   const acc = await connectedAccount(env.DB, tenantId);
   if (acc && (await claimedElsewhere(env.DB, acc.ig_user_id, tenantId)) !== null) {

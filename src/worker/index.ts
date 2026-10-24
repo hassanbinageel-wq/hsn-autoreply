@@ -14,6 +14,7 @@ import { runRestock } from "./services/restock";
 import { runSystemWatch } from "./services/watch";
 import { runWelcomeMessages } from "./services/welcome";
 import { cleanupSupportFiles } from "./services/support";
+import { refreshDisposableDomains } from "./lib/disposable";
 
 const app = createApp();
 
@@ -105,6 +106,7 @@ export default {
           await cleanupScheduledFiles(env).catch((e) => console.error("schedule files", sanitize(String(e))));
           await cleanupSupportFiles(env).catch((e) => console.error("support files", sanitize(String(e))));
           await remindExpiringSubscriptions(env).catch((e) => console.error("expiry reminders", sanitize(String(e))));
+          await refreshDisposableDomains(env.DB).catch((e) => console.error("disposable domains", sanitize(String(e))));
         })(),
       );
       return;
