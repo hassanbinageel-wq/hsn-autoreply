@@ -9,7 +9,7 @@ type Choice = { label: string; value: string; danger?: boolean };
 type Request =
   | { kind: "confirm"; title: string; message?: string; confirmLabel: string; cancelLabel?: string; danger?: boolean; resolve: (v: boolean) => void }
   | { kind: "choice"; title: string; message?: string; choices: Choice[]; cancelLabel?: string; resolve: (v: string | null) => void }
-  | { kind: "text"; title: string; message?: string; label: string; expect?: string; initial?: string; confirmLabel: string; danger?: boolean; resolve: (v: string | null) => void }
+  | { kind: "text"; title: string; message?: string; label: string; expect?: string; initial?: string; confirmLabel: string; danger?: boolean; secret?: boolean; resolve: (v: string | null) => void }
   | { kind: "copy"; title: string; message?: string; text: string; resolve: () => void };
 
 let push: ((r: Request) => void) | null = null;
@@ -25,7 +25,7 @@ export function askChoice(o: { title: string; message?: string; choices: Choice[
   return new Promise((resolve) => push!({ kind: "choice", ...o, resolve }));
 }
 /** Typed confirmation: the action button stays disabled until the person types `expect` exactly. */
-export function askText(o: { title: string; message?: string; label: string; expect?: string; initial?: string; confirmLabel: string; danger?: boolean }): Promise<string | null> {
+export function askText(o: { title: string; message?: string; label: string; expect?: string; initial?: string; confirmLabel: string; danger?: boolean; /** A password: hidden while typed and kept exactly as typed. */ secret?: boolean }): Promise<string | null> {
   if (!push) return fallback(window.prompt([o.title, o.message].filter(Boolean).join("\n\n")));
   return new Promise((resolve) => push!({ kind: "text", ...o, resolve }));
 }
@@ -83,11 +83,11 @@ export function ConfirmHost() {
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
-              if (!r.expect || text.trim() === r.expect) close(text.trim());
+              if (!r.expect || text.trim() === r.expect) close(r.secret ? text : text.trim());
             }}
           >
             <label className="block text-sm font-semibold" htmlFor="confirm-text">{r.label}</label>
-            <input id="confirm-text" className="input" autoFocus autoComplete="off" value={text} onChange={(e) => setText(e.target.value)} />
+            <input id="confirm-text" className="input" autoFocus type={r.secret ? "password" : "text"} autoComplete={r.secret ? "current-password" : "off"} value={text} onChange={(e) => setText(e.target.value)} />
             <div className="flex flex-wrap-reverse justify-end gap-2">
               <button type="button" className="btn btn-ghost" onClick={() => close(null)}>تراجع</button>
               <button type="submit" className={btn(r.danger)} disabled={r.expect ? text.trim() !== r.expect : !text.trim()}>{r.confirmLabel}</button>

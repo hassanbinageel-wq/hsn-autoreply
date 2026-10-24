@@ -70,7 +70,6 @@ export function privacyPage(baseUrl: string, lang: Lang = "ar"): string {
 <li>Account data of our customers (account owners): username, store or account name, a one-way hash of the password, and their email if they add it. The email is used only to confirm it, to send a password-recovery link and password-change notices — no marketing — and it is sent through the email provider Resend.</li>
 <li>Support messages and the attachments a customer sends to us from the «Support» page, to answer them.</li>
 <li>Payments: card payments are processed by the licensed payment gateway Moyasar. We never see or store card numbers; we keep only the amount, the plan or message pack, the status and the transaction reference.</li>
-<li>Offers: when we show an offer inside the app, we record which customer account saw it and whether they opened it, to measure the offer — nothing is shared with third parties.</li>
 <li>If the account owner connects their store (Salla) with read-only permissions: product data (name, price, cost price, link, image) and only the order data needed for analytics (amount, discount, shipping, tax, status, coupon, payment method, city, products, time, and a one-way hash of the customer ID to tell new from returning customers) — without the buyer's name, phone, email or detailed address.</li>
 <li>If the account owner uses scheduled publishing: the photos and videos they upload for their own account, kept privately until the post is published and then deleted automatically (or one day after a cancellation or failure).</li>
 <li>If the account owner allows the insights permission: aggregated Instagram numbers for their own posts (views, reach, likes, saves, shares) and aggregated audience data (age, gender, countries) as returned by Meta, not linked to any person.</li>
@@ -82,7 +81,7 @@ export function privacyPage(baseUrl: string, lang: Lang = "ar"): string {
 <h2>Retention and deletion</h2>
 <p>Logs are deleted automatically after the retention period set in the settings (90 days by default), keeping only the de-duplication IDs for as long as needed. You can request the deletion of your data through the <a href="${del}">data deletion page</a>, and account owners can delete their account and all its data from the settings.</p>
 ${contact(lang)}
-<p class="muted">Last updated: 2026-10-23. If the Arabic and English versions differ, the Arabic version prevails.</p>`,
+<p class="muted">Last updated: 2026-10-24. If the Arabic and English versions differ, the Arabic version prevails.</p>`,
       "",
       lang,
       "/privacy",
@@ -103,7 +102,6 @@ ${contact(lang)}
 <li>بيانات حساب عملائنا (أصحاب الحسابات): اسم المستخدم، اسم المتجر أو الحساب، كلمة المرور مخزّنة بتشفير أحادي الاتجاه، والإيميل إذا أضافه — يُستخدم الإيميل فقط لتأكيده ولإرسال رابط استرجاع كلمة المرور وإشعار تغييرها، بدون رسائل تسويقية، ويُرسل عبر مزوّد الإرسال Resend.</li>
 <li>رسائل الدعم والمرفقات التي يرسلها العميل لنا من صفحة «الدعم»، للرد عليها.</li>
 <li>المدفوعات: الدفع بالبطاقة تعالجه بوابة الدفع المرخّصة «ميسّر» (Moyasar). لا نرى رقم البطاقة ولا نخزّنه؛ نحتفظ فقط بالمبلغ والباقة أو حزمة الرسائل وحالة العملية ورقمها المرجعي.</li>
-<li>العروض: إذا عرضنا عرضًا داخل التطبيق، نسجّل أن حساب العميل شافه وهل ضغط عليه، لقياس أداء العرض فقط — بدون مشاركته مع أي جهة.</li>
 <li>إذا ربط صاحب الحساب متجره (سلة) بصلاحيات قراءة فقط: بيانات المنتجات (الاسم والسعر وسعر التكلفة والرابط والصورة) وبيانات الطلبات اللازمة للتحليل فقط (المبلغ والخصم والشحن والضريبة، الحالة، كود الخصم، طريقة الدفع، المدينة، المنتجات، الوقت، ورمز مشفّر باتجاه واحد لمعرّف العميل لتمييز العميل الجديد من المتكرر) — بدون اسم المشتري أو جواله أو بريده أو عنوانه التفصيلي.</li>
 <li>إذا استخدم صاحب الحساب جدولة النشر: الصور والفيديوهات اللي يرفعها لحسابه هو، تُحفظ بشكل خاص لين يُنشر المنشور ثم تُحذف تلقائيًا (أو بعد يوم من الإلغاء أو الفشل).</li>
 <li>إذا سمح صاحب الحساب بصلاحية الإحصاءات: أرقام إنستقرام المجمّعة لمنشورات حسابه هو فقط (المشاهدات، الوصول، الإعجابات، الحفظ، المشاركات) وإحصاءات جمهور متابعيه المجمّعة (العمر، الجنس، الدول) كما تعيدها Meta، دون ربطها بأي شخص.</li>
@@ -115,7 +113,7 @@ ${contact(lang)}
 <h2>الاحتفاظ والحذف</h2>
 <p>تُحذف السجلات تلقائيًا بعد مدة الاحتفاظ المحددة في الإعدادات (افتراضيًا 90 يومًا)، مع الإبقاء على معرّفات منع التكرار فقط للمدة اللازمة. يمكنك طلب حذف بياناتك عبر <a href="${del}">صفحة حذف البيانات</a>، ويستطيع صاحب الحساب حذف حسابه وكل بياناته من الإعدادات.</p>
 ${contact(lang)}
-<p class="muted">آخر تحديث: 2026-10-23</p>`,
+<p class="muted">آخر تحديث: 2026-10-24</p>`,
     "",
     lang,
     "/privacy",
@@ -213,7 +211,6 @@ export function refundPage(lang: Lang = "ar"): string {
 <li>A suspension caused by breaking Meta's policies or the terms of use is not eligible for a refund.</li></ul>
 <h2>How to request</h2><p>Request the refund from the «Support» page inside your account, or by email to <a href="mailto:${OPERATOR.email}">${OPERATOR.email}</a>, with the transaction number. The amount goes back to the same card used for the payment, usually within 5 to 14 business days depending on the issuing bank.</p>
 <h2>Upgrading to a higher plan</h2><p>You can upgrade at any time from the «My subscription» page and pay only the difference, calculated automatically: the higher plan for the days left in your subscription, less what is left of your current plan (its days left, reduced if you have used more of this period's messages than the time that has passed). After you pay it by card, the plan changes at once and the end date stays the same. You cannot move to a lower plan while your subscription is active; you can choose it after it ends.</p>
-<h2>Extra message packs</h2><p>Extra messages are added to your balance as soon as the payment succeeds and are valid until the current period's counter renews. You may request a full refund within <b>3 days</b> of payment if none of the pack's messages has been used; once its messages start being used, it is not refunded. Unused extra messages expire with the period and are not carried over or refunded.</p>
 <h2>Cancellation</h2><p>Because the subscription does not renew automatically, simply do not renew. You can also delete your account and data at any time from the settings.</p>
 <p class="muted">Payment by bank transfer follows the same periods, and the amount is returned by bank transfer. If the Arabic and English versions differ, the Arabic version prevails.</p>`,
       "",
@@ -232,7 +229,6 @@ export function refundPage(lang: Lang = "ar"): string {
 <li>توقّف الخدمة بسبب مخالفة سياسات Meta أو شروط الاستخدام لا يستحق استرجاعًا.</li></ul>
 <h2>طريقة الطلب</h2><p>اطلب الاسترجاع من صفحة «الدعم» داخل حسابك، أو بالإيميل على <a href="mailto:${OPERATOR.email}">${OPERATOR.email}</a>، مع رقم العملية. يُعاد المبلغ إلى نفس البطاقة المستخدمة في الدفع، ويصل عادةً خلال 5 إلى 14 يوم عمل حسب البنك المُصدِر.</p>
 <h2>الترقية لباقة أعلى</h2><p>تقدر تترقى في أي وقت من صفحة «اشتراكي» وتدفع الفرق فقط، ويُحسب تلقائيًا: سعر الباقة الأعلى للأيام الباقية من اشتراكك، ناقص المتبقي من باقتك الحالية (أيامها الباقية، وتقل إذا استهلكت من رسائل الفترة أكثر من الوقت اللي مضى). بعد دفعه بالبطاقة تترقى باقتك فورًا ويبقى تاريخ الانتهاء نفسه. لا يمكن الانتقال لباقة أقل أثناء الاشتراك، وتقدر تختارها بعد انتهائه.</p>
-<h2>حزم الرسائل الإضافية</h2><p>تنضاف الرسائل الإضافية لرصيدك فور نجاح الدفع، وتصلح حتى يتجدد عدّاد الفترة الحالية. يحق لك طلب استرجاع كامل المبلغ خلال <b>3 أيام</b> من الدفع إذا ما استُخدمت أي رسالة من الحزمة؛ وبعد بدء استخدام رسائلها لا تُسترجع. الرسائل الإضافية غير المستخدمة تنتهي مع الفترة ولا تُرحَّل ولا تُسترجع.</p>
 <h2>الإلغاء</h2><p>لأن الاشتراك لا يتجدد تلقائيًا، يكفي ألا تجدّد. يمكنك أيضًا حذف حسابك وبياناتك في أي وقت من الإعدادات.</p>
 <p class="muted">الدفع بالتحويل البنكي يخضع لنفس المدد، ويُعاد المبلغ بتحويل بنكي.</p>`,
     "",

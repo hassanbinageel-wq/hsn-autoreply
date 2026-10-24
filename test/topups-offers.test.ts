@@ -278,6 +278,34 @@ describe("offers", () => {
     expect(rep.by_offer[0]).toMatchObject({ key: offerId, count: 1, revenue: 39.2 });
     expect(rep.payments).toHaveLength(2);
     expect((await call("/api/owner/payments-report", a.h)).status).toBe(403);
+
+    // the owner's costs: gateway fee (% + fixed) and VAT inside the price → per-payment and total net
+    const fee = (await call("/api/owner/payments-report?days=30&fee_pct=2&fee_fixed=1&vat_pct=15", OWNER)).body;
+    const gross = 39.2 + 15;
+    const vat = Math.round((gross * 15) / 115 * 100) / 100;
+    const gw = Math.round((gross * 0.02 + 2) * 100) / 100;
+    expect(fee.fees).toEqual({ fee_pct: 2, fee_fixed: 1, vat_pct: 15 });
+    expect(fee.total.vat).toBeCloseTo(vat, 1);
+    expect(fee.total.fee).toBeCloseTo(gw, 1);
+    expect(fee.total.net).toBeCloseTo(gross - vat - gw, 1);
+    const one = fee.payments.find((x: any) => x.amount === 15);
+    expect(one).toMatchObject({ vat: 1.96, fee: 1.3, net: 11.74 });
+    // a custom date range (whole Riyadh days): today has both payments, a past range has none
+    const today = new Date(Date.now() + 3 * 3_600_000).toISOString().slice(0, 10);
+    expect((await call(`/api/owner/payments-report?from=${today}&to=${today}`, OWNER)).body.total.count).toBe(2);
+    expect((await call("/api/owner/payments-report?from=2020-01-01&to=2020-01-31", OWNER)).body.total.count).toBe(0);
+    expect((await call("/api/owner/payments-report?from=2020-02-01&to=2020-01-01", OWNER)).status).toBe(400);
+
+    // deleting the whole payments record needs the owner's own password; a customer cannot
+    expect((await call("/api/owner/payments/delete-all", a.h, "POST", { password: "a-very-strong-password" })).status).toBe(403);
+    expect((await call("/api/owner/payments/delete-all", OWNER, "POST", { password: "wrong-password" })).status).toBe(403);
+    await DB.prepare("INSERT INTO card_payments (tenant_id, plan_id, days, amount, currency, status, created_at, updated_at) VALUES (?, 'basic', 30, 100, 'SAR', 'initiated', ?, ?)").bind(a.tid, Date.now(), Date.now()).run();
+    const del = await call("/api/owner/payments/delete-all", OWNER, "POST", { password: "a-very-strong-password" });
+    expect(del.status).toBe(200);
+    expect(del.body.deleted).toBe(2);
+    // a payment started just now stays, so it is still activated when the gateway confirms it
+    expect((await DB.prepare("SELECT status FROM card_payments").all<any>()).results.map((r: any) => r.status)).toEqual(["initiated"]);
+    expect((await call("/api/owner/payments-report?days=30", OWNER)).body.total.count).toBe(0);
   });
 
   it("the owner sets the usage-note steps and when the window shows (share used + delay)", async () => {

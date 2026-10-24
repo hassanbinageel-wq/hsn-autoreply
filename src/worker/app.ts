@@ -96,7 +96,7 @@ import { parseFaqText } from "../shared/support";
 import { emptyMenu, extrasProblem, keywordsProblem, menuParts, menuProblem, type DmMenu, type MenuNode } from "../shared/menu";
 import { syncMenuProfile } from "./services/menuProfile";
 import { ATTACH, attachKey, attachLimit, CATEGORIES, DEFAULT_RESPONSE_TIME, cardFontKey, deleteTenantCardFonts, deleteTenantSupportFiles, notifyState, ownMessage, setState, stateAfterCustomer, STATES, supportCenter, ticketNo, type Incident } from "./services/support";
-import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, redeemCode, RedeemError } from "./services/plans";
+import { CYCLE_MS, usageCycle, codeHash, deleteTenantData, drawsThisMonth, extendPlan, getEntitlement, listPlans, monthlyMessages, newCode, parseLimits, PERIOD_DAYS, redeemCode, RedeemError } from "./services/plans";
 import { cardEnabled, cardPriceHalalas, createInvoice, isTestKey, payablePlan, PayError, startCardPayment, syncInvoice } from "./services/moyasar";
 import { planChangeBlock, quoteUpgrade } from "./services/upgrades";
 import { allPacks, applyTopup, startTopup, topupHistory, topupSettings, topupState } from "./services/topups";
@@ -248,12 +248,12 @@ async function publicCatalog(c: C) {
   return {
     plans: plans
       .filter((p) => p.active)
-      .map(({ id, name, price_label, price_amount, price_before, price_currency, price_period, card_price_halalas, description, limits }) => ({
-        id, name, price_label, price_amount, price_currency, price_period, description, limits,
+      .map(({ id, name, price_label, price_amount, price_before, price_currency, price_period, card_price_halalas, description, limits, free }) => ({
+        id, name, price_label, price_amount, price_currency, price_period, description, limits, free: !!free,
         // The old price, only when it is above the current one.
         price_before: price_amount !== null && price_before && price_before > price_amount ? price_before : null,
         // Fixed SAR price for card payment (Moyasar), only when card payments are on and the period has a length.
-        card_price: cardEnabled(c.env) ? (cardPriceHalalas({ card_price_halalas, price_amount, price_currency, price_period }) ?? 0) / 100 || null : null,
+        card_price: !free && cardEnabled(c.env) ? (cardPriceHalalas({ card_price_halalas, price_amount, price_currency, price_period }) ?? 0) / 100 || null : null,
       })),
     card_payments: cardEnabled(c.env),
     // Text of the card pay button (owner-set), no currency or price in it.
@@ -736,7 +736,9 @@ export function createApp() {
       // Check the code first (without using it) so a typo never creates an empty account.
       const code = await first<{ id: number }>(c.env.DB, "SELECT id FROM activation_codes WHERE code_hash = ? AND used_at IS NULL AND revoked_at IS NULL", await codeHash(p.data.code!));
       if (!code) return apiError(c, 422, "invalid_code", "كود التفعيل غير صحيح أو مستخدم");
-    } else if (!p.data.plan_id || !(await payablePlan(c.env, p.data.plan_id))) {
+    }
+    const freePlan = !withCode && p.data.plan_id ? await first<{ id: string; price_period: string }>(c.env.DB, "SELECT id, price_period FROM plans WHERE id = ? AND free = 1 AND active = 1", p.data.plan_id) : null;
+    if (!withCode && !freePlan && (!p.data.plan_id || !(await payablePlan(c.env, p.data.plan_id)))) {
       return apiError(c, 422, "code_required", "أدخل كود التفعيل، أو اختر باقة من صفحة الباقات وادفع بالبطاقة");
     }
     if (await first(c.env.DB, "SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE", p.data.username)) return apiError(c, 409, "username_taken", "اسم الحساب هذا مسجّل من قبل — اختر غيره");
@@ -746,6 +748,7 @@ export function createApp() {
     try {
       await run(c.env.DB, "INSERT INTO admin_users (username, password_hash, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", p.data.username, hash, tid, now, now);
       if (withCode) await redeemCode(c.env.DB, tid, p.data.code!, now);
+      else if (freePlan) await extendPlan(c.env.DB, tid, freePlan.id, PERIOD_DAYS[freePlan.price_period] ?? 30, now);
     } catch (e) {
       await deleteTenantData(c.env.DB, tid);
       if (e instanceof RedeemError) return apiError(c, 422, e.code, e.message);
@@ -1095,6 +1098,22 @@ export function createApp() {
       if (e instanceof PayError) return apiError(c, e.status as any, e.code, e.message);
       throw e;
     }
+  });
+  // The free plan: subscribed to without paying, for its period, while no other plan is running.
+  api.post("/subscription/free", async (c) => {
+    if (c.get("session").is_owner) return apiError(c, 409, "owner", "حساب المالك لا يحتاج اشتراكًا");
+    if (c.get("session").role !== "owner") return apiError(c, 403, "holder_only", "الاشتراك لصاحب الحساب فقط");
+    const p = await parseBody(c, z.object({ plan_id: z.string().max(20) }));
+    if (!p.ok) return p.res;
+    const plan = await first<{ id: string; name: string; price_period: string }>(c.env.DB, "SELECT id, name, price_period FROM plans WHERE id = ? AND free = 1 AND active = 1", p.data.plan_id);
+    if (!plan) return apiError(c, 404, "not_found", "الباقة المجانية غير متاحة");
+    const e = await ENT(c);
+    if (e.active && e.plan?.id === plan.id) return apiError(c, 409, "already_free", `باقتك المجانية فعّالة لين ${new Date(e.expires_at ?? 0).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", { day: "numeric", month: "long", timeZone: "Asia/Riyadh" })} — تقدر تجددها بعد ما تنتهي`);
+    const block = await planChangeBlock(c.env, T(c), plan.id);
+    if (block) return apiError(c, 409, block.code, block.message);
+    const r = await withSchedulingNotice(c.env, T(c), () => extendPlan(c.env.DB, T(c), plan.id, PERIOD_DAYS[plan.price_period] ?? 30));
+    await audit(c.env.DB, T(c), c.get("session").username, "subscription.free", plan.id, { expires_at: r.expires_at });
+    return c.json({ ok: true, ...r });
   });
   // After returning from the payment page: re-checks that payment with Moyasar (own payments only).
   api.get("/subscription/pay/:id", async (c) => {
@@ -1927,8 +1946,22 @@ export function createApp() {
   // Payments report (the owner's PDF): paid card payments in a period, split by kind, plan, pack, offer, month, customer.
   owner.get("/payments-report", async (c) => {
     const days = Math.max(0, Math.min(3650, Number(c.req.query("days")) || 0));
-    const to = Date.now();
-    const from = days ? to - days * 86_400_000 : 0;
+    // A custom range: whole days (Riyadh) from–to, inclusive. Otherwise the last N days (0 = all time).
+    const dayMs = (v: string | undefined, end: boolean) => {
+      if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+      const t = Date.parse(`${v}T00:00:00+03:00`);
+      return Number.isFinite(t) ? t + (end ? 86_400_000 - 1 : 0) : null;
+    };
+    const fromDay = dayMs(c.req.query("from"), false);
+    const toDay = dayMs(c.req.query("to"), true);
+    const ranged = fromDay !== null || toDay !== null;
+    const to = ranged ? toDay ?? Date.now() : Date.now();
+    const from = ranged ? fromDay ?? 0 : days ? to - days * 86_400_000 : 0;
+    if (from > to) return apiError(c, 400, "bad_range", "تاريخ البداية بعد تاريخ النهاية");
+    // Costs the owner enters before generating: the gateway's fee (a percentage plus a fixed amount per payment)
+    // and VAT. Prices are VAT-inclusive, so the VAT inside a payment is amount × vat / (100 + vat).
+    const num = (k: string, max: number) => Math.max(0, Math.min(max, Number(c.req.query(k)) || 0));
+    const fees = { fee_pct: num("fee_pct", 50), fee_fixed: num("fee_fixed", 100), vat_pct: num("vat_pct", 50) };
     const rows = await all<{
       id: number; tenant_id: number; tenant_name: string | null; plan_id: string; plan_name: string | null; amount: number; paid_at: number;
       upgrade_id: number | null; topup_messages: number | null; offer_id: number | null; offer_title: string | null; offer_pct: number | null;
@@ -1940,7 +1973,7 @@ export function createApp() {
         WHERE k.status = 'paid' AND k.paid_at >= ? AND k.paid_at <= ? ORDER BY k.paid_at DESC`,
       from, to,
     );
-    const other = await all<{ status: string; n: number }>(c.env.DB, "SELECT status, COUNT(*) AS n FROM card_payments WHERE status != 'paid' AND created_at >= ? GROUP BY status", from);
+    const other = await all<{ status: string; n: number }>(c.env.DB, "SELECT status, COUNT(*) AS n FROM card_payments WHERE status != 'paid' AND created_at >= ? AND created_at <= ? GROUP BY status", from, to);
     const kindOf = (r: (typeof rows)[number]) => (r.topup_messages ? "topup" : r.upgrade_id ? "upgrade" : "plan");
     const sar = (h: number) => Math.round(h) / 100;
     const group = <K extends string | number>(key: (r: (typeof rows)[number]) => K | null, label: (r: (typeof rows)[number]) => string) => {
@@ -1956,9 +1989,16 @@ export function createApp() {
       return [...m.values()].map((g) => ({ ...g, revenue: sar(g.revenue) })).sort((a, b) => b.revenue - a.revenue || b.count - a.count);
     };
     const month = (ms: number) => new Date(ms + 3 * 3_600_000).toISOString().slice(0, 7);
+    // Per payment, in halalas: the VAT inside it, the gateway fee, and what is left.
+    const split = (h: number) => {
+      const vat = (h * fees.vat_pct) / (100 + fees.vat_pct);
+      const fee = Math.min(h, (h * fees.fee_pct) / 100 + fees.fee_fixed * 100);
+      return { vat, fee, net: h - vat - fee };
+    };
+    const sum = (k: "vat" | "fee" | "net") => sar(rows.reduce((x, r) => x + split(r.amount)[k], 0));
     return c.json({
-      from, to, days, test_mode: isTestKey(c.env),
-      total: { count: rows.length, revenue: sar(rows.reduce((x, r) => x + r.amount, 0)), customers: new Set(rows.map((r) => r.tenant_id)).size },
+      from, to, days: ranged ? 0 : days, ranged, fees, test_mode: isTestKey(c.env),
+      total: { count: rows.length, revenue: sar(rows.reduce((x, r) => x + r.amount, 0)), customers: new Set(rows.map((r) => r.tenant_id)).size, vat: sum("vat"), fee: sum("fee"), net: sum("net") },
       by_kind: group(kindOf, (r) => ({ plan: "اشتراك باقة", upgrade: "ترقية", topup: "رسائل إضافية" })[kindOf(r)]),
       by_plan: group((r) => (kindOf(r) === "topup" ? null : r.plan_id), (r) => r.plan_name ?? r.plan_id),
       by_pack: group((r) => r.topup_messages ?? null, (r) => `${(r.topup_messages ?? 0).toLocaleString("en-US")} رسالة`),
@@ -1971,8 +2011,25 @@ export function createApp() {
         id: r.id, at: r.paid_at, customer: r.tenant_name ?? `#${r.tenant_id}`, kind: kindOf(r),
         what: r.topup_messages ? `${r.topup_messages.toLocaleString("en-US")} رسالة إضافية` : r.upgrade_id ? `ترقية إلى ${r.plan_name ?? r.plan_id}` : `باقة ${r.plan_name ?? r.plan_id}`,
         amount: sar(r.amount), offer: r.offer_id ? r.offer_title ?? `#${r.offer_id}` : null,
+        vat: sar(split(r.amount).vat), fee: sar(split(r.amount).fee), net: sar(split(r.amount).net),
       })),
     });
+  });
+
+  // Deletes the whole payments record (the report's source). Needs the owner's own password. Payments started in
+  // the last two hours stay, so a customer paying right now still gets activated when the gateway confirms.
+  owner.post("/payments/delete-all", async (c) => {
+    const p = await parseBody(c, z.object({ password: z.string().min(1).max(200) }));
+    if (!p.ok) return p.res;
+    const s = c.get("session");
+    if (!(await rateLimit(c.env.DB, `payments_delete:${s.user_id}`, 5, 15 * 60_000))) return apiError(c, 429, "rate_limited", "محاولات كثيرة، حاول بعد شوي");
+    const u = await first<{ password_hash: string }>(c.env.DB, "SELECT password_hash FROM admin_users WHERE id = ?", s.user_id);
+    if (!u || !(await verifyPassword(p.data.password, u.password_hash, c.env.PASSWORD_PEPPER))) return apiError(c, 403, "wrong_password", "كلمة المرور غير صحيحة");
+    const keepFrom = Date.now() - 2 * 3_600_000;
+    const r = await run(c.env.DB, "DELETE FROM card_payments WHERE NOT (status = 'initiated' AND created_at >= ?)", keepFrom);
+    const deleted = r.meta.changes ?? 0;
+    await audit(c.env.DB, T(c), s.username, "payments.deleted_all", String(deleted));
+    return c.json({ ok: true, deleted });
   });
 
   // Upgrades (automatic), newest first: who moved from which plan to which, the usage then and the amount paid.
@@ -1992,16 +2049,18 @@ export function createApp() {
     if (!p.ok) return p.res;
     const currency = p.data.price_currency ?? "SAR";
     const period = p.data.price_period ?? "month";
-    const amount = p.data.price_amount ?? null;
+    const free = !!p.data.free;
+    // A free plan has no amount: its price is the owner's text (default «مجاناً»), without a currency.
+    const amount = free ? null : p.data.price_amount ?? null;
     // A structured price wins; otherwise the free-text label (or nothing → "تواصل معنا").
-    const label = amount !== null ? formatPrice(amount, currency, period) : (p.data.price_label ?? null);
-    // empty = the plan's own price when it is in SAR; 0 = no card payment for this plan
-    const card = p.data.card_price_sar === null || p.data.card_price_sar === undefined ? null : Math.round(p.data.card_price_sar * 100);
+    const label = free ? p.data.price_label?.trim() || "مجاناً" : amount !== null ? formatPrice(amount, currency, period) : (p.data.price_label ?? null);
+    // The card price is the plan's own price (SAR); a free plan has none.
+    const card = null;
     const before = amount !== null && p.data.price_before ? p.data.price_before : null;
     await run(
       c.env.DB,
-      "UPDATE plans SET name = ?, price_label = ?, price_amount = ?, price_before = ?, price_currency = ?, price_period = ?, card_price_halalas = ?, description = ?, limits = ?, active = ?, updated_at = ? WHERE id = ?",
-      p.data.name, label, amount, before, currency, period, card, p.data.description ?? null, JSON.stringify(p.data.limits), p.data.active ? 1 : 0, Date.now(), pid,
+      "UPDATE plans SET name = ?, price_label = ?, price_amount = ?, price_before = ?, price_currency = ?, price_period = ?, card_price_halalas = ?, description = ?, limits = ?, active = ?, free = ?, updated_at = ? WHERE id = ?",
+      p.data.name, label, amount, free ? null : before, currency, period, card, p.data.description ?? null, JSON.stringify(p.data.limits), p.data.active ? 1 : 0, free ? 1 : 0, Date.now(), pid,
     );
     await audit(c.env.DB, T(c), c.get("session").username, "plan.updated", pid);
     return c.json({ ok: true });

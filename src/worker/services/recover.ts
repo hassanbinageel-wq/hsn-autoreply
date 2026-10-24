@@ -3,7 +3,7 @@ import type { AccountRow, EngineContext } from "../engine/context";
 import { all, first, getSetting, setSetting } from "../lib/db";
 import type { NormalizedEvent } from "../meta/webhook-parse";
 import { storeEvents } from "./webhook";
-import { getEntitlement } from "./plans";
+import { getEntitlement, monthlyMessages } from "./plans";
 
 /** Private replies are only allowed for 7 days after the comment, so older comments are never recovered. */
 const RECOVER_WINDOW_MS = 7 * 24 * 3_600_000;
@@ -13,6 +13,47 @@ export interface RecoverResult {
   fetched: number;
   recovered: number;
   skipped_reason?: string;
+  /** Of `recovered`: comments that arrived while the subscription had ended or the messages had run out. */
+  held?: number;
+}
+
+/** Why a comment was set aside without a reply although nothing was wrong with it: no subscription or no messages left. */
+const HELD_REASONS = ["subscription_inactive", "monthly_limit_reached"];
+
+/**
+ * Comments that reached us while the customer's subscription had ended or the cycle's messages had run out were
+ * set aside unanswered. Once the customer renews or tops up, they go back through the pipeline — only those still
+ * inside the 7-day private-reply window, never one that was answered, and only while messages are available now.
+ * Each comment gets a fresh processing job (the first one is spent), keyed by when it was set aside.
+ */
+async function requeueHeld(ctx: EngineContext, tenantId: number, igUserId: string, since: number): Promise<number> {
+  const ent = await getEntitlement(ctx.db, tenantId, ctx.now());
+  if (!ent.active || !ent.limits.events.includes("comment")) return 0;
+  const left = ent.limits.monthly_messages === null ? 100 : ent.limits.monthly_messages - (await monthlyMessages(ctx.db, tenantId, ctx.now()));
+  if (left <= 0) return 0;
+  const rows = await all<{ id: number; dedup_key: string; processed_at: number | null }>(
+    ctx.db,
+    `SELECT id, dedup_key, processed_at FROM webhook_events
+      WHERE account_ig_id = ? AND event_type = 'comment' AND is_demo = 0 AND status = 'ignored' AND reason IN (${HELD_REASONS.map(() => "?").join(",")})
+        AND event_time >= ? ORDER BY event_time DESC LIMIT ?`,
+    igUserId, ...HELD_REASONS, since, Math.min(100, left),
+  );
+  if (!rows.length) return 0;
+  const now = ctx.now();
+  const stmts: D1PreparedStatement[] = [];
+  for (const r of rows) {
+    stmts.push(
+      ctx.db.prepare("UPDATE webhook_events SET status = 'pending', reason = NULL, processed_at = NULL, recovered = 1 WHERE id = ? AND status = 'ignored'").bind(r.id),
+      ctx.db
+        .prepare(
+          `INSERT OR IGNORE INTO action_jobs (account_id, kind, event_id, dedup_key, payload, is_demo, status, attempts, max_attempts, run_at, created_at, updated_at)
+           VALUES (NULL, 'process_event', ?, ?, '{}', 0, 'pending', 0, 5, ?, ?, ?)`,
+        )
+        .bind(r.id, `evt:${r.dedup_key}:held:${r.processed_at ?? 0}`, now, now, now),
+    );
+  }
+  await ctx.db.batch(stmts);
+  return rows.length;
 }
 
 /**
@@ -22,6 +63,11 @@ export interface RecoverResult {
  * and the shared dedup key (comment:<id>) guarantees a comment is never answered twice.
  */
 export async function recoverMissedComments(ctx: EngineContext, tenantId: number, opts: { maxMedia?: number } = {}): Promise<RecoverResult> {
+  const r = await fetchMissed(ctx, tenantId, opts);
+  return r.held ? { ...r, recovered: r.recovered + r.held, skipped_reason: undefined } : r;
+}
+
+async function fetchMissed(ctx: EngineContext, tenantId: number, opts: { maxMedia?: number }): Promise<RecoverResult> {
   const now = ctx.now();
   const account = await first<AccountRow>(ctx.db, "SELECT * FROM instagram_accounts WHERE tenant_id = ? AND is_demo = 0 AND status = 'active' ORDER BY id LIMIT 1", tenantId);
   if (!account) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "no_account" };
@@ -33,6 +79,7 @@ export async function recoverMissedComments(ctx: EngineContext, tenantId: number
   );
   if (!campaigns.length) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "no_active_comment_campaign" };
   const since = now - RECOVER_WINDOW_MS;
+  const held = await requeueHeld(ctx, tenantId, account.ig_user_id, since);
 
   // Which posts to look at: those explicitly selected, plus (for "all posts"/auto-new campaigns) the posts with
   // recent comment activity and the ones published in the last 7 days. Most recent first, bounded.
@@ -65,11 +112,11 @@ export async function recoverMissedComments(ctx: EngineContext, tenantId: number
   for (const r of recent) add(r.media_id);
   for (const r of selected) add(r.media_id);
   const media = ids.slice(0, opts.maxMedia ?? 10);
-  if (!media.length) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "no_media" };
+  if (!media.length) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "no_media", held };
 
   const client = ctx.meta(false);
   const token = await ctx.getAccessToken(account);
-  if (!token || !client.listComments) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "no_token" };
+  if (!token || !client.listComments) return { media: 0, fetched: 0, recovered: 0, skipped_reason: "no_token", held };
 
   const found: NormalizedEvent[] = [];
   let fetched = 0;
@@ -102,7 +149,7 @@ export async function recoverMissedComments(ctx: EngineContext, tenantId: number
       });
     }
   }
-  if (!found.length) return { media: media.length, fetched, recovered: 0 };
+  if (!found.length) return { media: media.length, fetched, recovered: 0, held };
 
   // Only comments we have never stored (the webhook may have delivered them already).
   const known = new Set<string>();
@@ -117,7 +164,7 @@ export async function recoverMissedComments(ctx: EngineContext, tenantId: number
   }
   const fresh = found.filter((e) => !known.has(e.dedupKey));
   if (fresh.length) await storeEvents(ctx.db, fresh, { now, touchAccount: false, recovered: true });
-  return { media: media.length, fetched, recovered: fresh.length };
+  return { media: media.length, fetched, recovered: fresh.length, held };
 }
 
 /**

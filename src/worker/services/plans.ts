@@ -15,6 +15,8 @@ export interface PlanRow {
   sort: number;
   limits: PlanLimits;
   active: number;
+  /** Subscribed to without paying. */
+  free: number;
 }
 
 export interface Entitlement {
@@ -201,8 +203,13 @@ export const PERIOD_DAYS: Record<string, number> = { month: 30, quarter: 90, yea
  * (renewing early never loses days), otherwise from now.
  */
 export async function extendPlan(db: D1Database, tenantId: number, planId: string, days: number, now = Date.now()): Promise<{ plan_id: string; expires_at: number }> {
-  const t = await first<{ plan_expires_at: number | null; plan_started_at: number | null }>(db, "SELECT plan_expires_at, plan_started_at FROM tenants WHERE id = ?", tenantId);
-  const running = !!t?.plan_expires_at && t.plan_expires_at > now;
+  const t = await first<{ plan_id: string | null; plan_expires_at: number | null; plan_started_at: number | null; free: number | null }>(
+    db,
+    "SELECT t.plan_id, t.plan_expires_at, t.plan_started_at, p.free FROM tenants t LEFT JOIN plans p ON p.id = t.plan_id WHERE t.id = ?",
+    tenantId,
+  );
+  // Leaving the free plan for another one starts a fresh period (free days are not carried over).
+  const running = !!t?.plan_expires_at && t.plan_expires_at > now && !(t.free && t.plan_id !== planId);
   const from = running ? t!.plan_expires_at! : now;
   const expires = from + days * 86_400_000;
   const started = running ? (t!.plan_started_at ?? now) : now;

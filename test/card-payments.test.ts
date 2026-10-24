@@ -57,17 +57,16 @@ function stubMoyasar() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("card payments (Moyasar)", () => {
-  it("owner sets a fixed SAR price; the catalog shows it only for plans that have one", async () => {
+  it("the card pays the plan's own price: no separate card price is kept", async () => {
     const plans = (await call("/api/owner/plans", OWNER)).body as any[];
     const pro = plans.find((p) => p.id === "pro");
-    const r = await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, price_amount: pro.price_amount, price_currency: pro.price_currency, price_period: "month", card_price_sar: 149.5, description: pro.description ?? undefined, active: true, limits: pro.limits });
+    const r = await call("/api/owner/plans/pro", OWNER, "PUT", { name: pro.name, price_amount: 149.5, price_currency: "SAR", price_period: "month", card_price_sar: 99, description: pro.description ?? undefined, active: true, limits: pro.limits });
     expect(r.status).toBe(200);
-    expect((await DB.prepare("SELECT card_price_halalas FROM plans WHERE id = 'pro'").first<any>()).card_price_halalas).toBe(14950);
+    expect((await DB.prepare("SELECT card_price_halalas FROM plans WHERE id = 'pro'").first<any>()).card_price_halalas).toBeNull();
     const { h } = await register("shop_a");
     const sub = (await call("/api/subscription", h)).body;
     expect(sub.card_payments).toBe(true);
     expect(sub.plans.find((p: any) => p.id === "pro").card_price).toBe(149.5);
-    expect(sub.plans.find((p: any) => p.id === "basic").card_price).toBeNull();
   });
 
   it("empty card price = the plan's own SAR price; 0 switches card payment off", async () => {

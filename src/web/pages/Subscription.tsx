@@ -89,8 +89,10 @@ export function SubscriptionPage() {
   }, [paidId, checkKey]);
   const payCard = async (planId: string) => {
     const plan = data?.plans?.find((p: any) => p.id === planId);
+    if (plan?.free) return subscribeFree(plan);
     if (!plan?.card_price) return;
-    if (data.active && data.plan?.id && data.plan.id !== planId) {
+    const fromFree = !!data.plans?.find((p: any) => p.id === data.plan?.id)?.free;
+    if (data.active && data.plan?.id && data.plan.id !== planId && !fromFree) {
       const cur = data.plans.find((p: any) => p.id === data.plan.id);
       toast(cur?.card_price && plan.card_price > cur.card_price ? "للانتقال لباقة أعلى استخدم «ترقية الباقة» فوق وادفع الفرق فقط" : "ما تقدر تنزل لباقة أقل وانت مشترك — تقدر تختارها بعد ما ينتهي اشتراكك", "bad");
       document.getElementById("upgrade")?.scrollIntoView({ behavior: "smooth" });
@@ -104,6 +106,17 @@ export function SubscriptionPage() {
     if (!ok) return;
     try {
       goPay(await api<{ id: number; url: string }>("/api/subscription/pay", { body: { plan_id: planId } }));
+    } catch (e: any) {
+      toast(e.message, "bad");
+    }
+  };
+  // The free plan: no payment, it starts now for its period.
+  const subscribeFree = async (plan: any) => {
+    if (!(await askConfirm({ title: `الاشتراك في ${plan.name}`, message: "تتفعّل الباقة الحين بدون أي دفع، لمدتها. تقدر تنتقل لباقة مدفوعة في أي وقت.", confirmLabel: "فعّل الباقة" }))) return;
+    try {
+      const r = await api<{ expires_at: number }>("/api/subscription/free", { body: { plan_id: plan.id } });
+      toast(`تفعّلت ${plan.name} ✅ — صالحة حتى ${fmtTime(r.expires_at)}`);
+      reload();
     } catch (e: any) {
       toast(e.message, "bad");
     }

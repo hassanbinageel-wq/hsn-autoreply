@@ -34,7 +34,6 @@ const lazyPage = <K extends string>(load: () => Promise<Record<K, ComponentType<
     ),
   );
 const ConnectionPage = lazyPage(() => import("./pages/Connection"), "ConnectionPage");
-const MediaPage = lazyPage(() => import("./pages/Media"), "MediaPage");
 const CampaignWizard = lazyPage(() => import("./pages/CampaignWizard"), "CampaignWizard");
 const CampaignStatsPage = lazyPage(() => import("./pages/CampaignStats"), "CampaignStatsPage");
 const InboxPage = lazyPage(() => import("./pages/Inbox"), "InboxPage");
@@ -119,7 +118,6 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ to: string; label: strin
     { to: "/draws", label: "السحوبات", icon: "gift" },
   ] },
   { title: "الأدوات", items: [
-    { to: "/media", label: "المنشورات والستوري", icon: "image" },
     { to: "/templates", label: "القوالب", icon: "puzzle" },
     { to: "/simulator", label: "المحاكاة", icon: "flask" },
     { to: "/logs", label: "السجل", icon: "list" },
@@ -298,7 +296,6 @@ export function App() {
     switch (route) {
       case "/": page = <DashboardPage />; break;
       case "/connection": page = <ConnectionPage key={refreshKey} />; break;
-      case "/media": page = <MediaPage />; break;
       case "/campaigns": page = <CampaignsPage />; break;
       case "/templates": page = <TemplatesPage />; break;
       case "/logs": page = <LogsPage />; break;

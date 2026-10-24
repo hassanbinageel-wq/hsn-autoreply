@@ -77,6 +77,36 @@ describe("recovery of comments whose webhook never arrived", () => {
   });
 });
 
+describe("comments set aside while the subscription had ended or the messages ran out", () => {
+  it("get their reply once the customer renews or tops up, and only once", async () => {
+    const now = Date.now();
+    const t = (await DB.prepare("INSERT INTO tenants (name, is_owner, status, plan_id, plan_started_at, plan_expires_at, created_at, updated_at) VALUES ('متجر', 0, 'active', 'basic', ?, ?, ?, ?) RETURNING id")
+      .bind(now - 40 * 86_400_000, now - 86_400_000, now, now).first<{ id: number }>())!.id;
+    await DB.prepare("UPDATE instagram_accounts SET tenant_id = ?").bind(t).run();
+    const cid = await seedCampaign({ scope: "selected", media_ids: ["media_A"] });
+    await DB.prepare("UPDATE campaigns SET tenant_id = ? WHERE id = ?").bind(t, cid).run();
+    const meta = new MockMeta();
+    await deliver(commentPayload({ text: "كورس", commentId: "late_1", mediaId: "media_A", from: "u_late" }), meta);
+    const ev = () => DB.prepare("SELECT status, reason FROM webhook_events WHERE dedup_key = 'comment:late_1'").first<any>();
+    expect(await ev()).toMatchObject({ status: "ignored", reason: "subscription_inactive" });
+    expect(meta.sends()).toHaveLength(0);
+
+    // still expired: nothing is put back
+    expect((await recoverMissedComments(makeCtx(meta), t)).held).toBe(0);
+    // renewed: the comment goes back through the pipeline and is answered
+    await DB.prepare("UPDATE tenants SET plan_expires_at = ? WHERE id = ?").bind(now + 30 * 86_400_000, t).run();
+    const r = await recoverMissedComments(makeCtx(meta), t);
+    expect(r).toMatchObject({ held: 1, recovered: 1 });
+    await drain(meta);
+    expect(meta.sends().filter((s) => s.kind === "private_reply").map((s) => s.target)).toEqual(["late_1"]);
+    expect((await ev()).status).toBe("processed");
+    // never twice
+    expect((await recoverMissedComments(makeCtx(meta), t)).held).toBe(0);
+    await drain(meta);
+    expect(meta.sends().filter((s) => s.kind === "private_reply")).toHaveLength(1);
+  });
+});
+
 describe("daily usage estimate", () => {
   it("grows with activity and reports percentages of the free limits", async () => {
     const before = await estimateUsage(DB);

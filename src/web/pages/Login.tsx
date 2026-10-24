@@ -43,7 +43,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   // Sign-up from a plan's card button (#/register?plan=pro): no code, the card payment page opens right after.
   const planOf = () => (location.hash.startsWith("#/register") ? new URLSearchParams(location.hash.split("?")[1] ?? "").get("plan") : null);
   const [payPlanId, setPayPlanId] = useState<string | null>(planOf);
-  const [payPlan, setPayPlan] = useState<{ id: string; name: string; card_price: number } | null>(null);
+  const [payPlan, setPayPlan] = useState<{ id: string; name: string; card_price: number; free: boolean; price_label: string | null } | null>(null);
   useEffect(() => {
     const on = () => setPayPlanId(planOf());
     window.addEventListener("hashchange", on);
@@ -52,8 +52,8 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     if (!payPlanId) return setPayPlan(null);
     api<Catalog>("/api/public/plans").then((c) => {
-      const p = c.plans.find((x) => x.id === payPlanId && x.card_price);
-      setPayPlan(p ? { id: p.id, name: p.name, card_price: p.card_price! } : null);
+      const p = c.plans.find((x) => x.id === payPlanId && (x.card_price || x.free));
+      setPayPlan(p ? { id: p.id, name: p.name, card_price: p.card_price ?? 0, free: !!p.free, price_label: p.price_label } : null);
     }, () => setPayPlan(null));
   }, [payPlanId]);
   const cardSignup = register && !!payPlan;
@@ -132,10 +132,10 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
         } catch {
           /* private mode */
         }
-        if (!cardSignup) location.hash = "#/";
+        if (!cardSignup || payPlan?.free) location.hash = "#/";
       }
       await signIn(username, password);
-      if (register && cardSignup) {
+      if (register && cardSignup && !payPlan?.free) {
         // New account without a code: straight to the card payment page; the plan activates when it is paid.
         try {
           const r = await api<{ id: number; url: string }>("/api/subscription/pay", { body: { plan_id: payPlan!.id } });
@@ -184,7 +184,7 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           <div>
             <h1 className="text-[28px] font-extrabold leading-tight">{status?.needs_setup ? "إعداد حساب الإدارة" : register ? "أنشئ حسابك ✨" : "أهلًا بعودتك 👋"}</h1>
             <p className="muted mt-1.5 text-sm empty:hidden">
-              {status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : cardSignup ? "أنشئ حسابك، وبعدها تنتقل مباشرة لصفحة الدفع الآمنة." : register ? "عندك كود تفعيل؟ أنشئ حسابك وابدأ مباشرة." : ""}
+              {status?.needs_setup ? "الإعداد الأولي لحساب الإدارة (مرة واحدة)" : cardSignup ? (payPlan?.free ? "أنشئ حسابك وتبدأ مجانًا على طول." : "أنشئ حسابك، وبعدها تنتقل مباشرة لصفحة الدفع الآمنة.") : register ? "عندك كود تفعيل؟ أنشئ حسابك وابدأ مباشرة." : ""}
             </p>
           </div>
           {isNative && !API_BASE && <Alert tone="bad">لم يُحدَّد عنوان الخادم في هذا الإصدار (VITE_API_BASE).</Alert>}
@@ -205,8 +205,11 @@ export function LoginPage({ onDone }: { onDone: () => void }) {
           )}
           {cardSignup && !status?.needs_setup && (
             <div className="flex items-center gap-3 rounded-2xl border border-violet-500/30 bg-violet-500/[0.06] p-3.5">
-              <span className="text-2xl">💳</span>
-              <span className="flex-1 leading-tight"><b className="block text-sm">{payPlan!.name} — {payPlan!.card_price.toLocaleString("en-US")} ر.س</b><span className="muted text-xs">تدفع بالبطاقة بعد إنشاء الحساب، وتتفعّل الباقة فورًا — بدون كود</span></span>
+              <span className="text-2xl">{payPlan!.free ? "🎁" : "💳"}</span>
+              <span className="flex-1 leading-tight">
+                <b className="block text-sm">{payPlan!.name} — {payPlan!.free ? payPlan!.price_label || "مجاناً" : `${payPlan!.card_price.toLocaleString("en-US")} ر.س`}</b>
+                <span className="muted text-xs">{payPlan!.free ? "تتفعّل فورًا بعد إنشاء الحساب — بدون دفع ولا كود" : "تدفع بالبطاقة بعد إنشاء الحساب، وتتفعّل الباقة فورًا — بدون كود"}</span>
+              </span>
               <a href="#/plans" className="text-xs font-semibold text-violet-700 underline dark:text-violet-300">تغيير</a>
             </div>
           )}

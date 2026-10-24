@@ -34,7 +34,6 @@ export const PAGE_PERMS: Record<string, StaffPerm[] | "all"> = {
   "/store": ["store"],
   "/inbox": ["inbox"],
   "/draws": ["draws"],
-  "/media": ["campaigns", "schedule"],
   "/templates": ["campaigns"],
   "/simulator": ["campaigns"],
   "/logs": ["logs"],

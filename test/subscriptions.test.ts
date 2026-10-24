@@ -393,3 +393,43 @@ describe("owner tools", () => {
     expect(pub.sales_contact).toBe("https://wa.me/966500000000");
   });
 });
+
+describe("the free plan", () => {
+  const activateFree = async () => {
+    const limits = JSON.parse((await DB.prepare("SELECT limits FROM plans WHERE id = 'free'").first<any>()).limits);
+    return call("/api/owner/plans/free", OWNER, "PUT", { name: "الباقة المجانية", free: true, price_label: "مجاناً", price_period: "month", active: true, limits: { public_reply: false, link_tracking: false, inbox_manual: false, telegram: false, recover: false, csv_export: false, draws_per_month: 0, draw_video: false, cards: false, ...limits } });
+  };
+
+  it("is off until the owner turns it on; then shows its text price and signs up without paying or a code", async () => {
+    const reg = (username: string) => call("/api/auth/register", {}, "POST", { name: "متجر", username, password: "another-strong-password", plan_id: "free" });
+    expect((await reg("free_a")).status).toBe(422);
+    const put = await activateFree();
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    const plan = (await call("/api/public/plans")).body.plans.find((p: any) => p.id === "free");
+    expect(plan).toMatchObject({ free: true, price_label: "مجاناً", card_price: null });
+    expect((await reg("free_a")).status).toBe(200);
+    const t = await DB.prepare("SELECT t.plan_id, t.plan_expires_at FROM tenants t JOIN admin_users u ON u.tenant_id = t.id WHERE u.username = 'free_a'").first<any>();
+    expect(t.plan_id).toBe("free");
+    expect(t.plan_expires_at).toBeGreaterThan(Date.now() + 29 * 86_400_000);
+    expect(await DB.prepare("SELECT COUNT(*) AS n FROM card_payments").first<any>()).toMatchObject({ n: 0 });
+  });
+
+  it("a customer takes it from «اشتراكي» once per period, can move up to a paid plan, and cannot drop to it from a paid one", async () => {
+    await activateFree();
+    const r = await call("/api/owner/tenants", OWNER, "POST", { name: "متجر", username: "shop_f", password: "another-strong-password" });
+    const tid = r.body.id;
+    const h = await login("shop_f", "another-strong-password");
+    expect((await call("/api/subscription/free", h, "POST", { plan_id: "basic" })).status).toBe(404); // not a free plan
+    expect((await call("/api/subscription/free", h, "POST", { plan_id: "free" })).status).toBe(200);
+    expect((await call("/api/subscription/free", h, "POST", { plan_id: "free" })).status).toBe(409);
+    // free → paid: a fresh full period on the paid plan (not added to the free days)
+    const [code] = await codes("basic", 30);
+    const before = Date.now();
+    expect((await call("/api/subscription/redeem", h, "POST", { code })).status).toBe(200);
+    const t = await DB.prepare("SELECT plan_id, plan_expires_at FROM tenants WHERE id = ?").bind(tid).first<any>();
+    expect(t.plan_id).toBe("basic");
+    expect(t.plan_expires_at).toBeLessThan(before + 31 * 86_400_000);
+    // paid → free while the paid plan runs: blocked
+    expect((await call("/api/subscription/free", h, "POST", { plan_id: "free" })).status).toBe(409);
+  });
+});

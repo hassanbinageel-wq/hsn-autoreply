@@ -88,7 +88,9 @@ export async function quoteUpgrade(env: Env, tenantId: number, toPlan: string, n
 export async function planChangeBlock(env: Env, tenantId: number, planId: string, now = Date.now()): Promise<{ code: string; message: string } | null> {
   const t = await first<{ plan_id: string | null; plan_expires_at: number | null }>(env.DB, "SELECT plan_id, plan_expires_at FROM tenants WHERE id = ?", tenantId);
   if (!t?.plan_id || t.plan_id === planId || !t.plan_expires_at || t.plan_expires_at <= now) return null;
-  const cur = await first<{ sort: number }>(env.DB, "SELECT sort FROM plans WHERE id = ?", t.plan_id);
+  const cur = await first<{ sort: number; free: number }>(env.DB, "SELECT sort, free FROM plans WHERE id = ?", t.plan_id);
+  // From the free plan any paid plan is bought directly (a fresh period, no difference to pay).
+  if (cur?.free) return null;
   const next = await first<{ sort: number }>(env.DB, "SELECT sort FROM plans WHERE id = ?", planId);
   if (!cur || !next) return null;
   return next.sort < cur.sort

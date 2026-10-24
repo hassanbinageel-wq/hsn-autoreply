@@ -591,18 +591,17 @@ function PlansTab() {
 }
 
 function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onSaved: () => void }) {
-  const [f, setF] = useState(() => ({ ...plan, price_before: plan.price_before ?? "", card_price: plan.card_price_halalas == null ? "" : plan.card_price_halalas / 100, limits: { ...plan.limits } }));
+  const [f, setF] = useState(() => ({ ...plan, free: !!plan.free, price_label: plan.free ? plan.price_label ?? "مجاناً" : "", price_before: plan.price_before ?? "", limits: { ...plan.limits } }));
   const [busy, setBusy] = useState(false);
   const setL = (k: string, v: unknown) => setF((x: any) => ({ ...x, limits: { ...x.limits, [k]: v } }));
   const save = async () => {
     setBusy(true);
     try {
       const amount = f.price_amount === "" || f.price_amount === null || f.price_amount === undefined ? null : Number(f.price_amount);
-      const cardSar = f.card_price === "" || f.card_price == null ? null : Number(f.card_price);
       const before = f.price_before === "" || f.price_before == null ? null : Number(f.price_before);
       await api(`/api/owner/plans/${plan.id}`, {
         method: "PUT",
-        body: { name: f.name, price_amount: amount, price_before: before, price_currency: "SAR", price_period: f.price_period || "month", card_price_sar: cardSar, description: f.description || undefined, active: !!f.active, limits: f.limits },
+        body: { name: f.name, price_amount: amount, price_before: before, price_currency: "SAR", price_period: f.price_period || "month", free: !!f.free, price_label: f.free ? (f.price_label || "").trim() || "مجاناً" : undefined, description: f.description || undefined, active: !!f.active, limits: f.limits },
       });
       toast(`تم حفظ باقة «${f.name}»`);
       onSaved();
@@ -616,21 +615,35 @@ function PlanEditor({ plan, order, onSaved }: { plan: any; order?: string[]; onS
     <Card title={f.name || plan.id} action={<span className="chip surface-2 muted" dir="ltr">{plan.id}</span>}>
       <div className="space-y-3">
         <Field label="الاسم"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={40} /></Field>
-        <Field label="السعر" hint={f.price_amount === "" || f.price_amount == null ? "فارغ = يظهر «تواصل معنا»" : `يظهر للعملاء: ${formatPrice(Number(f.price_amount), "SAR", f.price_period || "month")}`}>
-          <div className="grid grid-cols-2 gap-2">
-            <input className="input col-span-2 text-lg font-bold" type="number" min={0} step="any" dir="ltr" value={f.price_amount ?? ""} onChange={(e) => setF({ ...f, price_amount: e.target.value })} placeholder="المبلغ، مثل 99" aria-label="المبلغ" />
-            <span className="input flex min-w-0 items-center text-sm">ريال سعودي</span>
-            <select className="input min-w-0 text-sm" value={f.price_period || "month"} onChange={(e) => setF({ ...f, price_period: e.target.value })} aria-label="المدة">
-              {Object.entries(PRICE_PERIODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
-          </div>
-        </Field>
-        <Field label={<Tip text="السعر القديم بنفس العملة، يظهر مشطوبًا بجانب السعر مع نسبة الخصم. لازم يكون أعلى من السعر الحالي.">السعر قبل الخصم</Tip>} hint={f.price_before === "" || f.price_before == null ? "فارغ = بدون سعر مشطوب" : f.price_amount !== "" && f.price_amount != null && Number(f.price_before) > Number(f.price_amount) ? `يظهر مشطوبًا: ${Number(f.price_before).toLocaleString("en-US")} — خصم ${Math.round((1 - Number(f.price_amount) / Number(f.price_before)) * 100)}%` : "لازم يكون أعلى من السعر عشان يظهر"}>
-          <input className="input" type="number" min={0} step="any" dir="ltr" value={f.price_before ?? ""} onChange={(e) => setF({ ...f, price_before: e.target.value })} />
-        </Field>
-        <Field label={<Tip text="سعر ثابت بالريال السعودي يدفعه العميل ببطاقة (مدى / فيزا / ماستركارد / Apple Pay) عن طريق ميسّر، وتتفعّل الباقة تلقائيًا بعد الدفع لمدة الباقة (شهر 30 يوم، 3 أشهر 90، سنة 365). فارغ = نفس سعر الباقة إذا كان بالريال السعودي. 0 = بدون دفع بالبطاقة لهذي الباقة.">💳 سعر الدفع بالبطاقة (ر.س)</Tip>} hint={f.price_period === "once" ? "الدفع بالبطاقة يحتاج مدة (شهر / 3 أشهر / سنة) — مو «مرة واحدة»" : f.card_price === "" || f.card_price == null ? ((f.price_currency || "SAR") === "SAR" && f.price_amount ? `فارغ = نفس سعر الباقة (${Number(f.price_amount).toLocaleString("en-US")} ر.س)` : "فارغ والسعر مو بالريال = بدون دفع بالبطاقة") : Number(f.card_price) === 0 ? "بدون دفع بالبطاقة" : `العميل يدفع ${Number(f.card_price).toLocaleString("en-US")} ر.س`}>
-          <input className="input" type="number" min={0} step="any" dir="ltr" value={f.card_price ?? ""} onChange={(e) => setF({ ...f, card_price: e.target.value })} placeholder="مثل 99" />
-        </Field>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={!!f.free} onChange={(e) => setF({ ...f, free: e.target.checked, price_label: e.target.checked ? f.price_label || "مجاناً" : f.price_label })} />
+          <Tip text="العميل يشترك فيها بدون دفع وتتفعّل فورًا. السعر يظهر كنص تكتبه أنت (مثل «مجاناً»)، بدون كلمة ريال وبدون خيارات الدفع بالبطاقة.">🎁 باقة مجانية (بدون دفع)</Tip>
+        </label>
+        {f.free ? (
+          <Field label="السعر (نص)" hint={`يظهر للعملاء: ${(f.price_label || "").trim() || "مجاناً"}`}>
+            <div className="grid grid-cols-2 gap-2">
+              <input className="input text-lg font-bold" value={f.price_label ?? ""} onChange={(e) => setF({ ...f, price_label: e.target.value })} maxLength={60} placeholder="مجاناً" aria-label="السعر" />
+              <select className="input min-w-0 text-sm" value={f.price_period || "month"} onChange={(e) => setF({ ...f, price_period: e.target.value })} aria-label="المدة">
+                {Object.entries(PRICE_PERIODS).filter(([k]) => k !== "once").map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+          </Field>
+        ) : (
+          <>
+            <Field label="السعر" hint={f.price_amount === "" || f.price_amount == null ? "فارغ = يظهر «تواصل معنا»" : `يظهر للعملاء: ${formatPrice(Number(f.price_amount), "SAR", f.price_period || "month")}`}>
+              <div className="grid grid-cols-2 gap-2">
+                <input className="input col-span-2 text-lg font-bold" type="number" min={0} step="any" dir="ltr" value={f.price_amount ?? ""} onChange={(e) => setF({ ...f, price_amount: e.target.value })} placeholder="المبلغ، مثل 99" aria-label="المبلغ" />
+                <span className="input flex min-w-0 items-center text-sm">ريال سعودي</span>
+                <select className="input min-w-0 text-sm" value={f.price_period || "month"} onChange={(e) => setF({ ...f, price_period: e.target.value })} aria-label="المدة">
+                  {Object.entries(PRICE_PERIODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+              </div>
+            </Field>
+            <Field label={<Tip text="السعر القديم بنفس العملة، يظهر مشطوبًا بجانب السعر مع نسبة الخصم. لازم يكون أعلى من السعر الحالي.">السعر قبل الخصم</Tip>} hint={f.price_before === "" || f.price_before == null ? "فارغ = بدون سعر مشطوب" : f.price_amount !== "" && f.price_amount != null && Number(f.price_before) > Number(f.price_amount) ? `يظهر مشطوبًا: ${Number(f.price_before).toLocaleString("en-US")} — خصم ${Math.round((1 - Number(f.price_amount) / Number(f.price_before)) * 100)}%` : "لازم يكون أعلى من السعر عشان يظهر"}>
+              <input className="input" type="number" min={0} step="any" dir="ltr" value={f.price_before ?? ""} onChange={(e) => setF({ ...f, price_before: e.target.value })} />
+            </Field>
+          </>
+        )}
         <Field label="وصف قصير"><input className="input" value={f.description ?? ""} onChange={(e) => setF({ ...f, description: e.target.value })} maxLength={200} /></Field>
         {LIMIT_FIELDS.map(([k, label]) => (
           <Field key={k} label={<Tip text={LIMIT_HINTS[k]}>{label}</Tip>} hint="فارغ = غير محدود">
@@ -690,7 +703,7 @@ export function OwnerPage() {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
-      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "topups" ? <TopupsTab /> : tab === "offers" ? <OffersTab /> : tab === "payments" ? <><PaymentsReportCard /><UpgradesCard /><CardPaymentsCard /></> : <BrandingTab />}
+      {tab === "customers" ? <><BroadcastCard /><SentMessages /><CustomersTab /></> : tab === "health" ? <HealthTab /> : tab === "support" ? <OwnerSupportTab /> : tab === "coupons" ? <CouponsTab /> : tab === "plans" ? <PlansTab /> : tab === "codes" ? <CodesTab /> : tab === "topups" ? <TopupsTab /> : tab === "offers" ? <OffersTab /> : tab === "payments" ? <PaymentsTab /> : <BrandingTab />}
     </div>
   );
 }
@@ -779,7 +792,7 @@ function CardPaymentsCard() {
   return (
     <Card title="💳 الدفع بالبطاقة (ميسّر)" className="mb-5">
       {!data.enabled ? (
-        <Alert tone="info">غير مفعّل. أضف المفتاح السري من لوحة ميسّر كـ GitHub Secret باسم <b dir="ltr">MOYASAR_SECRET_KEY</b> ثم انشر، وبعدها حط «سعر الدفع بالبطاقة» لكل باقة في تبويب الباقات.</Alert>
+        <Alert tone="info">غير مفعّل. أضف المفتاح السري من لوحة ميسّر كـ GitHub Secret باسم <b dir="ltr">MOYASAR_SECRET_KEY</b> ثم انشر. العميل يدفع سعر الباقة نفسه المعروض في تبويب الباقات.</Alert>
       ) : (
         <div className="space-y-3">
           {data.test_mode && <Alert tone="warn">وضع تجريبي (sk_test) — المدفوعات وهمية وما توصل فلوس حقيقية. بدّله بالمفتاح الحي (sk_live) بعد ما يتفعّل حسابك في ميسّر.</Alert>}
@@ -1597,4 +1610,10 @@ function Stages({ w, compact }: { w: any; compact?: boolean }) {
       </div>
     </div>
   );
+}
+
+/** The payments tab; deleting the payments record redraws the cards below it. */
+function PaymentsTab() {
+  const [v, setV] = useState(0);
+  return <><PaymentsReportCard onDeleted={() => setV((x) => x + 1)} /><UpgradesCard key={`u${v}`} /><CardPaymentsCard key={`c${v}`} /></>;
 }

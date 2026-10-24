@@ -5,7 +5,7 @@ import { Field, Modal, Tip, toast } from "./ui";
 import { CURRENCIES, EVENT_LABELS, FEATURE_HINTS, FEATURE_LABELS, LIMIT_HINTS, PRICE_PERIODS, convertPrice, formatAmount, orderFeatures, type ExchangeRates, type PlanLimits } from "../../shared/plans";
 
 export interface Catalog {
-  plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_before?: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits; card_price?: number | null; offer_pct?: number; offer_card_price?: number }>;
+  plans: Array<{ id: string; name: string; price_label: string | null; price_amount: number | null; price_before?: number | null; price_currency: string; price_period: string; description: string | null; limits: PlanLimits; card_price?: number | null; offer_pct?: number; offer_card_price?: number; free?: boolean }>;
   rates: ExchangeRates;
   featured?: { plan_id: string | null; label: string };
   feature_order?: string[];
@@ -127,7 +127,12 @@ export function PlanCards({ catalog, cur, currentPlanId, onChoose, onCardPay, co
                   <span className="font-display text-2xl font-extrabold text-violet-600 dark:text-violet-300">{p.price_label || "تواصل معنا"}</span>
                 )}
               </div>
-              {onCardPay && p.card_price ? (
+              {onCardPay && p.free ? (
+                <>
+                  <button type="button" onClick={() => onCardPay(p.id)} className={`btn mt-4 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>ابدأ مجانًا</button>
+                  <div className="muted mt-1 text-center text-[11px]">بدون دفع — تتفعّل فورًا</div>
+                </>
+              ) : onCardPay && p.card_price ? (
                 <>
                   <button type="button" onClick={() => onCardPay(p.id)} className={`btn mt-4 w-full ${isFeatured ? "btn-primary" : "btn-ghost"}`}>
                     {catalog.card_button_label || "اشترك الآن"}

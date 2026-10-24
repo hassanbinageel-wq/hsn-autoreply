@@ -158,6 +158,8 @@ export const planUpdateSchema = z.object({
   price_period: z.enum(["month", "quarter", "year", "once"]).optional(),
   /** Fixed card price in SAR (Moyasar); empty = no card payment for this plan. */
   card_price_sar: z.number().min(0).max(100_000).nullable().optional(),
+  /** A free plan: subscribed to without paying, its price shown as the text in price_label (e.g. «مجاناً»). */
+  free: z.coerce.boolean().optional(),
   description: text(200).optional(),
   active: z.boolean().default(true),
   limits: z.object({
